@@ -15,11 +15,8 @@ export default function LoginPage() {
     setLoading(true);
     setError('');
     try {
-      // Use absolute URL for API
-      const apiUrl = typeof window !== 'undefined' 
-        ? `${window.location.protocol}//${window.location.hostname}:5001`
-        : 'http://localhost:5001';
-      const res = await fetch(`${apiUrl}/api/auth/login`, {
+      // Use same origin - nginx will proxy to backend
+      const res = await fetch('/e-sop-atrbpn/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
