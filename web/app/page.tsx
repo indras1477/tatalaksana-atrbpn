@@ -84,19 +84,23 @@ export default function DashboardBPN() {
   const [dbHierarchy, setDbHierarchy] = useState({});
   const [loading, setLoading] = useState(true);
 
+  // Single auth check on mount
   useEffect(() => {
     const token = localStorage.getItem('token');
     const userStr = localStorage.getItem('user');
-    if (token && userStr) {
-      try {
-        const user = JSON.parse(userStr);
-        setCurrentUser(user);
-        setIsAuthenticated(true);
-        fetchHierarchy(token);
-      } catch {
-        localStorage.removeItem('token');
-        localStorage.removeItem('user');
-      }
+    if (!token || !userStr) {
+      window.location.href = '/login';
+      return;
+    }
+    try {
+      const user = JSON.parse(userStr);
+      setCurrentUser(user);
+      setIsAuthenticated(true);
+      fetchHierarchy(token);
+    } catch {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      window.location.href = '/login';
     }
     setLoading(false);
   }, []);
@@ -126,6 +130,28 @@ export default function DashboardBPN() {
     }
   };
 
+  // Check auth immediately on mount
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const userStr = localStorage.getItem('user');
+    if (!token || !userStr) {
+      window.location.href = '/login';
+      return;
+    }
+    try {
+      const user = JSON.parse(userStr);
+      setCurrentUser(user);
+      setIsAuthenticated(true);
+      fetchHierarchy(token);
+    } catch {
+      localStorage.removeItem('token');
+      localStorage.removeItem('user');
+      window.location.href = '/login';
+    }
+    setLoading(false);
+  }, []);
+
+  // Show loading while checking auth
   if (loading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
@@ -137,17 +163,9 @@ export default function DashboardBPN() {
     );
   }
 
+  // Not authenticated - redirect is already handled in useEffect
   if (!isAuthenticated) {
-    if (typeof window !== 'undefined') {
-      window.location.href = '/login';
-    }
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
-        <div className="text-center">
-          <p className="text-blue-300 mb-4">Mengalihkan ke halaman login...</p>
-        </div>
-      </div>
-    );
+    return null;
   }
 
   // STATE NAVIGASI & THEME
