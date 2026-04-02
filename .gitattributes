@@ -1,0 +1,10 @@
+# Optimize git for better push/pull
+* text=auto
+
+# Don't track these large/derived files
+.next/ filter=
+node_modules/ filter=
+*.log binary
+
+# Ensure package-lock is tracked for deterministic installs
+package-lock.json text eol=lf
