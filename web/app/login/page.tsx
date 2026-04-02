@@ -29,8 +29,8 @@ export default function LoginPage() {
       }
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
-      // Use window.location for immediate redirect
-      window.location.href = '/e-sop-atrbpn';
+      // Use router for redirect (basePath added automatically)
+      router.push('/');
     } catch (err) {
       setError('Tidak dapat terhubung ke server');
       setLoading(false);
