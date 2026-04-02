@@ -24,27 +24,6 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="id" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
-      <head>
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `
-              (function() {
-                var token = localStorage.getItem('token');
-                var user = localStorage.getItem('user');
-                var path = window.location.pathname;
-                var basePath = '/e-sop-atrbpn';
-                var isLogin = path.indexOf('login') !== -1;
-                
-                if (!token && !isLogin) {
-                  window.location.href = basePath + '/login';
-                } else if (token && isLogin) {
-                  window.location.href = basePath || '/';
-                }
-              })();
-            `,
-          }}
-        />
-      </head>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
