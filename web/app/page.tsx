@@ -79,6 +79,67 @@ interface Dokumen {
 }
 
 export default function DashboardBPN() {
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [currentUser, setCurrentUser] = useState<{username: string; role: string} | null>(null);
+  const [dbHierarchy, setDbHierarchy] = useState({});
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    const userStr = localStorage.getItem('user');
+    if (token && userStr) {
+      try {
+        const user = JSON.parse(userStr);
+        setCurrentUser(user);
+        setIsAuthenticated(true);
+        fetchHierarchy(token);
+      } catch {
+        localStorage.removeItem('token');
+        localStorage.removeItem('user');
+      }
+    }
+    setLoading(false);
+  }, []);
+
+  const fetchHierarchy = async (token: string) => {
+    try {
+      const res = await fetch('http://localhost:5001/api/hierarchy', {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const grouped: any = {};
+      data.forEach((item: any) => {
+        if (!grouped[item.l1_nama]) grouped[item.l1_nama] = {};
+        if (item.l2_nama && !grouped[item.l1_nama][item.l2_nama]) {
+          grouped[item.l1_nama][item.l2_nama] = [];
+        }
+        if (item.l3_nama && grouped[item.l1_nama][item.l2_nama]) {
+          grouped[item.l1_nama][item.l2_nama].push(item.l3_nama);
+        }
+      });
+      setDbHierarchy(grouped);
+    } catch (err) {
+      console.error('Failed to fetch hierarchy:', err);
+    }
+  };
+
+  if (loading) {
+    return <div className="min-h-screen flex items-center justify-center bg-gray-100">Loading...</div>;
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+        <div className="text-center">
+          <p className="text-gray-600 mb-4">Silakan login terlebih dahulu</p>
+          <a href="/login" className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Login</a>
+        </div>
+      </div>
+    );
+  }
+
   // STATE NAVIGASI & THEME
   const [activeMenu, setActiveMenu] = useState('dashboard');
   const [level, setLevel] = useState(1);
