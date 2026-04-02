@@ -25,19 +25,20 @@ export default function RootLayout({
   return (
     <html lang="id" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
       <head>
-        <script
+<script
           dangerouslySetInnerHTML={{
             __html: `
               (function() {
                 var token = localStorage.getItem('token');
                 var user = localStorage.getItem('user');
                 var path = window.location.pathname;
+                var basePath = '/e-sop-atrbpn';
                 if (!token || !user) {
-                  if (path !== '/login') {
-                    window.location.href = '/login';
+                  if (path !== basePath + '/login' && path !== '/login') {
+                    window.location.href = basePath + '/login';
                   }
-                } else if (path === '/login') {
-                  window.location.href = '/';
+                } else if (path === basePath + '/login' || path === '/login') {
+                    window.location.href = basePath || '/';
                 }
               })();
             `,

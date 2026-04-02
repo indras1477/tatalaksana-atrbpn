@@ -28,8 +28,8 @@ export default function LoginPage() {
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       // Set cookie for middleware check
-      document.cookie = `token=${data.token}; path=/; max-age=86400`;
-      router.push('/');
+      document.cookie = `token=${data.token}; path=/e-sop-atrbpn; max-age=86400`;
+      router.push('/e-sop-atrbpn');
     } catch (err) {
       setError('Tidak dapat terhubung ke server');
     } finally {
