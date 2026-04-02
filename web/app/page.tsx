@@ -103,7 +103,8 @@ export default function DashboardBPN() {
 
   const fetchHierarchy = async (token: string) => {
     try {
-      const res = await fetch('http://localhost:5001/api/hierarchy', {
+      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001';
+    const res = await fetch(`${API_URL}/api/hierarchy`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) return;
@@ -126,15 +127,24 @@ export default function DashboardBPN() {
   };
 
   if (loading) {
-    return <div className="min-h-screen flex items-center justify-center bg-gray-100">Loading...</div>;
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
+        <div className="text-center">
+          <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
+          <p className="text-blue-300">Memuat sistem...</p>
+        </div>
+      </div>
+    );
   }
 
   if (!isAuthenticated) {
+    if (typeof window !== 'undefined') {
+      window.location.href = '/login';
+    }
     return (
-      <div className="min-h-screen flex items-center justify-center bg-gray-100">
+      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
         <div className="text-center">
-          <p className="text-gray-600 mb-4">Silakan login terlebih dahulu</p>
-          <a href="/login" className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700">Login</a>
+          <p className="text-blue-300 mb-4">Mengalihkan ke halaman login...</p>
         </div>
       </div>
     );
