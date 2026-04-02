@@ -15,7 +15,11 @@ export default function LoginPage() {
     setLoading(true);
     setError('');
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001'}/api/auth/login`, {
+      // Use absolute URL for API
+      const apiUrl = typeof window !== 'undefined' 
+        ? `${window.location.protocol}//${window.location.hostname}:5001`
+        : 'http://localhost:5001';
+      const res = await fetch(`${apiUrl}/api/auth/login`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ username, password }),
@@ -23,16 +27,15 @@ export default function LoginPage() {
       const data = await res.json();
       if (!res.ok) {
         setError(data.error || 'Login gagal');
+        setLoading(false);
         return;
       }
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
-      // Set cookie for middleware check
-      document.cookie = `token=${data.token}; path=/e-sop-atrbpn; max-age=86400`;
-      router.push('/e-sop-atrbpn');
+      // Use window.location for immediate redirect
+      window.location.href = '/e-sop-atrbpn';
     } catch (err) {
       setError('Tidak dapat terhubung ke server');
-    } finally {
       setLoading(false);
     }
   };
