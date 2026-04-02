@@ -78,13 +78,21 @@ interface Dokumen {
   unitL1: string; unitL2: string; unitL3: string; link: string; sumber: string;
 }
 
+// Immediate auth check - runs before React renders
+if (typeof window !== 'undefined') {
+  const token = localStorage.getItem('token');
+  const userStr = localStorage.getItem('user');
+  if (!token || !userStr) {
+    window.location.href = '/login';
+  }
+}
+
 export default function DashboardBPN() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState<{username: string; role: string} | null>(null);
   const [dbHierarchy, setDbHierarchy] = useState({});
   const [loading, setLoading] = useState(true);
 
-  // Single auth check on mount
   useEffect(() => {
     const token = localStorage.getItem('token');
     const userStr = localStorage.getItem('user');
@@ -98,8 +106,6 @@ export default function DashboardBPN() {
       setIsAuthenticated(true);
       fetchHierarchy(token);
     } catch {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
       window.location.href = '/login';
     }
     setLoading(false);
@@ -151,21 +157,15 @@ export default function DashboardBPN() {
     setLoading(false);
   }, []);
 
-  // Show loading while checking auth
-  if (loading) {
+  // Not authenticated - redirect is already handled
+  if (!isAuthenticated) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
         <div className="text-center">
-          <div className="w-16 h-16 border-4 border-blue-500 border-t-transparent rounded-full animate-spin mx-auto mb-4"></div>
-          <p className="text-blue-300">Memuat sistem...</p>
+          <p className="text-blue-300">Mengalihkan ke login...</p>
         </div>
       </div>
     );
-  }
-
-  // Not authenticated - redirect is already handled in useEffect
-  if (!isAuthenticated) {
-    return null;
   }
 
   // STATE NAVIGASI & THEME
