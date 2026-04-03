@@ -78,12 +78,12 @@ interface Dokumen {
   unitL1: string; unitL2: string; unitL3: string; link: string; sumber: string;
 }
 
-// Immediate auth check - runs before React renders
+// Immediate auth check - runs before React renders  
 if (typeof window !== 'undefined') {
   const token = localStorage.getItem('token');
   const userStr = localStorage.getItem('user');
   if (!token || !userStr) {
-    window.location.href = '/login';
+    window.location.href = '/e-sop-atrbpn/login';
   }
 }
 
@@ -97,7 +97,7 @@ export default function DashboardBPN() {
     const token = localStorage.getItem('token');
     const userStr = localStorage.getItem('user');
     if (!token || !userStr) {
-      window.location.href = '/login';
+      window.location.href = '/e-sop-atrbpn/login';
       return;
     }
     try {
@@ -106,15 +106,14 @@ export default function DashboardBPN() {
       setIsAuthenticated(true);
       fetchHierarchy(token);
     } catch {
-      window.location.href = '/login';
+      window.location.href = '/e-sop-atrbpn/login';
     }
     setLoading(false);
   }, []);
 
   const fetchHierarchy = async (token: string) => {
     try {
-      const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5001';
-    const res = await fetch(`${API_URL}/api/hierarchy`, {
+      const res = await fetch('/e-sop-atrbpn/api/hierarchy', {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) return;
@@ -141,7 +140,7 @@ export default function DashboardBPN() {
     const token = localStorage.getItem('token');
     const userStr = localStorage.getItem('user');
     if (!token || !userStr) {
-      window.location.href = '/login';
+      window.location.href = '/e-sop-atrbpn/login';
       return;
     }
     try {
@@ -152,7 +151,7 @@ export default function DashboardBPN() {
     } catch {
       localStorage.removeItem('token');
       localStorage.removeItem('user');
-      window.location.href = '/login';
+      window.location.href = '/e-sop-atrbpn/login';
     }
     setLoading(false);
   }, []);
