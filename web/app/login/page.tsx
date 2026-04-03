@@ -29,7 +29,9 @@ export default function LoginPage() {
       }
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
-      // Use router for redirect (basePath added automatically)
+      // Set cookie for middleware
+      document.cookie = `token=${data.token}; path=/e-sop-atrbpn; max-age=86400`;
+      // Use router for redirect
       router.push('/');
     } catch (err) {
       setError('Tidak dapat terhubung ke server');

@@ -129,9 +129,15 @@ export default function DashboardBPN() {
           grouped[item.l1_nama][item.l2_nama].push(item.l3_nama);
         }
       });
-      setDbHierarchy(grouped);
+      // Use static data as fallback always
+      if (data && data.length > 0) {
+        setDbHierarchy(grouped);
+      } else {
+        setDbHierarchy(HIERARKI_UNIT);
+      }
     } catch (err) {
-      console.error('Failed to fetch hierarchy:', err);
+      // Fallback to static data on error
+      setDbHierarchy(HIERARKI_UNIT);
     }
   };
 
