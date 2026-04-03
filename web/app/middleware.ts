@@ -9,13 +9,15 @@ export function middleware(request: NextRequest) {
     return NextResponse.next();
   }
   
-  // Check token cookie for all other routes
-  const token = request.cookies.get('token');
-  if (!token) {
-    return NextResponse.redirect(new URL('/e-sop-atrbpn/login', request.url));
+  // Allow static assets
+  if (pathname.includes('/_next/') || pathname.includes('/favicon')) {
+    return NextResponse.next();
   }
-
-  return NextResponse.next();
+  
+  // Force dynamic - don't use cache
+  const response = NextResponse.next();
+  response.headers.set('Cache-Control', 'no-store, no-cache, must-revalidate');
+  return response;
 }
 
 export const config = {
