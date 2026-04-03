@@ -93,8 +93,6 @@ export default function DashboardBPN() {
     }
   }, []);
 
-  return null;
-
   // STATE NAVIGASI & THEME
   const [activeMenu, setActiveMenu] = useState('dashboard');
   const [level, setLevel] = useState(1);
