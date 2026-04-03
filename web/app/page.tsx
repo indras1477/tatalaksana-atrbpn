@@ -78,100 +78,22 @@ interface Dokumen {
   unitL1: string; unitL2: string; unitL3: string; link: string; sumber: string;
 }
 
-// Immediate auth check - runs before React renders  
-if (typeof window !== 'undefined') {
-  const token = localStorage.getItem('token');
-  const userStr = localStorage.getItem('user');
-  if (!token || !userStr) {
-    window.location.href = '/e-sop-atrbpn/login';
-  }
-}
-
 export default function DashboardBPN() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState<{username: string; role: string} | null>(null);
-  const [dbHierarchy, setDbHierarchy] = useState({});
-  const [loading, setLoading] = useState(true);
+  const [dbHierarchy, setDbHierarchy] = useState(HIERARKI_UNIT);
+  const [loading, setLoading] = useState(false);
 
   useEffect(() => {
-    const token = localStorage.getItem('token');
     const userStr = localStorage.getItem('user');
-    if (!token || !userStr) {
-      window.location.href = '/e-sop-atrbpn/login';
-      return;
+    if (userStr) {
+      try {
+        const user = JSON.parse(userStr);
+        setCurrentUser(user);
+      } catch {}
     }
-    try {
-      const user = JSON.parse(userStr);
-      setCurrentUser(user);
-      setIsAuthenticated(true);
-      fetchHierarchy(token);
-    } catch {
-      window.location.href = '/e-sop-atrbpn/login';
-    }
-    setLoading(false);
   }, []);
 
-  const fetchHierarchy = async (token: string) => {
-    try {
-      const res = await fetch('/e-sop-atrbpn/api/hierarchy', {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (!res.ok) return;
-      const data = await res.json();
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    const grouped: any = {};
-      data.forEach((item: any) => {
-        if (!grouped[item.l1_nama]) grouped[item.l1_nama] = {};
-        if (item.l2_nama && !grouped[item.l1_nama][item.l2_nama]) {
-          grouped[item.l1_nama][item.l2_nama] = [];
-        }
-        if (item.l3_nama && grouped[item.l1_nama][item.l2_nama]) {
-          grouped[item.l1_nama][item.l2_nama].push(item.l3_nama);
-        }
-      });
-      // Use static data as fallback always
-      if (data && data.length > 0) {
-        setDbHierarchy(grouped);
-      } else {
-        setDbHierarchy(HIERARKI_UNIT);
-      }
-    } catch (err) {
-      // Fallback to static data on error
-      setDbHierarchy(HIERARKI_UNIT);
-    }
-  };
-
-  // Check auth immediately on mount
-  useEffect(() => {
-    const token = localStorage.getItem('token');
-    const userStr = localStorage.getItem('user');
-    if (!token || !userStr) {
-      window.location.href = '/e-sop-atrbpn/login';
-      return;
-    }
-    try {
-      const user = JSON.parse(userStr);
-      setCurrentUser(user);
-      setIsAuthenticated(true);
-      fetchHierarchy(token);
-    } catch {
-      localStorage.removeItem('token');
-      localStorage.removeItem('user');
-      window.location.href = '/e-sop-atrbpn/login';
-    }
-    setLoading(false);
-  }, []);
-
-  // Not authenticated - redirect is already handled
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900">
-        <div className="text-center">
-          <p className="text-blue-300">Mengalihkan ke login...</p>
-        </div>
-      </div>
-    );
-  }
+  return null;
 
   // STATE NAVIGASI & THEME
   const [activeMenu, setActiveMenu] = useState('dashboard');
@@ -358,20 +280,20 @@ export default function DashboardBPN() {
           <div className={`w-full max-w-5xl h-[85vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden animate-in zoom-in-95 duration-200 m-4 ${isDarkMode ? 'bg-[#151F32] border border-slate-700' : 'bg-white'}`}>
             <div className={`flex justify-between items-center p-4 border-b ${isDarkMode ? 'border-slate-700 bg-[#0F172A]' : 'border-slate-200 bg-slate-50'}`}>
               <div>
-                <h3 className={`font-bold text-lg ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{viewDoc.nama}</h3>
+                <h3 className={`font-bold text-lg ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{viewDoc?.nama}</h3>
                 <div className="flex items-center text-xs text-slate-500 mt-1 space-x-2">
-                  <span className={`px-2 py-0.5 rounded font-semibold ${isDarkMode ? 'bg-blue-900/50 text-blue-300' : 'bg-blue-100 text-blue-700'}`}>{viewDoc.jenis}</span>
-                  <span>•</span><span>{viewDoc.unitL3}</span><span>•</span><span>Tahun {viewDoc.tahun}</span>
+                  <span className={`px-2 py-0.5 rounded font-semibold ${isDarkMode ? 'bg-blue-900/50 text-blue-300' : 'bg-blue-100 text-blue-700'}`}>{viewDoc?.jenis}</span>
+                  <span>•</span><span>{viewDoc?.unitL3}</span><span>•</span><span>Tahun {viewDoc?.tahun}</span>
                 </div>
               </div>
               <button onClick={() => setViewDoc(null)} className={`p-2 rounded-full transition-colors ${isDarkMode ? 'hover:bg-red-900/30 text-red-400' : 'hover:bg-red-100 text-red-600'}`}><X className="w-6 h-6" /></button>
             </div>
             <div className={`flex-1 p-4 ${isDarkMode ? 'bg-[#0B1121]' : 'bg-slate-200'}`}>
-              <iframe src={getEmbedUrl(viewDoc.link)} className="w-full h-full rounded-xl border-none bg-white shadow-sm" title="Viewer" />
+              <iframe src={getEmbedUrl(viewDoc?.link || '')} className="w-full h-full rounded-xl border-none bg-white shadow-sm" title="Viewer" />
             </div>
             <div className={`p-4 border-t flex justify-between items-center ${isDarkMode ? 'border-slate-700 bg-[#0F172A]' : 'border-slate-200 bg-white'}`}>
               <p className="text-sm text-slate-500 italic">Gunakan tombol di samping jika dokumen diblokir.</p>
-              <a href={viewDoc.link} target="_blank" rel="noreferrer" className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg shadow transition">Buka di Tab Baru</a>
+              <a href={viewDoc?.link || ''} target="_blank" rel="noreferrer" className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-semibold rounded-lg shadow transition">Buka di Tab Baru</a>
             </div>
           </div>
         </div>
