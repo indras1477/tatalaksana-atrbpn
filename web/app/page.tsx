@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useMemo, useEffect } from 'react';
-import { Home, FilePlus, ChevronRight, ArrowLeft, Download, FileText, Activity, BookOpen, Filter, X, Eye, EyeOff, Search, ChevronLeft, Settings, Sun, Moon } from 'lucide-react';
+import { Home, FilePlus, ChevronRight, ArrowLeft, Download, FileText, Activity, BookOpen, Filter, X, Eye, EyeOff, Search, ChevronLeft, Settings, Sun, Moon, LogOut } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import * as XLSX from 'xlsx';
 
@@ -350,6 +350,19 @@ export default function DashboardBPN() {
                 Pengaturan
               </div>
               <ChevronRight className={`w-4 h-4 transition-transform duration-300 ${isSettingsOpen ? 'rotate-90' : ''}`} />
+            </button>
+
+            {/* TOMBOL LOGOUT */}
+            <button 
+              onClick={() => {
+                localStorage.removeItem('token');
+                localStorage.removeItem('user');
+                window.location.href = '/e-sop-atrbpn/login';
+              }}
+              className="w-full flex items-center px-4 py-3.5 rounded-2xl transition-all duration-300 group text-red-400 hover:bg-red-900/30 font-medium"
+            >
+              <LogOut className="w-5 h-5 mr-3" /> 
+              Keluar
             </button>
 
             {/* EXPANDABLE TOGGLE LIGHT/DARK MODE */}
