@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useMemo, useEffect } from 'react';
-import { Home, FilePlus, ChevronRight, ArrowLeft, Download, FileText, Activity, BookOpen, Filter, X, Eye, EyeOff, Search, ChevronLeft, Settings, Sun, Moon, LogOut } from 'lucide-react';
+import { Home, FilePlus, ChevronRight, ArrowLeft, Download, FileText, Activity, BookOpen, Filter, X, Eye, EyeOff, Search, ChevronLeft, Settings, Sun, Moon, LogOut, Users } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import * as XLSX from 'xlsx';
 
@@ -343,6 +343,16 @@ export default function DashboardBPN() {
             <FilePlus className={`w-5 h-5 mr-3 transition-colors ${activeMenu === 'tambah' && editingId === null ? 'text-white' : 'text-slate-500 group-hover:text-white'}`} /> 
             Tambah Dokumen
           </button>
+          
+          {currentUser?.role === 'admin' && (
+            <button 
+              onClick={() => window.location.href = '/e-sop-atrbpn/users'}
+              className="w-full flex items-center px-4 py-3.5 mb-3 rounded-2xl transition-all duration-300 group text-slate-400 hover:bg-white/5 hover:text-white font-medium"
+            >
+              <Users className="w-5 h-5 mr-3 text-slate-500 group-hover:text-white" /> 
+              Manajemen User
+            </button>
+          )}
 
           <div className="mt-8">
             <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-3 px-3">Sistem</p>

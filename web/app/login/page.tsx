@@ -6,6 +6,7 @@ import { Lock, LogIn, Building2, Shield } from 'lucide-react';
 export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const router = useRouter();
@@ -15,11 +16,10 @@ export default function LoginPage() {
     setLoading(true);
     setError('');
     try {
-      // Use same origin - nginx will proxy to backend
       const res = await fetch('/e-sop-atrbpn/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify({ username, password, remember: rememberMe }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -29,9 +29,10 @@ export default function LoginPage() {
       }
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
-      // Set cookie for middleware
-      document.cookie = `token=${data.token}; path=/; max-age=86400`;
-      // Use replace for redirect
+      localStorage.setItem('expiresIn', String(data.expiresIn || 120));
+      // Set cookie for middleware - remember me = 120 menit, tidak = 2 jam
+      const maxAge = rememberMe ? 120 * 60 : 120 * 60;
+      document.cookie = `token=${data.token}; path=/; max-age=${maxAge}`;
       router.replace('/e-sop-atrbpn/');
     } catch (err) {
       setError('Tidak dapat terhubung ke server');
@@ -87,6 +88,19 @@ export default function LoginPage() {
                 className="w-full px-4 py-3 bg-slate-800/50 border border-slate-600/50 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
                 required
               />
+            </div>
+            
+            <div className="flex items-center">
+              <input
+                type="checkbox"
+                id="rememberMe"
+                checked={rememberMe}
+                onChange={(e) => setRememberMe(e.target.checked)}
+                className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500"
+              />
+              <label htmlFor="rememberMe" className="ml-2 text-slate-300 text-sm">
+                Ingat saya (120 menit)
+              </label>
             </div>
             
             {error && (
