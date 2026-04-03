@@ -99,7 +99,7 @@ export default function LoginPage() {
                 className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500"
               />
               <label htmlFor="rememberMe" className="ml-2 text-slate-300 text-sm">
-                Ingat saya (120 menit)
+                Ingat saya
               </label>
             </div>
             
