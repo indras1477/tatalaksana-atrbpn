@@ -358,7 +358,7 @@ export default function DashboardBPN() {
                 localStorage.removeItem('token');
                 localStorage.removeItem('user');
                 // Clear cookie
-                document.cookie = 'token=; path=/e-sop-atrbpn; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+                document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
                 window.location.href = '/e-sop-atrbpn/login';
               }}
               className="w-full flex items-center px-4 py-3.5 rounded-2xl transition-all duration-300 group text-red-400 hover:bg-red-900/30 font-medium"

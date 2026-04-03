@@ -30,7 +30,7 @@ export default function LoginPage() {
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       // Set cookie for middleware
-      document.cookie = `token=${data.token}; path=/e-sop-atrbpn; max-age=86400`;
+      document.cookie = `token=${data.token}; path=/; max-age=86400`;
       // Use router for redirect
       router.push('/');
     } catch (err) {
