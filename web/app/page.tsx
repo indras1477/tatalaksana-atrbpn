@@ -84,12 +84,20 @@ export default function DashboardBPN() {
   const [loading, setLoading] = useState(false);
 
   useEffect(() => {
+    const token = localStorage.getItem('token');
     const userStr = localStorage.getItem('user');
-    if (userStr) {
-      try {
-        const user = JSON.parse(userStr);
-        setCurrentUser(user);
-      } catch {}
+
+    if (!token || !userStr) {
+      document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+      window.location.replace('/e-sop-atrbpn/login');
+      return;
+    }
+
+    try {
+      const user = JSON.parse(userStr);
+      setCurrentUser(user);
+    } catch {
+      window.location.replace('/e-sop-atrbpn/login');
     }
   }, []);
 
@@ -357,9 +365,8 @@ export default function DashboardBPN() {
               onClick={() => {
                 localStorage.removeItem('token');
                 localStorage.removeItem('user');
-                // Clear cookie
                 document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-                window.location.href = '/e-sop-atrbpn/login';
+                window.location.replace('/e-sop-atrbpn/login');
               }}
               className="w-full flex items-center px-4 py-3.5 rounded-2xl transition-all duration-300 group text-red-400 hover:bg-red-900/30 font-medium"
             >

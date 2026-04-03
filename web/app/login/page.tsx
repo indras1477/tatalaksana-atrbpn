@@ -31,8 +31,8 @@ export default function LoginPage() {
       localStorage.setItem('user', JSON.stringify(data.user));
       // Set cookie for middleware
       document.cookie = `token=${data.token}; path=/; max-age=86400`;
-      // Use router for redirect
-      router.push('/');
+      // Use replace for redirect
+      router.replace('/e-sop-atrbpn/');
     } catch (err) {
       setError('Tidak dapat terhubung ke server');
       setLoading(false);
