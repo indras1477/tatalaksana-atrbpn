@@ -33,7 +33,7 @@ export default function LoginPage() {
       // Set cookie for middleware - remember me = 120 menit, tidak = 2 jam
       const maxAge = rememberMe ? 120 * 60 : 120 * 60;
       document.cookie = `token=${data.token}; path=/; max-age=${maxAge}`;
-      router.replace('/e-sop-atrbpn/');
+      router.replace('/');
     } catch (err) {
       setError('Tidak dapat terhubung ke server');
       setLoading(false);
