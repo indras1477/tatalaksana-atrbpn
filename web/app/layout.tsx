@@ -15,6 +15,9 @@ const geistMono = Geist_Mono({
 export const metadata: Metadata = {
   title: "E-SOP ATR BPN",
   description: "Sistem Operasional Standard ATR BPN",
+  icons: {
+    icon: '/icon-bpn.ico',
+  },
 };
 
 export default function RootLayout({
