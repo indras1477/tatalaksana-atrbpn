@@ -1,7 +1,6 @@
 "use client";
-import React, { useState } from 'react';
-import { useRouter } from 'next/navigation';
-import { Lock, LogIn, Building2, Shield } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { LogIn, Building2, Shield, RefreshCw } from 'lucide-react';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
@@ -9,7 +8,41 @@ export default function LoginPage() {
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
+
+  // --- STATE PENAHAN ---
+  const [isAuthChecking, setIsAuthChecking] = useState(true);
+
+  // --- CEK SESI LOGIN DENGAN VALIDASI SERVER ---
+  useEffect(() => {
+    const checkSession = async () => {
+      const token = localStorage.getItem('token');
+      const userStr = localStorage.getItem('user');
+
+      if (!token || !userStr) {
+        setIsAuthChecking(false);
+        return;
+      }
+
+      try {
+        const res = await fetch('/e-sop-atrbpn/api/auth/verify', {
+          headers: { Authorization: `Bearer ${token}` }
+        });
+
+        if (res.ok) {
+          window.location.replace(window.location.origin + '/e-sop-atrbpn/');
+        } else {
+          localStorage.removeItem('token');
+          localStorage.removeItem('user');
+          document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+          setIsAuthChecking(false);
+        }
+      } catch {
+        setIsAuthChecking(false);
+      }
+    };
+
+    checkSession();
+  }, []);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,26 +55,43 @@ export default function LoginPage() {
         body: JSON.stringify({ username, password, remember: rememberMe }),
       });
       const data = await res.json();
+      
       if (!res.ok) {
         setError(data.error || 'Login gagal');
         setLoading(false);
         return;
       }
+      
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       localStorage.setItem('expiresIn', String(data.expiresIn || 120));
-      // Set cookie for middleware - remember me = 120 menit, tidak = 2 jam
+      
       const maxAge = rememberMe ? 120 * 60 : 120 * 60;
       document.cookie = `token=${data.token}; path=/; max-age=${maxAge}`;
-      router.replace('/');
+      
+      window.location.replace(window.location.origin + '/e-sop-atrbpn/');
     } catch (err) {
+      console.error('Login error:', err);
       setError('Tidak dapat terhubung ke server');
       setLoading(false);
     }
   };
 
+  // --- LAYAR LOADING VERIFIKASI SESI ---
+  if (isAuthChecking) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-slate-900 via-blue-900 to-slate-900">
+        <div className="flex flex-col items-center gap-4 animate-in fade-in zoom-in duration-500">
+          <RefreshCw className="w-12 h-12 animate-spin text-blue-500" />
+          <h2 className="text-xl font-bold tracking-widest text-white animate-pulse">MENYIAPKAN HALAMAN...</h2>
+        </div>
+      </div>
+    );
+  }
+
+  // --- FORM LOGIN UTAMA ---
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-slate-900 via-blue-900 to-slate-900 relative overflow-hidden">
+    <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-slate-900 via-blue-900 to-slate-900 relative overflow-hidden">
       {/* Background Pattern */}
       <div className="absolute inset-0 opacity-10">
         <div className="absolute top-0 left-0 w-96 h-96 bg-blue-500 rounded-full blur-3xl -translate-x-1/2 -translate-y-1/2"></div>
@@ -51,7 +101,7 @@ export default function LoginPage() {
       <div className="relative z-10 w-full max-w-md px-4">
         {/* Logo Header */}
         <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-gradient-to-br from-blue-500 to-cyan-500 rounded-2xl shadow-2xl mb-6">
+          <div className="inline-flex items-center justify-center w-20 h-20 bg-linear-to-br from-blue-500 to-cyan-500 rounded-2xl shadow-2xl mb-6">
             <Building2 className="w-10 h-10 text-white" />
           </div>
           <h1 className="text-3xl font-bold text-white">E-SOP</h1>
@@ -112,7 +162,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 bg-gradient-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full py-3 bg-linear-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? (
                 <span className="flex items-center gap-2">

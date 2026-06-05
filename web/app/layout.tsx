@@ -12,11 +12,13 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// Menambahkan tipe : Metadata untuk menghilangkan error eslint
 export const metadata: Metadata = {
-  title: "E-SOP ATR BPN",
-  description: "Sistem Operasional Standard ATR BPN",
+  title: 'E-BISPRO ATR/BPN',
+  description: 'Sistem Elektronik Dokumen Ketatalaksanaan AR/BPN',
   icons: {
-    icon: '/icon-bpn.ico',
+    // Menambahkan /e-sop-atrbpn di depannya agar sesuai dengan basePath
+    icon: '/e-sop-atrbpn/icon-bpn.ico',
   },
 };
 

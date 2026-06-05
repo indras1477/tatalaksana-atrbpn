@@ -24,3 +24,19 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+@media print {
+  /* Memaksa SEMUA elemen dari ujung ke ujung agar membuang kuncian tinggi (h-screen dll) */
+  html, body, #__next, main, div[class*="overflow"], div[class*="h-full"], div[class*="h-screen"] {
+    height: auto !important;
+    min-height: auto !important;
+    max-height: none !important;
+    overflow: visible !important;
+    position: static !important;
+    display: block !important;
+  }
+  
+  /* Hilangkan flex container yang bisa mencekik height saat print */
+  body {
+    display: block !important;
+  }
+}

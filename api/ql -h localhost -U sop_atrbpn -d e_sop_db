@@ -1,0 +1,23 @@
+                                         Table "public.users"
+    Column    |            Type             | Collation | Nullable |              Default              
+--------------+-----------------------------+-----------+----------+-----------------------------------
+ id           | integer                     |           | not null | nextval('users_id_seq'::regclass)
+ username     | character varying(100)      |           | not null | 
+ password     | character varying(255)      |           | not null | 
+ nama_lengkap | character varying(255)      |           |          | 
+ email        | character varying(255)      |           |          | 
+ role_id      | integer                     |           |          | 
+ active       | boolean                     |           |          | true
+ created_at   | timestamp without time zone |           |          | CURRENT_TIMESTAMP
+ last_login   | timestamp without time zone |           |          | 
+ role         | character varying(50)       |           |          | 'viewer'::character varying
+Indexes:
+    "users_pkey" PRIMARY KEY, btree (id)
+    "users_username_key" UNIQUE CONSTRAINT, btree (username)
+Foreign-key constraints:
+    "users_role_id_fkey" FOREIGN KEY (role_id) REFERENCES roles(id)
+Referenced by:
+    TABLE "audit_logs" CONSTRAINT "audit_logs_user_id_fkey" FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE SET NULL
+    TABLE "dokumen" CONSTRAINT "dokumen_created_by_fkey" FOREIGN KEY (created_by) REFERENCES users(id)
+    TABLE "sessions" CONSTRAINT "sessions_user_id_fkey" FOREIGN KEY (user_id) REFERENCES users(id)
+
