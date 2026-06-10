@@ -44,8 +44,8 @@ export interface SOPBuilderProps {
   onBackTrigger?: () => void;
 }
 
-// --- KOMPONEN PELACAK PANAH LINTAS BARIS ---
-const BranchArrow = ({ sourceIdx, targetIdx, loopTargetStr }: { sourceIdx: number, targetIdx: number, loopTargetStr: string }) => {
+// --- KOMPONEN PELACAK PANAH CABANG (SVG OVERLAY) ---
+const BranchArrow = ({ sourceIdx, targetIdx, updateTrigger, isPrinting }: { sourceIdx: number, targetIdx: number, updateTrigger: number, isPrinting: boolean }) => {
   const pathRef = useRef<SVGPathElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
 
@@ -65,24 +65,28 @@ const BranchArrow = ({ sourceIdx, targetIdx, loopTargetStr }: { sourceIdx: numbe
       const tgtRect = tgtShape.getBoundingClientRect();
       const svgRect = svgEl.getBoundingClientRect(); 
 
-      if (srcRect.width === 0) return;
+      if (srcRect.width === 0 || svgRect.width === 0) return;
 
+      // Koordinat relatif terhadap SVG Container agar kebal terhadap pergeseran kolom
       const startX = srcRect.right - svgRect.left;
       const startY = (srcRect.top + srcRect.height / 2) - svgRect.top;
-      const endX = tgtRect.right - svgRect.left;
+      // Menempel di dinding kanan target (+2px padding)
+      const endX = (tgtRect.right - svgRect.left) + 2; 
       const endY = (tgtRect.top + tgtRect.height / 2) - svgRect.top;
 
       const controlX = Math.max(startX, endX) + 25; 
-      const d = `M ${startX} ${startY} L ${controlX} ${startY} L ${controlX} ${endY} L ${endX + 5} ${endY}`;
+      const d = `M ${startX} ${startY} L ${controlX} ${startY} L ${controlX} ${endY} L ${endX} ${endY}`;
       pathEl.setAttribute('d', d);
     };
+
+    // Jeda 100ms untuk sinkronisasi layout mode view/print
+    const timer = setTimeout(update, 100);
 
     const throttledUpdate = () => {
       cancelAnimationFrame(reqId);
       reqId = requestAnimationFrame(update);
     };
 
-    throttledUpdate();
     window.addEventListener('resize', throttledUpdate);
     const tbody = document.getElementById(`shape-${sourceIdx}`)?.closest('tbody');
     let resizeObserver: ResizeObserver | null = null;
@@ -93,26 +97,23 @@ const BranchArrow = ({ sourceIdx, targetIdx, loopTargetStr }: { sourceIdx: numbe
     }
 
     return () => {
+      clearTimeout(timer);
       window.removeEventListener('resize', throttledUpdate);
       if (resizeObserver) resizeObserver.disconnect();
       cancelAnimationFrame(reqId);
     };
-  }, [sourceIdx, targetIdx]);
+  }, [sourceIdx, targetIdx, updateTrigger, isPrinting]);
 
   return (
-    <>
-      <div className="hidden print:flex absolute left-[calc(50%+18px)] top-[calc(50%-8px)] z-50 bg-white px-1 h-4 items-center border border-black rounded">
-        <span className="text-[9px] font-bold text-black whitespace-nowrap">Ke No {loopTargetStr}</span>
-      </div>
-      <svg ref={svgRef} className="absolute top-0 left-0 w-full h-full overflow-visible pointer-events-none z-40 print:hidden">
-        <path ref={pathRef} fill="none" stroke="black" strokeWidth="1.5" markerEnd={`url(#head-branch-${sourceIdx})`} />
-        <defs>
-           <marker id={`head-branch-${sourceIdx}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto">
-             <path d="M 0 0 L 10 5 L 0 10 z" fill="black" />
-           </marker>
-        </defs>
-      </svg>
-    </>
+    <svg ref={svgRef} className="absolute top-0 left-0 w-full h-full overflow-visible pointer-events-none z-40">
+      <path ref={pathRef} fill="none" stroke="black" strokeWidth="1.5" markerEnd={`url(#head-branch-${sourceIdx})`} />
+      <defs>
+         {/* Mata panah BPMN murni */}
+         <marker id={`head-branch-${sourceIdx}`} viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+           <path d="M 0 0 L 10 5 L 0 10 z" fill="black" />
+         </marker>
+      </defs>
+    </svg>
   );
 };
 
@@ -179,7 +180,7 @@ const EditableCell = ({ value, onChange, className, placeholder, center = false 
       suppressContentEditableWarning
       onInput={handleInput}
       onBlur={handleBlur}
-      className={`outline-none bg-transparent w-full min-h-6 empty:before:content-[attr(data-placeholder)] empty:before:text-slate-400 wrap-break-word whitespace-pre-wrap ${center ? 'text-center' : 'text-left'} ${className}`}
+      className={`outline-none bg-transparent w-full min-h-6 empty:before:content-[attr(data-placeholder)] empty:before:text-slate-400 wrap-break-word whitespace-pre-wrap ${center ? 'text-center' : 'text-left'} ${className || ''}`}
       data-placeholder={placeholder}
     />
   );
@@ -187,7 +188,7 @@ const EditableCell = ({ value, onChange, className, placeholder, center = false 
 
 // --- KOMPONEN UTAMA (SOP BUILDER) ---
 const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
-  initialData, initialTitle, initialKey, initialL1, initialL2, isViewOnly, onSaveTrigger, onSubmitTrigger, onBackTrigger
+  initialData, initialTitle, initialKey, initialL1, initialL2, isViewOnly = false, onSaveTrigger, onSubmitTrigger, onBackTrigger
 }, ref) => {
   const searchParams = useSearchParams();
 
@@ -196,23 +197,23 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     try { return JSON.parse(initialData); } catch { return null; }
   }, [initialData]);
   
-  const [judul, setJudul] = useState(parsedData?.judul || initialTitle || searchParams.get('title') || '');
-  const [nomor, setNomor] = useState(parsedData?.nomor || initialKey || searchParams.get('key') || '');
-  const [unitKerja, setUnitKerja] = useState(parsedData?.unitKerja || initialL1 || searchParams.get('l1') || 'Sekretariat Jenderal');
-  const [subUnitKerja, setSubUnitKerja] = useState(parsedData?.subUnitKerja || initialL2 || searchParams.get('l2') || ''); 
+  const [judul, setJudul] = useState<string>(parsedData?.judul || initialTitle || searchParams.get('title') || '');
+  const [nomor, setNomor] = useState<string>(parsedData?.nomor || initialKey || searchParams.get('key') || '');
+  const [unitKerja, setUnitKerja] = useState<string>(parsedData?.unitKerja || initialL1 || searchParams.get('l1') || 'Sekretariat Jenderal');
+  const [subUnitKerja, setSubUnitKerja] = useState<string>(parsedData?.subUnitKerja || initialL2 || searchParams.get('l2') || ''); 
   const [pelaksanaHeaders, setPelaksanaHeaders] = useState<string[]>(parsedData?.pelaksanaHeaders || ['', '', '']);
-  const [jabatanPengesah, setJabatanPengesah] = useState(parsedData?.jabatanPengesah || '');
-  const [namaPengesah, setNamaPengesah] = useState(parsedData?.namaPengesah || '');
-  const [nipPengesah, setNipPengesah] = useState(parsedData?.nipPengesah || '');
-  const [tglPembuatan, setTglPembuatan] = useState(parsedData?.tglPembuatan || '');
-  const [tglRevisi, setTglRevisi] = useState(parsedData?.tglRevisi || '');
-  const [tglEfektif, setTglEfektif] = useState(parsedData?.tglEfektif || '');
-  const [dasarHukum, setDasarHukum] = useState(parsedData?.dasarHukum || '1. ');
-  const [kualifikasi, setKualifikasi] = useState(parsedData?.kualifikasi || '1. ');
-  const [keterkaitan, setKeterkaitan] = useState(parsedData?.keterkaitan || '1. ');
-  const [peralatan, setPeralatan] = useState(parsedData?.peralatan || '1. ');
-  const [peringatan, setPeringatan] = useState(parsedData?.peringatan || '1. ');
-  const [pencatatan, setPencatatan] = useState(parsedData?.pencatatan || '1. ');
+  const [jabatanPengesah, setJabatanPengesah] = useState<string>(parsedData?.jabatanPengesah || '');
+  const [namaPengesah, setNamaPengesah] = useState<string>(parsedData?.namaPengesah || '');
+  const [nipPengesah, setNipPengesah] = useState<string>(parsedData?.nipPengesah || '');
+  const [tglPembuatan, setTglPembuatan] = useState<string>(parsedData?.tglPembuatan || '');
+  const [tglRevisi, setTglRevisi] = useState<string>(parsedData?.tglRevisi || '');
+  const [tglEfektif, setTglEfektif] = useState<string>(parsedData?.tglEfektif || '');
+  const [dasarHukum, setDasarHukum] = useState<string>(parsedData?.dasarHukum || '1. ');
+  const [kualifikasi, setKualifikasi] = useState<string>(parsedData?.kualifikasi || '1. ');
+  const [keterkaitan, setKeterkaitan] = useState<string>(parsedData?.keterkaitan || '1. ');
+  const [peralatan, setPeralatan] = useState<string>(parsedData?.peralatan || '1. ');
+  const [peringatan, setPeringatan] = useState<string>(parsedData?.peringatan || '1. ');
+  const [pencatatan, setPencatatan] = useState<string>(parsedData?.pencatatan || '1. ');
 
   const [steps, setSteps] = useState<SOPStep[]>(parsedData?.steps || [
     { id: 'step-1', kegiatan: '', pelaksanaCol: 0, symbol: 'start', arrowDown: true, waktu: '', syarat: '', output: '', ket: '' }
@@ -220,7 +221,21 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
 
   const [coverBreaks, setCoverBreaks] = useState<{ [key: number]: boolean }>(parsedData?.coverBreaks || { 1: false, 2: false });
   const [activeTab, setActiveTab] = useState<'cover' | number>('cover');
-  const [isSaveModalOpen, setIsSaveModalOpen] = useState(false);
+  const [isSaveModalOpen, setIsSaveModalOpen] = useState<boolean>(false);
+
+  const [isPrinting, setIsPrinting] = useState(false);
+  const effectiveIsViewOnly = isViewOnly || isPrinting;
+
+  useEffect(() => {
+    const handleBeforePrint = () => setIsPrinting(true);
+    const handleAfterPrint = () => setIsPrinting(false);
+    window.addEventListener('beforeprint', handleBeforePrint);
+    window.addEventListener('afterprint', handleAfterPrint);
+    return () => {
+      window.removeEventListener('beforeprint', handleBeforePrint);
+      window.removeEventListener('afterprint', handleAfterPrint);
+    };
+  }, []);
 
   useEffect(() => {
     if (!initialData && typeof window !== 'undefined') {
@@ -254,7 +269,6 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     }
   }, [initialData]);
 
-  // --- EFEK CSS PRINT ---
   useEffect(() => {
     const style = document.createElement('style');
     style.innerHTML = `
@@ -285,7 +299,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
           page-break-after: always !important; 
           width: 330mm !important; 
           height: 215mm !important; 
-          padding: 6mm !important; /* PERBAIKAN: Margin kertas diturunkan jadi 6mm */
+          padding: 6mm !important; 
           display: flex !important;
           flex-direction: column !important;
           box-sizing: border-box !important;
@@ -300,7 +314,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
           width: 330mm !important;
           min-height: 215mm !important;
           height: auto !important;
-          padding: 6mm !important; /* PERBAIKAN: Margin kertas diturunkan jadi 6mm */
+          padding: 6mm !important; 
           display: flex !important;
           flex-direction: column !important;
           box-sizing: border-box !important;
@@ -349,6 +363,14 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     } else {
       alert("Simulasi Terkirim! Data siap diluncurkan ke API Biro Ortala.");
     }
+  };
+
+  const handlePrintAction = () => {
+    setIsPrinting(true);
+    setTimeout(() => {
+      window.print();
+      setTimeout(() => setIsPrinting(false), 500); 
+    }, 300);
   };
 
   const handleExportExcel = () => {
@@ -503,22 +525,53 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     return "text-[11px] leading-tight";
   };
 
-  const getWaktuWidth = () => {
+  const getKegiatanWidth = () => {
     const count = pelaksanaHeaders.length;
-    if (count > 6) return '5%';
-    if (count > 5) return '6%';
-    if (count > 4) return '7%';
-    if (count > 3) return '8%';
-    return '9%';
+    if (count >= 9) return '14%';
+    if (count >= 8) return '15%';
+    if (count >= 6) return '16%';
+    if (count >= 4) return '18%';
+    return '24%';
   };
 
+  const getKeteranganWidth = () => {
+    const count = pelaksanaHeaders.length;
+    if (count >= 9) return '6%';
+    if (count >= 8) return '7%';
+    if (count >= 7) return '7%';
+    if (count >= 6) return '8%';
+    return '10%'; 
+  };
+
+  const getWaktuWidth = () => {
+    const count = pelaksanaHeaders.length;
+    if (count >= 9) return '4%';
+    if (count >= 8) return '5%';
+    if (count >= 7) return '5%';
+    if (count >= 6) return '6%';
+    if (count >= 4) return '7%';
+    return '8%';
+  };
+
+  const getKelengkapanOutputWidth = () => {
+    const count = pelaksanaHeaders.length;
+    if (count >= 9) return '6%';
+    if (count >= 8) return '6%';
+    if (count >= 7) return '7%';
+    if (count >= 6) return '8%';
+    if (count >= 4) return '9%';
+    return '10%';
+  };
+
+  // --- PERBAIKAN: UKURAN FONT DINAMIS UNTUK MUTU BAKU ---
   const getWaktuFontClass = () => {
     const count = pelaksanaHeaders.length;
-    if (count > 6) return 'text-[8px]';
-    if (count > 5) return 'text-[9px]';
-    if (count > 4) return 'text-[10px]';
-    if (count > 3) return 'text-[11px]';
-    return 'text-[12px]';
+    if (count >= 9) return 'text-[7px] leading-tight';
+    if (count === 8) return 'text-[8px] leading-tight';
+    if (count === 7) return 'text-[9px] leading-tight';
+    if (count === 6) return 'text-[10px] leading-tight';
+    if (count === 5) return 'text-[11px] leading-tight';
+    return 'text-[12px] leading-tight'; 
   };
 
   const displayNumbers = useMemo(() => {
@@ -545,50 +598,51 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   const renderSymbolBox = (step: SOPStep, absIdx: number, colIdx: number, localIdx: number, chunkLength: number) => {
     const isCurr = step.pelaksanaCol === colIdx;
     
-    // 1. Ambil data baris sebelumnya (jika ada)
     const prevStep = absIdx > 0 ? steps[absIdx - 1] : null;
-    
-    // 2. Gunakan localIdx > 0 untuk proteksi awal halaman
     const prevCol = (localIdx > 0 && prevStep && prevStep.arrowDown) ? prevStep.pelaksanaCol : null;
-    
     const nextCol = absIdx < steps.length - 1 ? steps[absIdx + 1].pelaksanaCol : null;
     const isDiamond = step.symbol === 'decision';
     
-    // Auto-scale shape & offset agar panah tidak error saat > 10 pelaksana
-    let shapeClass = "w-14 h-8 text-[8px]";
-    let offsetW = isDiamond ? '16px' : '28px';
-    let offsetH = isDiamond ? '16px' : '16px';
+    let shapeClass = "w-14 h-8";
+    let diamondClass = "w-8 h-8";
+    let offsetW = isDiamond ? 24 : 28;
+    let offsetH = isDiamond ? 24 : 16;
 
     if (pelaksanaHeaders.length > 7) {
-      shapeClass = "w-8 h-6 text-[6px]";
-      offsetW = isDiamond ? '12px' : '16px';
-      offsetH = isDiamond ? '12px' : '12px';
+      shapeClass = "w-8 h-6";
+      diamondClass = "w-6 h-6";
+      offsetW = isDiamond ? 16 : 16;
+      offsetH = isDiamond ? 16 : 12;
     } else if (pelaksanaHeaders.length > 5) {
-      shapeClass = "w-10 h-6 text-[7px]";
-      offsetW = isDiamond ? '14px' : '20px';
-      offsetH = isDiamond ? '14px' : '12px';
+      shapeClass = "w-10 h-6";
+      diamondClass = "w-7 h-7";
+      offsetW = isDiamond ? 20 : 20;
+      offsetH = isDiamond ? 20 : 12;
     }
 
     if (!isCurr) {
       return (
-        <>
-          <div onClick={() => !isViewOnly && updateStep(absIdx, 'pelaksanaCol', colIdx)} className="absolute inset-0 cursor-pointer z-10 hover:bg-blue-50/50 transition-colors" />
-          <svg className="absolute inset-0 w-full h-full pointer-events-none z-10 overflow-visible" preserveAspectRatio="none">
-            {prevCol !== null && (
-              <>
-                {colIdx === prevCol && (
-                  <>
-                    {localIdx > 0 && <line x1="50%" y1="0" x2="50%" y2="50%" stroke="black" strokeWidth="1.5" />}
-                    <line x1="50%" y1="50%" x2={step.pelaksanaCol > colIdx ? "100%" : "0"} y2="50%" stroke="black" strokeWidth="1.5" />
-                  </>
-                )}
-                {((colIdx > prevCol && colIdx < step.pelaksanaCol) || (colIdx < prevCol && colIdx > step.pelaksanaCol)) && (
-                  <line x1="0" y1="50%" x2="100%" y2="50%" stroke="black" strokeWidth="1.5" />
-                )}
-              </>
+        <div className="relative w-full h-full min-h-16 flex items-center justify-center">
+          <div onClick={() => !effectiveIsViewOnly && updateStep(absIdx, 'pelaksanaCol', colIdx)} className="absolute inset-0 cursor-pointer z-10 hover:bg-blue-50/50 transition-colors" />
+          
+          <div className="absolute top-0 left-0 w-full h-full pointer-events-none z-10">
+            {prevCol !== null && colIdx === prevCol && localIdx > 0 && (
+              <div className="absolute left-[calc(50%-0.75px)] w-[1.5px] pointer-events-none" style={{ top: 0, height: '50%' }}>
+                <svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="0" y2="100%" stroke="black" strokeWidth="1.5" /></svg>
+              </div>
             )}
-          </svg>
-        </>
+            {prevCol !== null && colIdx === prevCol && (
+              <div className="absolute top-[calc(50%-0.75px)] h-[1.5px] pointer-events-none" style={{ left: step.pelaksanaCol > colIdx ? '50%' : 0, right: step.pelaksanaCol > colIdx ? 0 : '50%' }}>
+                 <svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="100%" y2="0" stroke="black" strokeWidth="1.5" /></svg>
+              </div>
+            )}
+            {prevCol !== null && ((colIdx > prevCol && colIdx < step.pelaksanaCol) || (colIdx < prevCol && colIdx > step.pelaksanaCol)) && (
+              <div className="absolute top-[calc(50%-0.75px)] left-0 w-full h-[1.5px] pointer-events-none">
+                 <svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="100%" y2="0" stroke="black" strokeWidth="1.5" /></svg>
+              </div>
+            )}
+          </div>
+        </div>
       );
     }
 
@@ -597,15 +651,14 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     const shapeId = `shape-${absIdx}`;
     
     switch (step.symbol) {
-      case 'start': case 'end': Shape = <div id={shapeId} className={`${commonClass} rounded-full uppercase`}>START</div>; break;
-      case 'decision': Shape = <div id={shapeId} className={`${commonClass.replace(/w-\d+ h-\d+/, "w-8 h-8")} rotate-45`}><div className="-rotate-45">?</div></div>; break;
+      case 'start': case 'end': Shape = <div id={shapeId} className={`${commonClass} rounded-full uppercase`}></div>; break;
+      case 'decision': Shape = <div id={shapeId} className={`${commonClass.replace(/w-\d+ h-\d+/, diamondClass)} rotate-45`}></div>; break;
       case 'connector': Shape = (
-        <div id={shapeId} className="w-8 h-8 relative flex items-center justify-center mx-auto z-30">
+        <div id={shapeId} className="w-8 h-8 relative flex items-center justify-center mx-auto z-30 bg-white">
           <svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full overflow-visible"><polygon points="0,0 100,0 100,65 50,100 0,65" fill="white" stroke="black" strokeWidth="6" /></svg>
-          <span className="z-30 text-[8px] font-black pb-1">HAL</span>
         </div>
       ); break;
-      default: Shape = <div id={shapeId} className={`${commonClass} uppercase`}>PROSES</div>;
+      default: Shape = <div id={shapeId} className={`${commonClass} uppercase`}></div>;
     }
 
     const isLastInChunk = localIdx === chunkLength - 1;
@@ -614,35 +667,52 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     const showDownLine = step.arrowDown && !isLastInChunk && !(isConnector && !isFirstInChunk);
 
     return (
-      <>
-        <svg className="absolute inset-0 w-full h-full pointer-events-none overflow-visible z-20" preserveAspectRatio="none">
-          <defs>
-            <marker id={`head-${absIdx}`} viewBox="0 0 10 10" refX="9" refY="5" markerWidth="5" markerHeight="5" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="black" /></marker>
-          </defs>
+      <div className="relative w-full h-full min-h-16 flex flex-col items-center justify-center">
+        
+        <div className="absolute top-0 left-0 w-full h-full pointer-events-none z-10">
+          
+          {prevCol !== null && prevCol === colIdx && localIdx > 0 && (
+            <div className="absolute top-0 left-[calc(50%-0.75px)] w-[1.5px] pointer-events-none z-20" style={{ height: `calc(50% - ${offsetH}px)` }}>
+               <svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="0" y2="100%" stroke="black" strokeWidth="1.5" /></svg>
+               <div className="absolute bottom-0 left-1/2 -translate-x-1/2 z-20">
+                 <svg width="8" height="6" viewBox="0 0 8 6" className="block"><polygon points="0,0 8,0 4,6" fill="black" /></svg>
+               </div>
+            </div>
+          )}
 
-          {prevCol !== null && (
-            prevCol === colIdx ? (
-              localIdx > 0 && <line x1="50%" y1="0" x2="50%" y2={`calc(50% - ${offsetH})`} stroke="black" strokeWidth="1.5" markerEnd={`url(#head-${absIdx})`} />
-            ) : (
-              <line x1={prevCol > colIdx ? "100%" : "0"} y1="50%" x2={`calc(50% ${prevCol > colIdx ? '+' : '-'} ${offsetW})`} y2="50%" stroke="black" strokeWidth="1.5" markerEnd={`url(#head-${absIdx})`} />
-            )
+          {prevCol !== null && prevCol < colIdx && (
+            <div className="absolute top-[calc(50%-0.75px)] left-0 h-[1.5px] pointer-events-none z-20" style={{ width: `calc(50% - ${offsetW}px)` }}>
+               <svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="100%" y2="0" stroke="black" strokeWidth="1.5" /></svg>
+               <div className="absolute right-0 top-1/2 -translate-y-1/2 z-20">
+                 <svg width="6" height="8" viewBox="0 0 6 8" className="block"><polygon points="0,0 6,4 0,8" fill="black" /></svg>
+               </div>
+            </div>
+          )}
+
+          {prevCol !== null && prevCol > colIdx && (
+            <div className="absolute top-[calc(50%-0.75px)] right-0 h-[1.5px] pointer-events-none z-20" style={{ width: `calc(50% - ${offsetW}px)` }}>
+               <svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="100%" y1="0" x2="0" y2="0" stroke="black" strokeWidth="1.5" /></svg>
+               <div className="absolute left-0 top-1/2 -translate-y-1/2 z-20">
+                 <svg width="6" height="8" viewBox="0 0 6 8" className="block"><polygon points="6,0 0,4 6,8" fill="black" /></svg>
+               </div>
+            </div>
           )}
 
           {nextCol !== null && showDownLine && (
-            <g>
-              <line x1="50%" y1={`calc(50% + ${offsetH})`} x2="50%" y2="100%" stroke="black" strokeWidth="1.5" />
-            </g>
+            <div className="absolute bottom-0 left-[calc(50%-0.75px)] w-[1.5px] pointer-events-none z-20" style={{ height: `calc(50% - ${offsetH}px)` }}>
+               <svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="0" y2="100%" stroke="black" strokeWidth="1.5" /></svg>
+            </div>
           )}
-        </svg>
+        </div>
 
         {nextCol !== null && step.arrowDown && step.symbol === 'decision' && (
-          <div className="absolute left-[calc(50%+4px)] top-[calc(50%+20px)] text-[9px] font-bold text-black leading-none pointer-events-none z-30 print:hidden">Ya</div>
+          <div className="absolute text-[10px] font-bold text-black leading-none pointer-events-none z-40 bg-white/90 px-1 py-0.5 rounded" style={{ left: 'calc(50% + 4px)', top: `calc(50% + ${offsetH + 2}px)` }}>Ya</div>
         )}
         
         {(() => {
           let targetIdx = -1;
           if (step.loopTarget) {
-            targetIdx = displayNumbers.findIndex(n => n === step.loopTarget);
+            targetIdx = displayNumbers.findIndex((n: string) => n === step.loopTarget);
             if (targetIdx === -1 && !isNaN(parseInt(step.loopTarget))) {
               targetIdx = parseInt(step.loopTarget) - 1;
             }
@@ -651,67 +721,48 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
           return (
             <>
               {step.loopTarget && targetIdx !== -1 && step.symbol === 'decision' && (
-                <div className="absolute left-[calc(50%+22px)] top-[calc(50%-10px)] text-[9px] font-bold text-black leading-none pointer-events-none z-30 print:hidden">Tidak</div>
+                <div className="absolute text-[10px] font-bold text-black leading-none pointer-events-none z-40 bg-white px-0.5 rounded" style={{ top: `calc(50% - 18px)`, left: `calc(50% + ${offsetW - 5}px)` }}>Tidak</div>
               )}
               {step.loopTarget && targetIdx !== -1 && (
-                <BranchArrow sourceIdx={absIdx} targetIdx={targetIdx} loopTargetStr={step.loopTarget} />
+                <BranchArrow sourceIdx={absIdx} targetIdx={targetIdx} updateTrigger={pelaksanaHeaders.length} isPrinting={isPrinting} />
               )}
             </>
           );
         })()}
 
-        <div className="relative w-full h-full min-h-20 flex flex-col items-center justify-center z-30 group/sym pointer-events-none">
-          <div className="relative pointer-events-auto">
-            {Shape}
-            {!isViewOnly && (
-              <div className="absolute -top-14 left-1/2 -translate-x-1/2 flex flex-col gap-1 bg-white border border-slate-300 p-1.5 rounded-lg shadow-xl opacity-0 group-hover/sym:opacity-100 transition-opacity z-50 no-print font-sans pointer-events-auto">
-                <div className="flex gap-1 border-b border-slate-200 pb-1.5">
-                  <button onClick={(e) => { e.stopPropagation(); updateStep(absIdx, 'symbol', 'start')}} className="p-1 hover:bg-slate-100 rounded" title="Start/End"><Circle size={14}/></button>
-                  <button onClick={(e) => { e.stopPropagation(); updateStep(absIdx, 'symbol', 'process')}} className="p-1 hover:bg-slate-100 rounded" title="Proses"><Square size={14}/></button>
-                  <button onClick={(e) => { e.stopPropagation(); updateStep(absIdx, 'symbol', 'decision')}} className="p-1 hover:bg-slate-100 rounded" title="Decision/Kondisi"><Diamond size={14}/></button>
-                  <button onClick={(e) => { e.stopPropagation(); updateStep(absIdx, 'symbol', 'connector')}} className="p-1 hover:bg-slate-100 rounded" title="Konektor Halaman"><Shield size={14}/></button>
-                </div>
-                <div className="flex gap-1 pt-1 justify-center">
-                  <button onClick={(e) => { e.stopPropagation(); updateStep(absIdx, 'arrowDown', !step.arrowDown)}} className={`text-[9px] font-bold px-2 py-1 rounded transition-colors ${step.arrowDown ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-400'}`}>
-                    TURUN
-                  </button>
-                  <button onClick={(e) => { e.stopPropagation(); toggleLoopTarget(absIdx)}} className={`text-[9px] font-bold px-2 py-1 rounded transition-colors ${step.loopTarget ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-400'}`}>
-                    CABANG
-                  </button>
-                </div>
+        <div className="relative z-30 group/sym pointer-events-auto">
+          {Shape}
+          {!effectiveIsViewOnly && (
+            <div className="absolute -top-14 left-1/2 -translate-x-1/2 flex flex-col gap-1 bg-white border border-slate-300 p-1.5 rounded-lg shadow-xl opacity-0 group-hover/sym:opacity-100 transition-opacity z-50 no-print font-sans pointer-events-auto">
+              <div className="flex gap-1 border-b border-slate-200 pb-1.5">
+                <button onClick={(e) => { e.stopPropagation(); updateStep(absIdx, 'symbol', 'start')}} className="p-1 hover:bg-slate-100 rounded" title="Start/End"><Circle size={14}/></button>
+                <button onClick={(e) => { e.stopPropagation(); updateStep(absIdx, 'symbol', 'process')}} className="p-1 hover:bg-slate-100 rounded" title="Proses"><Square size={14}/></button>
+                <button onClick={(e) => { e.stopPropagation(); updateStep(absIdx, 'symbol', 'decision')}} className="p-1 hover:bg-slate-100 rounded" title="Decision/Kondisi"><Diamond size={14}/></button>
+                <button onClick={(e) => { e.stopPropagation(); updateStep(absIdx, 'symbol', 'connector')}} className="p-1 hover:bg-slate-100 rounded" title="Konektor Halaman"><Shield size={14}/></button>
               </div>
-            )}
-          </div>
+              <div className="flex gap-1 pt-1 justify-center">
+                <button onClick={(e) => { e.stopPropagation(); updateStep(absIdx, 'arrowDown', !step.arrowDown)}} className={`text-[9px] font-bold px-2 py-1 rounded transition-colors ${step.arrowDown ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-400'}`}>
+                  TURUN
+                </button>
+                <button onClick={(e) => { e.stopPropagation(); toggleLoopTarget(absIdx)}} className={`text-[9px] font-bold px-2 py-1 rounded transition-colors ${step.loopTarget ? 'bg-amber-100 text-amber-700' : 'bg-slate-100 text-slate-400'}`}>
+                  CABANG
+                </button>
+              </div>
+            </div>
+          )}
         </div>
-      </>
+      </div>
     );
   };
 
-  // --- PEMBAGIAN BARIS DINAMIS (Pintar / Smart Chunking) ---
   const chunkedSteps: SOPStep[][] = [];
   let currentChunk: SOPStep[] = [];
-  let currentChunkWeight = 0;
 
   steps.forEach((step) => {
     currentChunk.push(step);
-    
-    const textLength = (step.kegiatan?.length || 0) + (step.syarat?.length || 0) + (step.output?.length || 0) + (step.ket?.length || 0);
-    
-    let rowWeight = 1; 
-    if (textLength > 400) {
-      rowWeight = 4; 
-    } else if (textLength > 250) {
-      rowWeight = 3; 
-    } else if (textLength > 120) {
-      rowWeight = 2; 
-    }
-
-    currentChunkWeight += rowWeight;
-
-    if (step.isPageBreak || currentChunkWeight >= 8 || currentChunk.length >= 8) {
+    if (step.isPageBreak || currentChunk.length >= 6) {
       chunkedSteps.push(currentChunk);
       currentChunk = [];
-      currentChunkWeight = 0;
     }
   });
   
@@ -719,15 +770,15 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     chunkedSteps.push(currentChunk);
   }
 
-  // --- LOGIKA PEMISAH COVER ---
   const coverRows = [
     { id: 1, minH: "min-h-12", leftTitle: "Dasar Hukum:", leftVal: dasarHukum, leftSetter: setDasarHukum, rightTitle: "Kualifikasi Pelaksana:", rightVal: kualifikasi, rightSetter: setKualifikasi },
     { id: 2, minH: "min-h-12", leftTitle: "Keterkaitan:", leftVal: keterkaitan, leftSetter: setKeterkaitan, rightTitle: "Peralatan / Perlengkapan:", rightVal: peralatan, rightSetter: setPeralatan },
     { id: 3, minH: "min-h-12", leftTitle: "Peringatan:", leftVal: peringatan, leftSetter: setPeringatan, rightTitle: "Pencatatan dan Pendataan:", rightVal: pencatatan, rightSetter: setPencatatan }
   ];
 
-  const coverChunks: typeof coverRows[] = [];
-  let currentCoverChunk: typeof coverRows = [];
+  type CoverRow = typeof coverRows[0];
+  const coverChunks: CoverRow[][] = [];
+  let currentCoverChunk: CoverRow[] = [];
   coverRows.forEach(row => {
     currentCoverChunk.push(row);
     if (coverBreaks[row.id]) {
@@ -793,7 +844,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
           </div>
           <div className="flex gap-2">
             <button onClick={handleExportExcel} className="px-3 py-1.5 bg-green-700 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95"><FileSpreadsheet size={16} /> Excel</button>
-            <button onClick={() => window.print()} className="px-3 py-1.5 bg-slate-800 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95"><Printer size={16} /> Cetak (F4)</button>
+            <button onClick={handlePrintAction} className="px-3 py-1.5 bg-slate-800 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95"><Printer size={16} /> Cetak (F4)</button>
           </div>
         </div>
         <div className="flex flex-wrap justify-center bg-slate-100 p-1 rounded-xl shadow-inner w-full">
@@ -804,18 +855,17 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         </div>
       </div>
 
-      {/* BANNER INFORMASI - Hanya muncul saat di Cover & bukan view only */}
-      {!isViewOnly && activeTab === 'cover' && (
+      {!effectiveIsViewOnly && activeTab === 'cover' && (
         <div className="w-full max-w-[330mm] bg-blue-50 border border-blue-200 text-blue-700 text-[11px] font-sans p-3 rounded-xl mb-4 print:hidden flex items-start gap-2 shadow-sm">
           <Info size={16} className="shrink-0 mt-0.5" />
           <p><b>Fitur Pemisah Cover:</b> Jika kolom Dasar Hukum dsb terlalu panjang, Anda bisa menekan tombol <b>✂️ Pisah ke Halaman Baru</b>. Tombol ini hanya akan terlihat saat Anda mengedit web, dan tidak akan muncul di hasil PDF.</p>
         </div>
       )}
 
-      {/* COVER UTAMA (FLEKSIBEL / RESPONSIVE) */}
+      {/* COVER UTAMA */}
       {coverChunks.map((chunk, chunkIdx) => (
         <React.Fragment key={`cover-chunk-${chunkIdx}`}>
-          <div className={`paper-f4-landscape-auto shadow-2xl p-[6mm] border border-slate-300 text-black cover-page-container flex-col ${activeTab === 'cover' ? 'flex mb-8 print:mb-0' : 'hidden print:flex'}`}>
+          <div className={`print-page-target paper-f4-landscape-auto shadow-2xl p-[6mm] border border-slate-300 text-black cover-page-container flex-col ${activeTab === 'cover' ? 'flex mb-8 print:mb-0' : 'hidden print:flex'}`}>
             <table className="w-full border-collapse border-2 border-black table-fixed cover-table mb-auto">
               <colgroup>
                 <col className="w-[10%]" />
@@ -834,11 +884,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                   <tr>
                     <td colSpan={4} className="border-2 border-black p-4 text-center align-middle">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
-                      <img 
-                        src="/e-sop-atrbpn/logo-bpn.png" 
-                        alt="Logo ATR BPN" 
-                        className="w-20 h-20 object-contain mb-3 mx-auto" 
-                      />
+                      <img src="/e-sop-atrbpn/logo-bpn.png" alt="Logo ATR BPN" className="w-20 h-20 object-contain mb-3 mx-auto" />
                       <p className="text-[12px] font-bold uppercase leading-tight">Kementerian Agraria dan Tata Ruang/</p>
                       <p className="text-[12px] font-bold uppercase mb-4 leading-tight">Badan Pertanahan Nasional</p>
                       <EditableCell value={unitKerja} onChange={setUnitKerja} center={true} className="text-[12px] font-bold uppercase" />
@@ -877,12 +923,9 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                        <div className="p-1.5 bg-slate-100 font-bold uppercase text-[12px] border-b-2 border-black">{row.leftTitle}</div>
                        <div className={`p-2 text-[12px] ${row.minH}`}><EditableCell value={row.leftVal} onChange={row.leftSetter} /></div>
 
-                       {!isViewOnly && !coverBreaks[row.id] && row.id !== 3 && (
+                       {!effectiveIsViewOnly && !coverBreaks[row.id] && row.id !== 3 && (
                          <div className="absolute bottom-0 right-0 translate-x-1/2 translate-y-1/2 z-50 no-print font-sans pointer-events-auto">
-                           <button 
-                             onClick={() => setCoverBreaks({...coverBreaks, [row.id]: true})}
-                             className="px-3 py-1 bg-white hover:bg-slate-100 text-slate-600 text-[10px] font-bold rounded-full border border-slate-300 shadow-md transition-all active:scale-95 whitespace-nowrap"
-                           >
+                           <button onClick={() => setCoverBreaks({...coverBreaks, [row.id]: true})} className="px-3 py-1 bg-white hover:bg-slate-100 text-slate-600 text-[10px] font-bold rounded-full border border-slate-300 shadow-md transition-all active:scale-95 whitespace-nowrap">
                              ✂️ Pisah ke Halaman Baru
                            </button>
                          </div>
@@ -900,15 +943,9 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
             <div className="flex-1 bg-transparent pointer-events-none" />
           </div>
 
-          {!isViewOnly && activeTab === 'cover' && chunkIdx < coverChunks.length - 1 && (
+          {!effectiveIsViewOnly && activeTab === 'cover' && chunkIdx < coverChunks.length - 1 && (
              <div className="w-full max-w-[330mm] flex justify-center -mt-4 mb-8 relative z-10 print:hidden font-sans">
-               <button 
-                  onClick={() => {
-                     const lastRowId = chunk[chunk.length - 1].id;
-                     setCoverBreaks({...coverBreaks, [lastRowId]: false});
-                  }} 
-                  className="px-4 py-2 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-bold rounded-full border border-amber-300 shadow-md flex items-center gap-2 transition-all"
-               >
+               <button onClick={() => { const lastRowId = chunk[chunk.length - 1].id; setCoverBreaks({...coverBreaks, [lastRowId]: false}); }} className="px-4 py-2 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-bold rounded-full border border-amber-300 shadow-md flex items-center gap-2 transition-all">
                  🔗 Gabungkan Kembali Halaman
                </button>
              </div>
@@ -919,59 +956,62 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
       {/* HALAMAN ALUR */}
       {chunkedSteps.map((chunk, chunkIdx) => {
         const startAbsIdx = steps.findIndex(s => s.id === chunk[0].id);
+        const isLastChunk = chunkIdx === chunkedSteps.length - 1;
+        const shouldStretch = !isLastChunk || chunk.length >= 6;
+
         return (
-          <div key={chunkIdx} className={`paper-f4-landscape shadow-2xl p-[6mm] border border-slate-300 text-black flex flex-col page-container ${activeTab === chunkIdx ? 'flex' : 'hidden print:flex'} font-bookman`}>
+          <div key={chunkIdx} className={`print-page-target paper-f4-landscape shadow-2xl p-[6mm] border border-slate-300 text-black flex-col page-container ${activeTab === chunkIdx ? 'flex' : 'hidden print:flex'} font-bookman`}>
             
-            {/* Header Kiri Atas dan Judul SOP Saja */}
             <div className="flex justify-between items-end mb-3 border-b-4 border-black pb-1 shrink-0">
-              <h2 className="text-lg font-black uppercase">{judul || 'JUDUL SOP'}</h2>
+              <h2 className="text-xl font-black uppercase">{judul || 'JUDUL SOP'}</h2>
             </div>
             
-            <div className="flex-1 overflow-visible">
-              <table className="w-full border-collapse border-2 border-black table-fixed overflow-visible relative font-bookman">
+            <div className={`overflow-visible flex flex-col min-h-0 relative ${shouldStretch ? 'flex-1' : 'mb-auto'}`}>
+              <table className={`w-full border-collapse border-2 border-black table-fixed relative font-bookman bg-white z-10 ${shouldStretch ? 'h-full flex-1' : ''}`}>
                 
                 <colgroup>
-                  <col style={{ width: '3%' }} /> 
-                  <col style={{ width: '18%' }} /> 
-                  
+                  <col style={{ width: '4%' }} /> 
+                  <col style={{ width: getKegiatanWidth() }} /> 
                   {pelaksanaHeaders.map((_, i) => (
-                    <col key={`col-pelaksana-${i}`} style={{ width: `${35 / Math.max(1, pelaksanaHeaders.length)}%` }} /> 
+                    <col key={`col-pelaksana-${i}`} /> 
                   ))}
-                  
-                  <col style={{ width: '12%' }} /> 
+                  <col style={{ width: getKelengkapanOutputWidth() }} /> 
                   <col style={{ width: getWaktuWidth() }} /> 
-                  <col style={{ width: '12%' }} /> 
-                  <col style={{ width: '10%' }} /> 
-                  {!isViewOnly && <col style={{ width: '4%' }} className="no-print" />}
+                  <col style={{ width: getKelengkapanOutputWidth() }} /> 
+                  <col style={{ width: getKeteranganWidth() }} /> 
+                  {!effectiveIsViewOnly && <col style={{ width: '4%' }} className="no-print" />}
                 </colgroup>
 
                 <thead className={getExecutorStyles()}>
                   <tr className="bg-slate-100 font-black uppercase text-center h-8">
                     <th rowSpan={2} className="border-b-2 border-r-2 border-black p-1.5">No</th>
-                    <th rowSpan={2} className="border-b-2 border-r-2 border-black p-1.5">Kegiatan</th>
-                    <th colSpan={pelaksanaHeaders.length} className="border-b-2 border-r-2 border-black p-1">Pelaksana</th>
-                    <th colSpan={3} className="border-b-2 border-r-2 border-black p-1">Mutu Baku</th>
-                    <th rowSpan={2} className="border-b-2 border-r-2 border-black p-1">Keterangan</th>
-                    {!isViewOnly && <th rowSpan={2} className="border-b-2 border-black p-1 no-print">Aksi</th>}
+                    <th rowSpan={2} className="border-b-2 border-r-2 border-black p-1.5 text-[12px]">Kegiatan</th>
+                    <th colSpan={pelaksanaHeaders.length} className="border-b-2 border-r-2 border-black p-1 text-[12px]">Pelaksana</th>
+                    {/* PERBAIKAN: Font header Mutu Baku mengecil otomatis jika kolom > 6 */}
+                    <th colSpan={3} className={`border-b-2 border-r-2 border-black p-1 ${getWaktuFontClass()}`}>Mutu Baku</th>
+                    <th rowSpan={2} className={`border-b-2 border-r-2 border-black p-1 ${getWaktuFontClass()}`}>Keterangan</th>
+                    {!effectiveIsViewOnly && <th rowSpan={2} className="border-b-2 border-black p-1 no-print">Aksi</th>}
                   </tr>
                   <tr className="bg-slate-50 font-bold uppercase text-center h-8">
                     {pelaksanaHeaders.map((h, i) => (
                       <th key={i} className={`border-b-2 border-r-2 border-black p-1 relative group/h ${i === pelaksanaHeaders.length - 1 ? '' : 'border-r-2 border-black'}`}>
                         <EditableCell value={h} onChange={(val) => {const n=[...pelaksanaHeaders]; n[i]=val.toUpperCase(); setPelaksanaHeaders(n);}} center={true} placeholder={`P${i+1}`} className="font-black text-center wrap-break-word" />
-                        {!isViewOnly && <button onClick={() => setPelaksanaHeaders(pelaksanaHeaders.filter((_, idx) => idx !== i))} className="absolute -top-1 -right-1 text-red-600 no-print opacity-0 group-hover/h:opacity-100 active:scale-125 bg-white rounded-full z-50"><UserMinus size={10}/></button>}
+                        {!effectiveIsViewOnly && <button onClick={() => setPelaksanaHeaders(pelaksanaHeaders.filter((_, idx) => idx !== i))} className="absolute -top-1 -right-1 text-red-600 no-print opacity-0 group-hover/h:opacity-100 active:scale-125 bg-white rounded-full z-50"><UserMinus size={10}/></button>}
                       </th>
                     ))}
-                    <th className="border-b-2 border-r-2 border-black p-1">Kelengkapan</th>
-                    <th className="border-b-2 border-r-2 border-black p-1">Waktu</th>
-                    <th className="border-b-2 border-r-2 border-black p-1 italic">Output</th>
+                    {/* PERBAIKAN: Header Kelengkapan, Waktu, Output mengecil otomatis */}
+                    <th className={`border-b-2 border-r-2 border-black p-1 ${getWaktuFontClass()}`}>Kelengkapan</th>
+                    <th className={`border-b-2 border-r-2 border-black p-1 ${getWaktuFontClass()}`}>Waktu</th>
+                    <th className={`border-b-2 border-r-2 border-black p-1 italic ${getWaktuFontClass()}`}>Output</th>
                   </tr>
                 </thead>
-                <tbody className="text-[12px] font-bold align-top divide-y-2 divide-black overflow-visible">
+                <tbody className="text-[12px] align-top divide-y-2 divide-black overflow-visible">
                   {chunk.map((step, localIdx) => {
                     const absIdx = startAbsIdx + localIdx;
                     return (
-                      <tr key={step.id} className="overflow-visible">
-                        <td className="border-r-2 border-black p-2 text-center font-black relative" title="Ketik 'auto' untuk mengembalikan ke urutan otomatis">
+                      <tr key={step.id} className="overflow-visible relative" style={{ height: shouldStretch ? `${100 / Math.max(chunk.length, 1)}%` : '26.6mm' }}>
+                        
+                        <td className="border-r-2 border-black p-2 text-center font-normal relative h-px" title="Ketik 'auto' untuk mengembalikan ke urutan otomatis">
                           <EditableCell 
                             value={displayNumbers[absIdx]} 
                             onChange={(val) => {
@@ -982,36 +1022,38 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                               }
                             }} 
                             center={true} 
+                            className="text-[13px] h-full"
                           />
                         </td>
-                        <td className="border-r-2 border-black p-2 px-1.5 font-medium leading-snug relative overflow-visible align-top">
-                          <EditableCell value={step.kegiatan} onChange={(val) => updateStep(absIdx, 'kegiatan', val)} placeholder="..." className="text-[12px]" />
+                        <td className="border-r-2 border-black p-2 px-1.5 font-normal leading-snug relative overflow-visible align-top h-px">
+                          <EditableCell value={step.kegiatan} onChange={(val) => updateStep(absIdx, 'kegiatan', val)} placeholder="..." className="text-[13px] h-full" />
                         </td>
                         
                         {pelaksanaHeaders.map((_, i) => (
-                          <td key={i} className="border-r-2 border-black p-0 text-center align-middle relative h-full overflow-visible">
+                          <td key={i} className="border-r-2 border-black p-0 text-center align-middle relative h-px">
                             {renderSymbolBox(step, absIdx, i, localIdx, chunk.length)}
                           </td>
                         ))}
 
-                        <td className="border-r-2 border-black p-2 px-1.5 font-medium leading-tight relative align-top">
-                          <EditableCell value={step.syarat} onChange={(val) => updateStep(absIdx, 'syarat', val)} className="text-[12px]" />
+                        {/* PERBAIKAN: Kolom ini (Syarat, Waktu, Output, Ket) akan mengecil jika Pelaksana >= 7 */}
+                        <td className="border-r-2 border-black p-2 px-1.5 font-normal leading-tight relative align-top h-px">
+                          <EditableCell value={step.syarat} onChange={(val) => updateStep(absIdx, 'syarat', val)} className={`${getWaktuFontClass()} h-full`} />
                         </td>
                         
-                        <td className={`border-r-2 border-black py-2 px-0.5 text-center font-bold leading-tight relative align-top ${getWaktuFontClass()}`}>
-                          <EditableCell value={step.waktu} onChange={(val) => updateStep(absIdx, 'waktu', val)} center={true} className={`min-h-0! ${getWaktuFontClass()}`} />
+                        <td className={`border-r-2 border-black py-2 px-0.5 text-center font-normal leading-tight relative align-top h-px ${getWaktuFontClass()}`}>
+                          <EditableCell value={step.waktu} onChange={(val) => updateStep(absIdx, 'waktu', val)} center={true} className={`min-h-0! ${getWaktuFontClass()} h-full`} />
                         </td>
                         
-                        <td className="border-r-2 border-black p-2 px-1.5 font-medium leading-tight relative align-top italic">
-                          <EditableCell value={step.output} onChange={(val) => updateStep(absIdx, 'output', val)} className="text-[12px] italic" />
+                        <td className="border-r-2 border-black p-2 px-1.5 font-normal leading-tight relative align-top italic h-px">
+                          <EditableCell value={step.output} onChange={(val) => updateStep(absIdx, 'output', val)} className={`${getWaktuFontClass()} italic h-full`} />
                         </td>
-                        <td className="border-r-2 border-black p-2 px-1.5 font-medium leading-tight relative align-top">
-                          <EditableCell value={step.ket} onChange={(val) => updateStep(absIdx, 'ket', val)} placeholder="..." className="text-[12px]" />
+                        <td className="border-r-2 border-black p-2 px-1.5 font-normal leading-tight relative align-top h-px">
+                          <EditableCell value={step.ket} onChange={(val) => updateStep(absIdx, 'ket', val)} placeholder="..." className={`${getWaktuFontClass()} h-full`} />
                         </td>
                         
-                        {!isViewOnly && (
-                          <td className="p-1 text-center no-print align-middle relative z-50">
-                            <div className="flex flex-col items-center justify-center gap-1.5">
+                        {!effectiveIsViewOnly && (
+                          <td className="p-1 text-center no-print align-middle relative z-50 h-px">
+                            <div className="flex flex-col items-center justify-center gap-1.5 h-full">
                               <button onClick={() => updateStep(absIdx, 'isPageBreak', !step.isPageBreak)} title={step.isPageBreak ? "Hapus Batas Halaman" : "Jadikan Batas Halaman (Potong ke Tab Baru)"} className={`p-1 rounded w-full border ${step.isPageBreak ? 'bg-amber-100 text-amber-700 border-amber-300' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-200'}`}>
                                 <span className="text-[8px] font-black leading-tight block">BATAS<br/>HAL</span>
                               </button>
@@ -1026,8 +1068,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
               </table>
             </div>
 
-            {/* Keterangan Halaman di Kanan Bawah */}
-            <div className="mt-auto pt-4 text-right text-[11px] font-bold uppercase shrink-0">
+            <div className="mt-auto pt-4 text-right text-[12px] font-bold uppercase shrink-0">
               Halaman {chunkIdx + 1}
             </div>
             
