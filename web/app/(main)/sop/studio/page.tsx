@@ -2,12 +2,12 @@
 
 import React, { useEffect, useState, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import SOPBuilder from '@/components/SOPBuilder'; 
+import SOPBuilder from '@/components/SOPBuilder';
 
 function SOPStudioContent() {
   const searchParams = useSearchParams();
   const router = useRouter();
-  
+
   const idFromUrl = searchParams.get('id');
   const mode = searchParams.get('mode');
   const title = searchParams.get('title') || '';
@@ -15,7 +15,6 @@ function SOPStudioContent() {
   const l1 = searchParams.get('l1') || '';
   const l2 = searchParams.get('l2') || '';
 
-  // STATE BARU: Menyimpan ID agar bisa di-update tanpa refresh
   const [currentId, setCurrentId] = useState<string | null>(idFromUrl);
   const [initialData, setInitialData] = useState<string | null>(null);
   const [loading, setLoading] = useState(idFromUrl ? true : false);
@@ -23,9 +22,8 @@ function SOPStudioContent() {
   const apiFetch = async (path: string, options?: RequestInit) => {
     const token = localStorage.getItem('token');
     const safePath = path.startsWith('/') ? path : `/${path}`;
-    // Fetch adalah API native browser, jadi TETAP BUTUH prefix lengkap
     const url = `/e-sop-atrbpn/api${safePath}`;
-    
+
     return fetch(url, {
       ...options,
       headers: {
@@ -58,30 +56,29 @@ function SOPStudioContent() {
       const payload = {
         process_title: parsedData.judul || title || 'SOP',
         process_key: parsedData.nomor || key || `SOP-${Date.now()}`,
-        unit_l1: parsedData.unitKerja || l1, 
+        unit_l1: parsedData.unitKerja || l1,
         unit_l2: parsedData.subUnitKerja || l2,
         sop_data: dataJson,
         status: 'draft'
       };
 
-      const res = await apiFetch(currentId ? `/sop/models/${currentId}` : '/sop/models', { 
-        method: currentId ? 'PUT' : 'POST', 
-        body: JSON.stringify(payload) 
+      const res = await apiFetch(currentId ? `/sop/models/${currentId}` : '/sop/models', {
+        method: currentId ? 'PUT' : 'POST',
+        body: JSON.stringify(payload)
       });
 
       if (!res.ok) {
          const errData = await res.json();
          throw new Error(errData.error || `Server Error: ${res.status}`);
       }
-      
+
       const responseData = await res.json();
 
-      // Update currentId dan diam-diam ubah URL browser (native history API butuh prefix lengkap)
       if (!currentId && responseData.id) {
          setCurrentId(responseData.id.toString());
          window.history.replaceState(null, '', `/e-sop-atrbpn/sop/studio?id=${responseData.id}`);
       }
-      
+
       alert("✅ Dokumen SOP Berhasil Disimpan!");
       localStorage.removeItem('e-sop-draft-local');
     } catch (e: unknown) {
@@ -99,24 +96,22 @@ function SOPStudioContent() {
         unit_l1: parsedData.unitKerja || l1,
         unit_l2: parsedData.subUnitKerja || l2,
         sop_data: dataJson,
-        status: 'pending' 
+        status: 'pending'
       };
 
-      const res = await apiFetch(currentId ? `/sop/models/${currentId}` : '/sop/models', { 
-        method: currentId ? 'PUT' : 'POST', 
-        body: JSON.stringify(payload) 
+      const res = await apiFetch(currentId ? `/sop/models/${currentId}` : '/sop/models', {
+        method: currentId ? 'PUT' : 'POST',
+        body: JSON.stringify(payload)
       });
 
       if (!res.ok) {
          const errData = await res.json();
          throw new Error(errData.error || `Server Error: ${res.status}`);
       }
-      
+
       alert("🚀 Berhasil dikirim ke Biro Ortala!");
       localStorage.removeItem('e-sop-draft-local');
-      
-      // PERBAIKAN: Next.js router otomatis baca basePath, jadi cukup '/sop'
-      router.push('/sop'); 
+      router.push('/sop');
     } catch (e: unknown) {
       const errMsg = e instanceof Error ? e.message : "Kesalahan tidak dikenal";
       alert(`❌ Gagal mengirim: ${errMsg}`);
@@ -124,14 +119,13 @@ function SOPStudioContent() {
   };
 
   const handleBack = () => {
-    // PERBAIKAN: Next.js router otomatis baca basePath, jadi cukup '/sop'
-    router.push('/sop'); 
+    router.push('/sop');
   };
 
-  if (loading) return <div className="h-screen flex items-center justify-center font-bold text-slate-500">Memuat Studio...</div>;
+  if (loading) return <div className="h-[calc(100vh-4rem)] flex items-center justify-center font-bold text-slate-500">Memuat Studio...</div>;
 
   return (
-    <SOPBuilder 
+    <SOPBuilder
       initialData={initialData}
       initialTitle={title}
       initialKey={key}
@@ -147,7 +141,7 @@ function SOPStudioContent() {
 
 export default function SOPStudioPage() {
   return (
-    <Suspense fallback={<div className="h-screen flex items-center justify-center font-bold text-slate-500">Menyiapkan Kanvas...</div>}>
+    <Suspense fallback={<div className="h-[calc(100vh-4rem)] flex items-center justify-center font-bold text-slate-500">Menyiapkan Kanvas...</div>}>
       <SOPStudioContent />
     </Suspense>
   );

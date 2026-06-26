@@ -521,13 +521,14 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
       .font-bookman, .font-bookman * { font-family: 'Bookman Old Style', 'Bookman', serif !important; }
       @page { size: 330mm 215mm landscape; margin: 0; }
       @media print {
-        html, body, #__next, main, [data-reactroot] { 
+        html, body, #__next, main, [data-reactroot] {
           height: auto !important; min-height: 100% !important; max-height: none !important;
-          overflow: visible !important; margin: 0 !important; padding: 0 !important; 
+          overflow: visible !important; margin: 0 !important; padding: 0 !important;
           background: white !important; position: static !important;
         }
         * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
         .no-print { display: none !important; }
+        aside, header, footer { display: none !important; }
         .page-container, .cover-page-container { 
           margin: 0 !important; box-shadow: none !important; border: none !important; 
           page-break-after: always !important; width: 330mm !important; 
@@ -1210,7 +1211,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                 </tbody>
               </table>
             </div>
-            <div className="mt-auto pt-4 text-right text-[12px] font-bold uppercase shrink-0">Halaman {chunkIdx + 1}</div>
+            <div className="mt-auto pt-4 text-center text-[12px] font-normal shrink-0">Halaman {chunkIdx + 1} dari {chunkedSteps.length}</div>
           </div>
         );
       })}

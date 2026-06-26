@@ -72,25 +72,27 @@ const initDatabase = async () => {
       
       CREATE TABLE IF NOT EXISTS unit_kerja_l1 (
         id SERIAL PRIMARY KEY,
-        nama VARCHAR(255) NOT NULL,
+        nama VARCHAR(255) NOT NULL UNIQUE,
         kode VARCHAR(50),
         aktif BOOLEAN DEFAULT true
       );
-      
+
       CREATE TABLE IF NOT EXISTS unit_kerja_l2 (
         id SERIAL PRIMARY KEY,
         l1_id INTEGER REFERENCES unit_kerja_l1(id) ON DELETE CASCADE,
         nama VARCHAR(255) NOT NULL,
         kode VARCHAR(50),
-        aktif BOOLEAN DEFAULT true
+        aktif BOOLEAN DEFAULT true,
+        UNIQUE(l1_id, nama)
       );
-      
+
       CREATE TABLE IF NOT EXISTS unit_kerja_l3 (
         id SERIAL PRIMARY KEY,
         l2_id INTEGER REFERENCES unit_kerja_l2(id) ON DELETE CASCADE,
         nama VARCHAR(255) NOT NULL,
         kode VARCHAR(50),
-        aktif BOOLEAN DEFAULT true
+        aktif BOOLEAN DEFAULT true,
+        UNIQUE(l2_id, nama)
       );
       
       CREATE TABLE IF NOT EXISTS dokumen (
@@ -402,6 +404,91 @@ app.get('/api/unit-kerja/l2', authenticate, async (req, res) => {
 app.get('/api/unit-kerja/l3', authenticate, async (req, res) => {
   const result = await pool.query("SELECT * FROM unit_kerja_l3 WHERE aktif = true ORDER BY nama");
   res.json(result.rows);
+});
+
+// ============ UNIT KERJA TREE (proxy ke kehadiran.ortalamr.id) ============
+const _kehadiranCache = { token: null, tokenExpiry: 0, tree: null, treeExpiry: 0 };
+
+async function _getKehadiranToken() {
+  if (_kehadiranCache.token && Date.now() < _kehadiranCache.tokenExpiry) return _kehadiranCache.token;
+  const r = await fetch('https://kehadiran.ortalamr.id/api/auth/token', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ client_id: 'simpel-esop', client_secret: '7ad55d9ae5633b9c4a589aef903417cc125796625a562ffe4df86dfb6ce4dafe' })
+  });
+  if (!r.ok) throw new Error('Gagal ambil token kehadiran');
+  const d = await r.json();
+  _kehadiranCache.token = d.access_token;
+  _kehadiranCache.tokenExpiry = Date.now() + ((d.expires_in ?? 3600) - 60) * 1000;
+  return _kehadiranCache.token;
+}
+
+app.get('/api/unit-kerja/tree', authenticate, async (req, res) => {
+  try {
+    if (_kehadiranCache.tree && Date.now() < _kehadiranCache.treeExpiry) return res.json(_kehadiranCache.tree);
+    const token = await _getKehadiranToken();
+    const r = await fetch('https://kehadiran.ortalamr.id/api/master-data/unit-kerja/external', {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!r.ok) throw new Error('Gagal ambil data unit kerja dari kehadiran');
+    const data = await r.json();
+    _kehadiranCache.tree = data;
+    _kehadiranCache.treeExpiry = Date.now() + 3600000;
+    res.json(data);
+  } catch (err) {
+    res.status(502).json({ error: err.message });
+  }
+});
+
+// Sinkronisasi data kehadiran ke tabel unit_kerja lokal (admin only)
+app.post('/api/unit-kerja/sync', authenticate, requireRole('admin'), async (req, res) => {
+  try {
+    const token = await _getKehadiranToken();
+    const r = await fetch('https://kehadiran.ortalamr.id/api/master-data/unit-kerja/external', {
+      headers: { Authorization: `Bearer ${token}` }
+    });
+    if (!r.ok) throw new Error('Gagal ambil tree dari kehadiran');
+    const tree = await r.json();
+
+    let countL1 = 0, countL2 = 0, countL3 = 0;
+
+    for (const n1 of tree) {
+      const r1 = await pool.query(
+        `INSERT INTO unit_kerja_l1 (nama, kode, aktif) VALUES ($1, $2, true)
+         ON CONFLICT (nama) DO UPDATE SET aktif = true RETURNING id`,
+        [n1.nama, n1.id.substring(0, 8)]
+      ).catch(() => null);
+      const l1id = r1?.rows[0]?.id;
+      if (l1id) countL1++;
+      if (!l1id || !n1.children?.length) continue;
+
+      for (const n2 of n1.children) {
+        const r2 = await pool.query(
+          `INSERT INTO unit_kerja_l2 (l1_id, nama, kode, aktif) VALUES ($1, $2, $3, true)
+           ON CONFLICT (l1_id, nama) DO UPDATE SET aktif = true RETURNING id`,
+          [l1id, n2.nama, n2.id.substring(0, 8)]
+        ).catch(() => null);
+        const l2id = r2?.rows[0]?.id;
+        if (l2id) countL2++;
+        if (!l2id || !n2.children?.length) continue;
+
+        for (const n3 of n2.children) {
+          const r3 = await pool.query(
+            `INSERT INTO unit_kerja_l3 (l2_id, nama, kode, aktif) VALUES ($1, $2, $3, true)
+             ON CONFLICT (l2_id, nama) DO UPDATE SET aktif = true RETURNING id`,
+            [l2id, n3.nama, n3.id.substring(0, 8)]
+          ).catch(() => null);
+          if (r3?.rows[0]?.id) countL3++;
+        }
+      }
+    }
+
+    // Invalidate tree cache agar fetch ulang
+    _kehadiranCache.tree = null; _kehadiranCache.treeExpiry = 0;
+    res.json({ ok: true, synced: { l1: countL1, l2: countL2, l3: countL3 } });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // ============ DOKUMEN ROUTES ============

@@ -182,17 +182,11 @@ export default function UsersPage() {
   }, [formData.unit_l1]);
 
   return (
-    <div className="p-6 bg-[#f8fafc] min-h-screen text-slate-900 font-sans">
-      {/* HEADER */}
-      <div className="flex justify-between items-center mb-8">
-        <div className="flex items-center gap-4">
-          <button onClick={() => router.back()} className="p-2 bg-white border border-slate-200 rounded-xl hover:bg-slate-50 transition shadow-sm">
-            <ArrowLeft className="w-5 h-5 text-slate-600" />
-          </button>
-          <h1 className="text-2xl font-black text-[#002855]">Manajemen Pengguna</h1>
-        </div>
-        <button onClick={() => openModal()} className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition shadow-lg shadow-blue-200">
-          <Plus className="w-5 h-5" /> Tambah User Baru
+    <div className="p-4 md:p-6 lg:p-8 text-slate-900 font-sans">
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+        <p className="text-sm text-slate-500">Kelola akun dan hak akses pengguna sistem</p>
+        <button onClick={() => openModal()} className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition shadow-lg shadow-blue-200 self-start sm:self-auto">
+          <Plus className="w-4 h-4" /> Tambah User Baru
         </button>
       </div>
 

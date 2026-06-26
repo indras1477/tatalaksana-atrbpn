@@ -1,15 +1,18 @@
 "use client";
-import React, { useState, useMemo, useEffect, useCallback } from 'react';
-import { 
-  Home, FilePlus, ChevronRight, ArrowLeft, Download, FileText, 
-  Activity, BookOpen, Filter, X, Eye, EyeOff, Search, ChevronLeft, 
-  Settings, Sun, Moon, LogOut, Users, RefreshCw, Layers, ExternalLink, FolderOpen,
-  GitBranch, FileSignature
+import React, { Suspense, useState, useMemo, useEffect, useCallback } from 'react';
+import {
+  ChevronRight, ArrowLeft, Download, FileText,
+  Activity, BookOpen, Filter, X, Eye, EyeOff, Search, ChevronLeft,
+  RefreshCw, ExternalLink, FolderOpen, Layers,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import * as XLSX from 'xlsx';
 
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useAppContext } from '@/lib/app-context';
+import SearchableSelect from '@/components/SearchableSelect';
+
+interface UnitNode { id: string; nama: string; level: number; parent_id: string | null; children: UnitNode[]; }
 
 const API_BASE = '/e-sop-atrbpn/api';
 
@@ -150,8 +153,9 @@ function mapApiDoc(d: Record<string, unknown>): Dokumen {
   };
 }
 
-export default function DashboardBPN() {
+function DashboardBPN() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [currentUser, setCurrentUser] = useState<{id: number; username: string; role: string; nama_lengkap?: string} | null>(null);
   const [token, setToken] = useState<string>('');
   const [loading, setLoading] = useState(false);
@@ -163,6 +167,7 @@ export default function DashboardBPN() {
   const [unitL1List, setUnitL1List] = useState<{id: number; nama: string}[]>([]);
   const [unitL2List, setUnitL2List] = useState<{id: number; nama: string; l1_id: number}[]>([]);
   const [unitL3List, setUnitL3List] = useState<{id: number; nama: string; l2_id: number}[]>([]);
+  const [unitTree, setUnitTree] = useState<UnitNode[]>([]);
 
   useEffect(() => {
     const initAuth = async () => {
@@ -203,10 +208,7 @@ export default function DashboardBPN() {
   const [selectedL1, setSelectedL1] = useState('');
   const [selectedL2, setSelectedL2] = useState('');
 
-  const [isDarkMode, setIsDarkMode] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  
-  const [isStudioOpen, setIsStudioOpen] = useState(false);
+  const { isDarkMode } = useAppContext();
 
   const [dokumenList, setDokumenList] = useState<Dokumen[]>([]);
   const [filterJenis, setFilterJenis] = useState('Semua');
@@ -228,18 +230,10 @@ export default function DashboardBPN() {
 
   useEffect(() => {
     if (!token) return;
-    apiFetch('/unit-kerja/l1', token)
-      .then(r => r.json())
-      .then(data => setUnitL1List(Array.isArray(data) ? data : []))
-      .catch(() => {});
-    apiFetch('/unit-kerja/l2', token)
-      .then(r => r.json())
-      .then(data => setUnitL2List(Array.isArray(data) ? data : []))
-      .catch(() => {});
-    apiFetch('/unit-kerja/l3', token)
-      .then(r => r.json())
-      .then(data => setUnitL3List(Array.isArray(data) ? data : []))
-      .catch(() => {});
+    apiFetch('/unit-kerja/l1', token).then(r => r.json()).then(d => setUnitL1List(Array.isArray(d) ? d : [])).catch(() => {});
+    apiFetch('/unit-kerja/l2', token).then(r => r.json()).then(d => setUnitL2List(Array.isArray(d) ? d : [])).catch(() => {});
+    apiFetch('/unit-kerja/l3', token).then(r => r.json()).then(d => setUnitL3List(Array.isArray(d) ? d : [])).catch(() => {});
+    apiFetch('/unit-kerja/tree', token).then(r => r.ok ? r.json() : []).then(d => { if (Array.isArray(d)) setUnitTree(d); }).catch(() => {});
   }, [token]);
 
   const fetchDokumen = useCallback(async () => {
@@ -256,6 +250,13 @@ export default function DashboardBPN() {
   }, [token]);
 
   useEffect(() => { fetchDokumen(); }, [fetchDokumen]);
+
+  useEffect(() => {
+    if (searchParams.get('mode') === 'tambah') {
+      resetFormTambah();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams]);
 
   const getEmbedUrl = (url: string) => {
     if (!url) return '';
@@ -393,10 +394,17 @@ export default function DashboardBPN() {
     setEditingId(null); setSaveError('');
     setFormData({
       nama: '', jenis: 'Proses Bisnis', tahun: new Date().getFullYear().toString(),
-      unitL1: '', unitL2: '', unitL3: '', 
+      unitL1: '', unitL2: '', unitL3: '',
       link: '', sumber: ''
     });
     setActiveMenu('tambah');
+  };
+
+  const backToDashboard = () => {
+    setActiveMenu('dashboard');
+    setEditingId(null);
+    setSaveError('');
+    router.replace('/');
   };
    
   const handleL1Change = (e: React.ChangeEvent<HTMLSelectElement>) => {
@@ -472,12 +480,7 @@ export default function DashboardBPN() {
         return;
       }
       await fetchDokumen();
-      setActiveMenu('dashboard'); setEditingId(null);
-      setFormData({ 
-        nama: '', jenis: 'Proses Bisnis', tahun: new Date().getFullYear().toString(), 
-        unitL1: '', unitL2: '', unitL3: '', 
-        link: '', sumber: '' 
-      });
+      backToDashboard();
     } catch { setSaveError('Tidak dapat terhubung ke server'); }
     finally { setSaving(false); }
   };
@@ -511,13 +514,6 @@ export default function DashboardBPN() {
     } catch { alert('Gagal menghapus dokumen.'); }
   };
    
-  const handleLogout = async () => {
-    try { if (token) await apiFetch('/auth/logout', token, { method: 'POST' }); } catch { /* ignore */ }
-    localStorage.removeItem('token'); localStorage.removeItem('user');
-    document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
-    
-    window.location.replace(window.location.origin + '/e-sop-atrbpn/login/');
-  };
 
   if (isAuthChecking) {
     return (
@@ -532,11 +528,7 @@ export default function DashboardBPN() {
   }
 
   return (
-    <div 
-      className={`flex h-screen font-sans overflow-hidden transition-colors duration-500 ease-in-out ${
-        isDarkMode ? 'bg-[#0B1121] text-slate-200' : 'bg-[#f3f4f6] text-slate-800'
-      }`}
-    >
+    <>
 
       {/* VIEWER MODAL (VERSI 7.0 - UI BLOCKED KHUSUS DROPBOX & GDrive FOLDER) */}
       {viewDoc && (
@@ -664,143 +656,18 @@ export default function DashboardBPN() {
         </div>
       )}
 
-      {/* SIDEBAR */}
-      <div className="w-72 bg-linear-to-b from-[#001F43] to-[#000F24] text-white flex flex-col shadow-2xl z-10 shrink-0 m-4 rounded-3xl border border-white/10 relative overflow-hidden ring-1 ring-black/5">
-        <div className="absolute -top-12 -left-12 w-40 h-40 bg-[#A29061] rounded-full mix-blend-screen filter blur-[70px] opacity-40 pointer-events-none"></div>
-        <div className="p-8 border-b border-white/10 relative z-10">
-          <div className="w-12 h-12 bg-linear-to-br from-[#A29061] to-[#807047] rounded-2xl flex items-center justify-center shadow-lg shadow-[#A29061]/30 mb-4">
-            <BookOpen className="w-6 h-6 text-white" />
-          </div>
-          <h1 className="text-2xl font-extrabold text-white tracking-wide">TATA LAKSANA</h1>
-          <p className="text-[10px] text-slate-400 mt-1.5 uppercase tracking-[0.2em] font-semibold">Kementerian ATR/BPN</p>
-        </div>
-
-        <div className="flex-1 py-6 px-4 relative z-10 overflow-y-auto">
-          <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-3 px-3">Menu Utama</p>
-          
-          <button
-            onClick={() => { setActiveMenu('dashboard'); setLevel(1); setSearchQuery(''); setIsSettingsOpen(false); setIsStudioOpen(false); }}
-            className={`w-full flex items-center px-4 py-3.5 mb-3 rounded-2xl transition-all duration-300 group ${
-              activeMenu === 'dashboard' 
-                ? 'bg-linear-to-r from-[#A29061] to-[#8c7a4b] text-white shadow-lg shadow-[#A29061]/25 font-bold scale-[1.02]' 
-                : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'
-            }`}
-          >
-            <Home className={`w-5 h-5 mr-3 transition-colors ${activeMenu === 'dashboard' ? 'text-white' : 'text-slate-500 group-hover:text-white'}`} />
-            Dashboard Monitoring
-          </button>
-
-          <button
-            onClick={() => { resetFormTambah(); setIsSettingsOpen(false); setIsStudioOpen(false); }}
-            className={`w-full flex items-center px-4 py-3.5 mb-3 rounded-2xl transition-all duration-300 group ${
-              activeMenu === 'tambah' && editingId === null 
-                ? 'bg-linear-to-r from-[#A29061] to-[#8c7a4b] text-white shadow-lg shadow-[#A29061]/25 font-bold scale-[1.02]' 
-                : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'
-            }`}
-          >
-            <FilePlus className={`w-5 h-5 mr-3 transition-colors ${activeMenu === 'tambah' && editingId === null ? 'text-white' : 'text-slate-500 group-hover:text-white'}`} />
-            Tambah Dokumen
-          </button>
-
-          {currentUser?.role === 'admin' && (
-            <button
-              onClick={() => window.location.href = '/e-sop-atrbpn/users'}
-              className="w-full flex items-center px-4 py-3.5 mb-3 rounded-2xl transition-all duration-300 group text-slate-400 hover:bg-white/5 hover:text-white font-medium"
-            >
-              <Users className="w-5 h-5 mr-3 text-slate-500 group-hover:text-white" />
-              Manajemen User
-            </button>
-          )}
-
-          {/* ================================================================= */}
-          {/* MENU DROPDOWN STUDIO PEMODELAN (BPMN & SOP)                       */}
-          {/* ================================================================= */}
-          <button
-            onClick={() => setIsStudioOpen(!isStudioOpen)}
-            className={`w-full flex items-center justify-between px-4 py-3.5 mb-1 rounded-2xl transition-all duration-300 group ${
-              isStudioOpen ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'
-            }`}
-          >
-            <div className="flex items-center">
-              <Layers className={`w-5 h-5 mr-3 transition-colors ${isStudioOpen ? 'text-white' : 'text-slate-500 group-hover:text-white'}`} />
-              Studio Pemodelan
-            </div>
-            <ChevronRight className={`w-4 h-4 transition-transform duration-300 ${isStudioOpen ? 'rotate-90' : ''}`} />
-          </button>
-
-          <div className={`overflow-hidden transition-all duration-400 ease-in-out ${isStudioOpen ? 'max-h-32 opacity-100 mb-3' : 'max-h-0 opacity-0'}`}>
-            <div className="mx-2 p-2 bg-black/20 rounded-2xl border border-white/5 backdrop-blur-sm shadow-inner flex flex-col gap-1">
-              <button
-                onClick={() => router.push('/bpmn')}
-                className="w-full flex items-center px-4 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-white hover:bg-white/10 transition-all group"
-              >
-                <GitBranch className="w-4 h-4 mr-3 text-blue-400 group-hover:scale-110 transition-transform" />
-                BPMN Modeling
-              </button>
-              <button
-                onClick={() => router.push('/sop')}
-                className="w-full flex items-center px-4 py-2.5 rounded-xl text-sm font-medium text-slate-400 hover:text-white hover:bg-white/10 transition-all group"
-              >
-                <FileSignature className="w-4 h-4 mr-3 text-emerald-400 group-hover:scale-110 transition-transform" />
-                SOP Modeling
-              </button>
-            </div>
-          </div>
-          {/* ================================================================= */}
-
-          <div className="mt-8">
-            <p className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-3 px-3">Sistem</p>
-            <button 
-              onClick={() => setIsSettingsOpen(!isSettingsOpen)} 
-              className={`w-full flex items-center justify-between px-4 py-3.5 rounded-2xl transition-all duration-300 group mb-2 ${isSettingsOpen ? 'bg-white/10 text-white' : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'}`}
-            >
-              <div className="flex items-center">
-                <Settings className={`w-5 h-5 mr-3 transition-colors ${isSettingsOpen ? 'text-white' : 'text-slate-500 group-hover:text-white'}`} /> 
-                Pengaturan
-              </div>
-              <ChevronRight className={`w-4 h-4 transition-transform duration-300 ${isSettingsOpen ? 'rotate-90' : ''}`} />
-            </button>
-
-            <button onClick={handleLogout} className="w-full flex items-center px-4 py-3.5 rounded-2xl transition-all duration-300 group text-red-400 hover:bg-red-900/30 font-medium">
-              <LogOut className="w-5 h-5 mr-3" /> Keluar
-            </button>
-
-            <div className={`overflow-hidden transition-all duration-400 ease-in-out ${isSettingsOpen ? 'max-h-32 opacity-100 mb-4' : 'max-h-0 opacity-0'}`}>
-              <div className="mx-2 p-3 bg-black/20 rounded-2xl border border-white/5 backdrop-blur-sm shadow-inner">
-                <p className="text-[10px] font-bold text-slate-400 uppercase tracking-wider mb-3 text-center">Tema Tampilan</p>
-                <div className="relative flex items-center bg-black/40 rounded-xl p-1">
-                  <div className={`absolute top-1 bottom-1 w-[calc(50%-4px)] rounded-lg transition-all duration-300 ease-out shadow-md ${isDarkMode ? 'translate-x-[calc(100%+0px)] bg-linear-to-r from-indigo-500 to-purple-500' : 'translate-x-0 bg-linear-to-r from-amber-400 to-orange-400'}`}></div>
-                  <button onClick={() => setIsDarkMode(false)} className={`relative z-10 flex-1 flex justify-center items-center py-2 text-xs font-bold rounded-lg transition-colors duration-300 ${!isDarkMode ? 'text-white' : 'text-slate-400 hover:text-white'}`}><Sun className="w-3.5 h-3.5 mr-1.5" /> Terang</button>
-                  <button onClick={() => setIsDarkMode(true)} className={`relative z-10 flex-1 flex justify-center items-center py-2 text-xs font-bold rounded-lg transition-colors duration-300 ${isDarkMode ? 'text-white' : 'text-slate-400 hover:text-white'}`}><Moon className="w-3.5 h-3.5 mr-1.5" /> Gelap</button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
-
-        <div className="p-4 relative z-10 border-t border-white/5 bg-black/10 mt-auto">
-          <div className="flex items-center p-3 rounded-2xl cursor-default transition-colors">
-            <div className="w-10 h-10 rounded-xl bg-linear-to-br from-blue-600 to-blue-800 flex justify-center items-center font-bold text-white shadow-inner text-sm">
-              {(currentUser?.nama_lengkap || currentUser?.username || 'U').substring(0, 2).toUpperCase()}
-            </div>
-            <div className="ml-3 flex-1 min-w-0">
-              <p className="text-sm font-bold text-white leading-tight truncate">{currentUser?.nama_lengkap || currentUser?.username || 'Pengguna'}</p>
-              <p className="text-[10px] text-slate-400 font-medium capitalize">{currentUser?.role || 'viewer'}</p>
-            </div>
-          </div>
-        </div>
-      </div>
-
       {/* KONTEN UTAMA */}
-      <div className="flex-1 overflow-auto p-4 md:p-8 md:pl-2 scroll-smooth">
+      <div className="overflow-auto p-4 md:p-6 lg:p-8 scroll-smooth h-full">
         {activeMenu === 'dashboard' && (
           <div className="max-w-7xl mx-auto space-y-6 animate-in fade-in duration-500 pb-12">
-            <div className="flex justify-between items-end mb-8">
+            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end gap-4 mb-8">
               <div>
-                <h2 className={`text-3xl md:text-4xl font-extrabold tracking-tight transition-colors ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{level === 1 ? 'Dashboard Monitoring' : level === 2 ? selectedL1 : (selectedL2 || 'Semua Dokumen')}</h2>
-                <p className={`mt-2 font-medium transition-colors ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{level === 1 ? 'Rekapitulasi Dokumen Ketatalaksanaan Seluruh Unit Kerja' : level === 2 ? 'Rincian Rekapitulasi per Unit Kerja' : (selectedL2 ? 'Daftar Dokumen Detail' : `Semua Dokumen di ${selectedL1}`)}</p>
+                <h2 className={`text-2xl md:text-3xl xl:text-4xl font-extrabold tracking-tight transition-colors ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{level === 1 ? 'Dashboard Monitoring' : level === 2 ? selectedL1 : (selectedL2 || 'Semua Dokumen')}</h2>
+                <p className={`mt-2 font-medium transition-colors text-sm md:text-base ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{level === 1 ? 'Rekapitulasi Dokumen Ketatalaksanaan Seluruh Unit Kerja' : level === 2 ? 'Rincian Rekapitulasi per Unit Kerja' : (selectedL2 ? 'Daftar Dokumen Detail' : `Semua Dokumen di ${selectedL1}`)}</p>
               </div>
-              {level > 1 && <button onClick={() => { setLevel(level - 1); setFilterJenis('Semua'); setFilterTahun('Semua'); setSearchQuery(''); }} className={`flex items-center px-5 py-2.5 border rounded-xl shadow-sm transition-all font-semibold ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-slate-300 hover:bg-slate-800' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}><ArrowLeft className="w-4 h-4 mr-2" /> Kembali</button>}
+              <div className="flex items-center gap-3 shrink-0">
+                {level > 1 && <button onClick={() => { setLevel(level - 1); setFilterJenis('Semua'); setFilterTahun('Semua'); setSearchQuery(''); }} className={`flex items-center px-4 py-2 border rounded-xl shadow-sm transition-all font-semibold text-sm ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-slate-300 hover:bg-slate-800' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}><ArrowLeft className="w-4 h-4 mr-2" /> Kembali</button>}
+              </div>
             </div>
 
             {level === 1 && (
@@ -828,7 +695,7 @@ export default function DashboardBPN() {
                       <button onClick={() => setShowChart(!showChart)} className={`flex items-center px-4 py-2 text-sm font-bold rounded-xl transition-colors ${isDarkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}>{showChart ? <><EyeOff className="w-4 h-4 mr-2"/> Sembunyikan</> : <><Eye className="w-4 h-4 mr-2"/> Tampilkan</>}</button>
                     </div>
                   </div>
-                  {showChart && <div className="h-72 min-h-75 w-full animate-in fade-in slide-in-from-top-4 duration-500"><ResponsiveContainer width="100%" height="100%" aspect={isDarkMode ? 2 : undefined}><BarChart data={chartData} margin={{ top: 5, right: 0, left: -20, bottom: 5 }}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? '#334155' : '#e2e8f0'} /><XAxis dataKey="labelChart" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: isDarkMode ? '#94a3b8' : '#64748b', fontWeight: 500 }} /><YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: isDarkMode ? '#94a3b8' : '#64748b' }} /><Tooltip cursor={{ fill: isDarkMode ? '#1e293b' : '#f8fafc' }} contentStyle={{ backgroundColor: isDarkMode ? '#0F172A' : '#ffffff', borderColor: isDarkMode ? '#334155' : '#e2e8f0', borderRadius: '12px', color: isDarkMode ? '#f8fafc' : '#002855' }}/><Legend wrapperStyle={{ paddingTop: '20px' }} iconType="circle"/><Bar dataKey="probis" fill="#3b82f6" name="Proses Bisnis" radius={[6, 6, 0, 0]} /><Bar dataKey="sop" fill="#A29061" name="SOP" radius={[6, 6, 0, 0]} /><Bar dataKey="sp" fill="#10b981" name="Standar Pelayanan" radius={[6, 6, 0, 0]} /></BarChart></ResponsiveContainer></div>}
+                  {showChart && <div className="h-72 min-h-75 w-full animate-in fade-in slide-in-from-top-4 duration-500"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData} margin={{ top: 5, right: 0, left: -20, bottom: 5 }}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? '#334155' : '#e2e8f0'} /><XAxis dataKey="labelChart" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: isDarkMode ? '#94a3b8' : '#64748b', fontWeight: 500 }} /><YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: isDarkMode ? '#94a3b8' : '#64748b' }} /><Tooltip cursor={{ fill: isDarkMode ? '#1e293b' : '#f8fafc' }} contentStyle={{ backgroundColor: isDarkMode ? '#0F172A' : '#ffffff', borderColor: isDarkMode ? '#334155' : '#e2e8f0', borderRadius: '12px', color: isDarkMode ? '#f8fafc' : '#002855' }}/><Legend wrapperStyle={{ paddingTop: '20px' }} iconType="circle"/><Bar dataKey="probis" fill="#3b82f6" name="Proses Bisnis" radius={[6, 6, 0, 0]} /><Bar dataKey="sop" fill="#A29061" name="SOP" radius={[6, 6, 0, 0]} /><Bar dataKey="sp" fill="#10b981" name="Standar Pelayanan" radius={[6, 6, 0, 0]} /></BarChart></ResponsiveContainer></div>}
                 </div>
               </>
             )}
@@ -943,22 +810,58 @@ export default function DashboardBPN() {
               <div className={`p-6 rounded-2xl border ${isDarkMode ? 'bg-[#0F172A] border-slate-800' : 'bg-slate-50/80 border-slate-200/60'}`}>
                 <h4 className={`text-sm font-extrabold mb-4 uppercase tracking-wider ${isDarkMode ? 'text-blue-400' : 'text-[#002855]'}`}>Pemetaan Unit Kerja</h4>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                  <div><label className="block text-xs font-bold mb-2 text-slate-500">Level 1 (Unit Utama) <span className="text-red-500">*</span></label><select required value={formData.unitL1} onChange={handleL1Change} className={`w-full px-4 py-2.5 border rounded-xl shadow-sm outline-none text-sm font-medium cursor-pointer ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-white focus:ring-blue-500' : 'border-slate-300 focus:ring-blue-100'}`}><option value="" disabled>-- Pilih Level 1 --</option>{listL1.map(unit => <option key={unit} value={unit}>{unit}</option>)}</select></div>
-                  <div><label className="block text-xs font-bold mb-2 text-slate-500">Level 2 (Direktorat/Biro)</label><select value={formData.unitL2} onChange={handleL2Change} disabled={!formData.unitL1} className={`w-full px-4 py-2.5 border rounded-xl shadow-sm outline-none text-sm font-medium truncate cursor-pointer disabled:opacity-50 ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-white focus:ring-blue-500' : 'border-slate-300 focus:ring-blue-100'}`}><option value="">-- Kosong / Tidak Ada --</option>{getListL2(formData.unitL1).map(subUnit => <option key={subUnit} value={subUnit}>{subUnit}</option>)}</select></div>
-                  <div><label className="block text-xs font-bold mb-2 text-slate-500">Level 3 (Subdit/Bagian)</label><select value={formData.unitL3} onChange={(e) => setFormData({...formData, unitL3: e.target.value})} disabled={!formData.unitL2} className={`w-full px-4 py-2.5 border rounded-xl shadow-sm outline-none text-sm font-medium truncate cursor-pointer disabled:opacity-50 ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-white focus:ring-blue-500' : 'border-slate-300 focus:ring-blue-100'}`}><option value="">-- Kosong / Tidak Ada --</option>{getListL3(formData.unitL1, formData.unitL2).map(subUnit3 => <option key={subUnit3} value={subUnit3}>{subUnit3}</option>)}</select></div>
+                  <div>
+                    <label className="block text-xs font-bold mb-2 text-slate-500">Level 1 (Unit Utama) <span className="text-red-500">*</span></label>
+                    <SearchableSelect
+                      options={unitTree.map(n => n.nama)}
+                      value={formData.unitL1}
+                      onChange={v => setFormData({ ...formData, unitL1: v, unitL2: '', unitL3: '' })}
+                      placeholder="Cari dan pilih unit utama..."
+                      dm={isDarkMode}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold mb-2 text-slate-500">Level 2 (Direktorat/Biro)</label>
+                    <SearchableSelect
+                      options={unitTree.find(n => n.nama === formData.unitL1)?.children.map(c => c.nama) || []}
+                      value={formData.unitL2}
+                      onChange={v => setFormData({ ...formData, unitL2: v, unitL3: '' })}
+                      placeholder={formData.unitL1 ? 'Cari sub-unit...' : 'Pilih Level 1 dahulu'}
+                      disabled={!formData.unitL1}
+                      dm={isDarkMode}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold mb-2 text-slate-500">Level 3 (Subdit/Bagian)</label>
+                    <SearchableSelect
+                      options={unitTree.find(n => n.nama === formData.unitL1)?.children.find(c => c.nama === formData.unitL2)?.children.map(c => c.nama) || []}
+                      value={formData.unitL3}
+                      onChange={v => setFormData({ ...formData, unitL3: v })}
+                      placeholder={formData.unitL2 ? 'Cari sub-sub-unit...' : 'Pilih Level 2 dahulu'}
+                      disabled={!formData.unitL2}
+                      dm={isDarkMode}
+                    />
+                  </div>
                 </div>
               </div>
               <div><label className={`block text-sm font-extrabold mb-2 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Link Dokumen Terlampir</label><input type="url" value={formData.link} onChange={(e) => setFormData({...formData, link: e.target.value})} className={`w-full px-5 py-3 border rounded-xl font-medium focus:ring-4 outline-none transition-all ${isDarkMode ? 'bg-[#0F172A] border-slate-700 text-white focus:ring-blue-500/20' : 'bg-slate-50 border-slate-200 focus:bg-white focus:ring-blue-100'}`} placeholder="Tempel link Google Drive atau sumber lainnya..." /></div>
               <div><label className={`block text-sm font-extrabold mb-2 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Sumber Dokumen/Dasar Hukum Terkait</label><textarea rows={3} value={formData.sumber} onChange={(e) => setFormData({...formData, sumber: e.target.value})} className={`w-full px-5 py-3 border rounded-xl font-medium focus:ring-4 outline-none transition-all resize-none ${isDarkMode ? 'bg-[#0F172A] border-slate-700 text-white focus:ring-blue-500/20' : 'bg-slate-50 border-slate-200 focus:bg-white focus:ring-blue-100'}`} placeholder="Cth: Keputusan Menteri ATR/BPN No..."></textarea></div>
               {saveError && <div className="p-3 bg-red-500/10 border border-red-400/30 rounded-xl"><p className="text-red-500 text-sm font-medium">{saveError}</p></div>}
               <div className={`pt-8 border-t flex justify-end space-x-4 ${isDarkMode ? 'border-slate-800' : 'border-slate-100'}`}>
-                <button type="button" onClick={() => { setActiveMenu('dashboard'); setEditingId(null); setSaveError(''); }} className={`px-6 py-3 font-extrabold rounded-xl transition-colors ${isDarkMode ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'}`}>Batal</button>
+                <button type="button" onClick={backToDashboard} className={`px-6 py-3 font-extrabold rounded-xl transition-colors ${isDarkMode ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-600 hover:bg-slate-100'}`}>Batal</button>
                 <button type="submit" disabled={saving} className={`px-8 py-3 font-extrabold rounded-xl shadow-lg hover:shadow-xl hover:-translate-y-0.5 transition-all disabled:opacity-60 flex items-center gap-2 ${isDarkMode ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-[#002855] hover:bg-[#001b3a] text-white'}`}>{saving && <RefreshCw className="w-4 h-4 animate-spin" />}{editingId ? 'Simpan Perubahan Data' : 'Simpan Dokumen Baru'}</button>
               </div>
             </form>
           </div>
         )}
       </div>
-    </div>
+    </>
+  );
+}
+export default function Page() {
+  return (
+    <Suspense>
+      <DashboardBPN />
+    </Suspense>
   );
 }

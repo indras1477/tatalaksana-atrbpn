@@ -1,18 +1,16 @@
 "use client";
 import React, { useState, useEffect } from 'react';
-import { LogIn, Building2, Shield, RefreshCw } from 'lucide-react';
+import { Eye, EyeOff, Loader2 } from 'lucide-react';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
+  const [showPassword, setShowPassword] = useState(false);
   const [rememberMe, setRememberMe] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-
-  // --- STATE PENAHAN ---
   const [isAuthChecking, setIsAuthChecking] = useState(true);
 
-  // --- CEK SESI LOGIN DENGAN VALIDASI SERVER ---
   useEffect(() => {
     const checkSession = async () => {
       const token = localStorage.getItem('token');
@@ -55,20 +53,20 @@ export default function LoginPage() {
         body: JSON.stringify({ username, password, remember: rememberMe }),
       });
       const data = await res.json();
-      
+
       if (!res.ok) {
         setError(data.error || 'Login gagal');
         setLoading(false);
         return;
       }
-      
+
       localStorage.setItem('token', data.token);
       localStorage.setItem('user', JSON.stringify(data.user));
       localStorage.setItem('expiresIn', String(data.expiresIn || 120));
-      
+
       const maxAge = rememberMe ? 120 * 60 : 120 * 60;
       document.cookie = `token=${data.token}; path=/; max-age=${maxAge}`;
-      
+
       window.location.replace(window.location.origin + '/e-sop-atrbpn/');
     } catch (err) {
       console.error('Login error:', err);
@@ -77,114 +75,118 @@ export default function LoginPage() {
     }
   };
 
-  // --- LAYAR LOADING VERIFIKASI SESI ---
   if (isAuthChecking) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-slate-900 via-blue-900 to-slate-900">
-        <div className="flex flex-col items-center gap-4 animate-in fade-in zoom-in duration-500">
-          <RefreshCw className="w-12 h-12 animate-spin text-blue-500" />
-          <h2 className="text-xl font-bold tracking-widest text-white animate-pulse">MENYIAPKAN HALAMAN...</h2>
+      <div className="min-h-screen bg-gradient-to-br from-violet-50 via-white to-indigo-50 flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <Loader2 className="w-10 h-10 animate-spin text-violet-600" />
+          <p className="text-sm text-gray-500 animate-pulse">Menyiapkan halaman...</p>
         </div>
       </div>
     );
   }
 
-  // --- FORM LOGIN UTAMA ---
   return (
-    <div className="min-h-screen flex items-center justify-center bg-linear-to-br from-slate-900 via-blue-900 to-slate-900 relative overflow-hidden">
-      {/* Background Pattern */}
-      <div className="absolute inset-0 opacity-10">
-        <div className="absolute top-0 left-0 w-96 h-96 bg-blue-500 rounded-full blur-3xl -translate-x-1/2 -translate-y-1/2"></div>
-        <div className="absolute bottom-0 right-0 w-96 h-96 bg-cyan-500 rounded-full blur-3xl translate-x-1/2 translate-y-1/2"></div>
-      </div>
-      
-      <div className="relative z-10 w-full max-w-md px-4">
-        {/* Logo Header */}
-        <div className="text-center mb-8">
-          <div className="inline-flex items-center justify-center w-20 h-20 bg-linear-to-br from-blue-500 to-cyan-500 rounded-2xl shadow-2xl mb-6">
-            <Building2 className="w-10 h-10 text-white" />
+    <div className="min-h-screen bg-gradient-to-br from-violet-50 via-white to-indigo-50 flex items-center justify-center p-4">
+      <div className="w-full max-w-md">
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8">
+          {/* Logo & Title */}
+          <div className="flex flex-col items-center mb-8">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/e-sop-atrbpn/logo-bpn.png"
+              alt="Logo ATR/BPN"
+              className="h-16 w-16 object-contain mb-4"
+            />
+            <h1 className="text-2xl font-bold text-gray-900 text-center">
+              Sistem Informasi Manajemen Prosedur dan Pelayanan (SIMPEL)
+            </h1>
+            <p className="text-base font-semibold text-gray-700 mt-1 text-center">
+              Kementerian ATR/BPN
+            </p>
+            <p className="text-sm text-gray-500 mt-1">Masuk ke akun Anda</p>
           </div>
-          <h1 className="text-3xl font-bold text-white">E-SOP</h1>
-          <p className="text-blue-300 text-lg font-medium">ATR BPN</p>
-          <p className="text-slate-400 text-sm mt-2">Sistem Operasional Standard</p>
-        </div>
 
-        {/* Login Form */}
-        <div className="bg-white/10 backdrop-blur-xl rounded-2xl p-8 shadow-2xl border border-white/10">
-          <div className="flex items-center gap-2 mb-6">
-            <Shield className="w-5 h-5 text-blue-400" />
-            <h2 className="text-white font-semibold">Masuk Sistem</h2>
-          </div>
-          
+          {/* Form */}
           <form onSubmit={handleLogin} className="space-y-5">
             <div>
-              <label className="block text-slate-300 text-sm mb-2">Username</label>
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Username
+              </label>
               <input
                 type="text"
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="Masukkan username"
-                className="w-full px-4 py-3 bg-slate-800/50 border border-slate-600/50 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
+                className="w-full px-4 py-2.5 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-violet-500 text-sm text-gray-800 placeholder:text-gray-400 bg-gray-50 focus:bg-white transition-colors"
                 required
               />
             </div>
+
             <div>
-              <label className="block text-slate-300 text-sm mb-2">Password</label>
-              <input
-                type="password"
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="Masukkan password"
-                className="w-full px-4 py-3 bg-slate-800/50 border border-slate-600/50 rounded-lg text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition-all"
-                required
-              />
+              <label className="block text-sm font-medium text-gray-700 mb-1.5">
+                Password
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  placeholder="••••••••"
+                  className="w-full px-4 py-2.5 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-violet-500 text-sm pr-10 text-gray-800 placeholder:text-gray-400 bg-gray-50 focus:bg-white transition-colors"
+                  required
+                />
+                <button
+                  type="button"
+                  onClick={() => setShowPassword(!showPassword)}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                >
+                  {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+                </button>
+              </div>
             </div>
-            
+
             <div className="flex items-center">
               <input
                 type="checkbox"
                 id="rememberMe"
                 checked={rememberMe}
                 onChange={(e) => setRememberMe(e.target.checked)}
-                className="w-4 h-4 rounded border-slate-600 bg-slate-800 text-blue-500 focus:ring-blue-500"
+                className="w-4 h-4 rounded border-gray-300 text-violet-600 focus:ring-violet-500"
               />
-              <label htmlFor="rememberMe" className="ml-2 text-slate-300 text-sm">
+              <label htmlFor="rememberMe" className="ml-2 text-sm text-gray-600">
                 Ingat saya
               </label>
             </div>
-            
+
             {error && (
-              <div className="p-3 bg-red-500/20 border border-red-500/30 rounded-lg">
-                <p className="text-red-300 text-sm text-center">{error}</p>
+              <div className="p-3 bg-red-50 border border-red-200 rounded-lg">
+                <p className="text-red-600 text-sm text-center">{error}</p>
               </div>
             )}
-            
+
             <button
               type="submit"
               disabled={loading}
-              className="w-full py-3 bg-linear-to-r from-blue-600 to-cyan-600 hover:from-blue-500 hover:to-cyan-500 text-white rounded-lg font-medium flex items-center justify-center gap-2 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+              className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 text-white px-5 py-2.5 rounded-lg font-medium hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2"
             >
-              {loading ? (
-                <span className="flex items-center gap-2">
-                  <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
-                  </svg>
-                  Memproses...
-                </span>
-              ) : (
-                <>
-                  <LogIn className="w-5 h-5" />
-                  Masuk
-                </>
-              )}
+              {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+              {loading ? 'Memproses...' : 'Masuk'}
             </button>
           </form>
         </div>
 
-        {/* Footer */}
-        <p className="text-center text-slate-500 text-sm mt-8">
-          © 2026 E-SOP ATR BPN. All rights reserved.
+        <p className="text-center text-xs text-gray-500 mt-6 leading-relaxed">
+          Dibuat dengan <span className="text-red-400">❤</span> oleh{' '}
+          <a
+            href="https://www.instagram.com/ferdiansyah_nanda"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-500 hover:underline font-medium"
+          >
+            Ferdiansyah
+          </a>{' '}
+          untuk Biro ORTALAMR ATR/BPN &copy; 2022–{new Date().getFullYear()}
         </p>
       </div>
     </div>
