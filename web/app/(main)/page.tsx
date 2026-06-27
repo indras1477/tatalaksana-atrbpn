@@ -124,7 +124,6 @@ const CHART_LABELS: Record<string, string> = {
 
 const listL1 = Object.keys(HIERARKI_UNIT);
 const getListL2 = (l1: string) => l1 && HIERARKI_UNIT[l1] ? Object.keys(HIERARKI_UNIT[l1]) : [];
-const getListL3 = (l1: string, l2: string) => l1 && l2 && HIERARKI_UNIT[l1]?.[l2] ? HIERARKI_UNIT[l1][l2] : [];
 
 interface Dokumen {
   id: number; nama: string; jenis: string; tahun: string;
@@ -255,7 +254,6 @@ function DashboardBPN() {
     if (searchParams.get('mode') === 'tambah') {
       resetFormTambah();
     }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams]);
 
   const getEmbedUrl = (url: string) => {
@@ -407,16 +405,6 @@ function DashboardBPN() {
     router.replace('/');
   };
    
-  const handleL1Change = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newL1 = e.target.value; 
-    setFormData({ ...formData, unitL1: newL1, unitL2: '', unitL3: '' });
-  };
-   
-  const handleL2Change = (e: React.ChangeEvent<HTMLSelectElement>) => {
-    const newL2 = e.target.value;
-    setFormData({ ...formData, unitL2: newL2, unitL3: '' });
-  };
-
   const handleApproval = async (doc: Dokumen, targetStatus: string) => {
     let catatan = "";
     if (targetStatus === 'rejected') {

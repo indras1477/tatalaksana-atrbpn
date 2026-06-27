@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { useRouter } from 'next/navigation';
 import {
-  ArrowLeft, Plus, GitBranch, Edit, CheckCircle,
+  Plus, Edit, CheckCircle,
   Clock, XCircle, Search, X, FileEdit, FileStack, AlertCircle, Filter,
   Trash2, Calendar, GitCommit // Tambahan icon Calendar dan GitCommit
 } from 'lucide-react';

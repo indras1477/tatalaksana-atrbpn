@@ -177,17 +177,44 @@ const initDatabase = async () => {
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+
+      CREATE TABLE IF NOT EXISTS juknis_dokumen (
+        id SERIAL PRIMARY KEY,
+        judul VARCHAR(500) NOT NULL,
+        jenis VARCHAR(20) DEFAULT 'Juknis',
+        nomor VARCHAR(200),
+        tahun VARCHAR(4),
+        tanggal_terbit DATE,
+        tentang TEXT,
+        link TEXT,
+        unit_l1 VARCHAR(255),
+        unit_l2 VARCHAR(255),
+        unit_l3 VARCHAR(255),
+        created_by INTEGER REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
     `);
 
     // MIGRASI KOLOM UNIT KERJA KE TABEL USER
     await client.query(`
-      DO $$ 
-      BEGIN 
+      DO $$
+      BEGIN
         BEGIN
             ALTER TABLE users ADD COLUMN unit_l1 VARCHAR(255);
         EXCEPTION WHEN duplicate_column THEN NULL; END;
         BEGIN
             ALTER TABLE users ADD COLUMN unit_l2 VARCHAR(255);
+        EXCEPTION WHEN duplicate_column THEN NULL; END;
+      END $$;
+    `);
+
+    // MIGRASI KOLOM TANGGAL_TERBIT KE JUKNIS_DOKUMEN
+    await client.query(`
+      DO $$
+      BEGIN
+        BEGIN
+          ALTER TABLE juknis_dokumen ADD COLUMN tanggal_terbit DATE;
         EXCEPTION WHEN duplicate_column THEN NULL; END;
       END $$;
     `);
@@ -779,6 +806,97 @@ app.patch('/api/sop/models/status/:id', authenticate, requireRole('admin'), asyn
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Error update status SOP:', err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// ============ JUKNIS / JUKLAK / SE ============
+app.get('/api/juknis', authenticate, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, judul, jenis, nomor, tahun,
+              TO_CHAR(tanggal_terbit, 'YYYY-MM-DD') AS tanggal_terbit,
+              tentang, link, unit_l1, unit_l2, unit_l3, created_at, created_by
+       FROM juknis_dokumen ORDER BY created_at DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('GET /api/juknis error:', err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.post('/api/juknis', authenticate, async (req, res) => {
+  const { judul, jenis, nomor, tahun, tanggal_terbit, tentang, link, unit_l1, unit_l2, unit_l3 } = req.body;
+  if (!judul || !judul.trim()) return res.status(400).json({ error: 'Judul wajib diisi' });
+  const validJenis = ['Juknis', 'Juklak', 'SE'];
+  const safeJenis = validJenis.includes(jenis) ? jenis : 'Juknis';
+  const safeTanggal = tanggal_terbit && /^\d{4}-\d{2}-\d{2}$/.test(tanggal_terbit) ? tanggal_terbit : null;
+  try {
+    const result = await pool.query(
+      `INSERT INTO juknis_dokumen (judul, jenis, nomor, tahun, tanggal_terbit, tentang, link, unit_l1, unit_l2, unit_l3, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) RETURNING *`,
+      [
+        sanitizeString(judul), safeJenis,
+        sanitizeString(nomor || ''), sanitizeString(tahun || ''),
+        safeTanggal,
+        sanitizeString(tentang || ''), (link || '').substring(0, 2000),
+        sanitizeString(unit_l1 || ''), sanitizeString(unit_l2 || ''), sanitizeString(unit_l3 || ''),
+        req.user.id,
+      ]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error('POST /api/juknis error:', err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.put('/api/juknis/:id', authenticate, async (req, res) => {
+  const { id } = req.params;
+  const { judul, jenis, nomor, tahun, tanggal_terbit, tentang, link, unit_l1, unit_l2, unit_l3 } = req.body;
+  if (!judul || !judul.trim()) return res.status(400).json({ error: 'Judul wajib diisi' });
+  const validJenis = ['Juknis', 'Juklak', 'SE'];
+  const safeJenis = validJenis.includes(jenis) ? jenis : 'Juknis';
+  const safeTanggal = tanggal_terbit && /^\d{4}-\d{2}-\d{2}$/.test(tanggal_terbit) ? tanggal_terbit : null;
+  try {
+    const existing = await pool.query('SELECT created_by FROM juknis_dokumen WHERE id=$1', [id]);
+    if (existing.rowCount === 0) return res.status(404).json({ error: 'Dokumen tidak ditemukan' });
+    if (req.user.role !== 'admin' && existing.rows[0].created_by !== req.user.id) {
+      return res.status(403).json({ error: 'Tidak diizinkan mengubah dokumen ini' });
+    }
+    const result = await pool.query(
+      `UPDATE juknis_dokumen SET judul=$1, jenis=$2, nomor=$3, tahun=$4, tanggal_terbit=$5,
+       tentang=$6, link=$7, unit_l1=$8, unit_l2=$9, unit_l3=$10, updated_at=NOW()
+       WHERE id=$11 RETURNING *`,
+      [
+        sanitizeString(judul), safeJenis,
+        sanitizeString(nomor || ''), sanitizeString(tahun || ''),
+        safeTanggal,
+        sanitizeString(tentang || ''), (link || '').substring(0, 2000),
+        sanitizeString(unit_l1 || ''), sanitizeString(unit_l2 || ''), sanitizeString(unit_l3 || ''),
+        id,
+      ]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('PUT /api/juknis/:id error:', err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.delete('/api/juknis/:id', authenticate, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const existing = await pool.query('SELECT created_by FROM juknis_dokumen WHERE id=$1', [id]);
+    if (existing.rowCount === 0) return res.status(404).json({ error: 'Dokumen tidak ditemukan' });
+    if (req.user.role !== 'admin' && existing.rows[0].created_by !== req.user.id) {
+      return res.status(403).json({ error: 'Tidak diizinkan menghapus dokumen ini' });
+    }
+    await pool.query('DELETE FROM juknis_dokumen WHERE id=$1', [id]);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('DELETE /api/juknis/:id error:', err);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });

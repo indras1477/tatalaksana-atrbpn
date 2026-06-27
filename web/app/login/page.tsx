@@ -77,7 +77,7 @@ export default function LoginPage() {
 
   if (isAuthChecking) {
     return (
-      <div className="min-h-screen bg-gradient-to-br from-violet-50 via-white to-indigo-50 flex items-center justify-center">
+      <div className="min-h-screen bg-linear-to-br from-violet-50 via-white to-indigo-50 flex items-center justify-center">
         <div className="flex flex-col items-center gap-4">
           <Loader2 className="w-10 h-10 animate-spin text-violet-600" />
           <p className="text-sm text-gray-500 animate-pulse">Menyiapkan halaman...</p>
@@ -87,7 +87,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-violet-50 via-white to-indigo-50 flex items-center justify-center p-4">
+    <div className="min-h-screen bg-linear-to-br from-violet-50 via-white to-indigo-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
         <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8">
           {/* Logo & Title */}
@@ -168,7 +168,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-gradient-to-r from-violet-600 to-indigo-600 text-white px-5 py-2.5 rounded-lg font-medium hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2"
+              className="w-full bg-linear-to-r from-violet-600 to-indigo-600 text-white px-5 py-2.5 rounded-lg font-medium hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2"
             >
               {loading && <Loader2 className="w-4 h-4 animate-spin" />}
               {loading ? 'Memproses...' : 'Masuk'}
@@ -177,7 +177,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-xs text-gray-500 mt-6 leading-relaxed">
-          Dibuat dengan <span className="text-red-400">❤</span> oleh{' '}
+          Dibuat oleh{' '}
           <a
             href="https://www.instagram.com/ferdiansyah_nanda"
             target="_blank"
@@ -186,7 +186,7 @@ export default function LoginPage() {
           >
             Ferdiansyah
           </a>{' '}
-          untuk Biro ORTALAMR ATR/BPN &copy; 2022–{new Date().getFullYear()}
+          &copy; 2025–{new Date().getFullYear()}
         </p>
       </div>
     </div>

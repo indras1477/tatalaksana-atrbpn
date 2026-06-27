@@ -114,11 +114,12 @@ export default function UsersPage() {
       const url = editingUser ? `${API_URL}/${editingUser.id}` : API_URL;
       const method = editingUser ? 'PUT' : 'POST';
 
+      const noUnit = formData.role === 'admin' || formData.role === 'viewer';
       const submissionData = {
         ...formData,
         id: editingUser?.id,
-        unit_l1: formData.role === 'admin' ? 'PUSAT' : formData.unit_l1,
-        unit_l2: formData.role === 'admin' ? 'SELURUH UNIT' : formData.unit_l2
+        unit_l1: noUnit ? 'PUSAT' : formData.unit_l1,
+        unit_l2: noUnit ? 'SELURUH UNIT' : formData.unit_l2
       };
 
       console.log(`🚀 Mengirim ${method} ke: ${url}`);
@@ -211,8 +212,10 @@ export default function UsersPage() {
                     <p className="text-xs font-mono text-slate-500">@{user.username}</p>
                   </td>
                   <td className="px-6 py-4">
-                    {user.role === 'admin' ? (
-                      <span className="text-xs font-bold text-slate-400 italic">Akses Lintas Unit</span>
+                    {(user.role === 'admin' || user.role === 'viewer') ? (
+                      <span className="text-xs font-bold text-slate-400 italic">
+                        {user.role === 'viewer' ? 'Lihat Saja' : 'Akses Lintas Unit'}
+                      </span>
                     ) : (
                       <>
                         <p className="text-sm font-bold text-slate-700 leading-tight">{user.unit_l1}</p>
@@ -222,9 +225,13 @@ export default function UsersPage() {
                   </td>
                   <td className="px-6 py-4 text-center">
                     <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase border ${
-                      user.role === 'admin' ? 'bg-purple-50 text-purple-600 border-purple-100' : 'bg-blue-50 text-blue-600 border-blue-100'
+                      user.role === 'admin'
+                        ? 'bg-purple-50 text-purple-600 border-purple-100'
+                        : user.role === 'viewer'
+                          ? 'bg-teal-50 text-teal-600 border-teal-100'
+                          : 'bg-blue-50 text-blue-600 border-blue-100'
                     }`}>
-                      {user.role === 'admin' ? 'Admin' : 'User (Terbatas)'}
+                      {user.role === 'admin' ? 'Admin' : user.role === 'viewer' ? 'Viewer' : 'User (Terbatas)'}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-center">
@@ -268,6 +275,7 @@ export default function UsersPage() {
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Hak Akses (Role)</label>
                   <select value={formData.role} onChange={e => setFormData({...formData, role: e.target.value})} className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-bold text-[#002855] outline-none focus:ring-2 focus:ring-blue-500 shadow-sm">
                     <option value="user">User (Terbatas)</option>
+                    <option value="viewer">Viewer</option>
                     <option value="admin">Admin</option>
                   </select>
                 </div>
@@ -298,7 +306,7 @@ export default function UsersPage() {
                 <input type="text" value={formData.nama_lengkap} onChange={e => setFormData({...formData, nama_lengkap: e.target.value})} className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" required />
               </div>
 
-              {formData.role !== 'admin' && (
+              {formData.role !== 'admin' && formData.role !== 'viewer' && (
                 <div className="p-5 bg-blue-50/50 border border-blue-100 rounded-2xl space-y-4">
                   <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest flex items-center gap-2">
                     <Building2 className="w-3 h-3" /> Penempatan Unit Kerja
@@ -342,6 +350,16 @@ export default function UsersPage() {
                   <div>
                     <p className="text-sm font-bold text-purple-700">Administrator System</p>
                     <p className="text-[10px] text-purple-500 font-medium">Akses penuh lintas seluruh unit kerja Kementerian ATR/BPN.</p>
+                  </div>
+                </div>
+              )}
+
+              {formData.role === 'viewer' && (
+                <div className="flex items-center gap-3 p-4 bg-teal-50 border border-teal-100 rounded-2xl">
+                  <Eye className="w-10 h-10 text-teal-500" />
+                  <div>
+                    <p className="text-sm font-bold text-teal-700">Viewer (Lihat Saja)</p>
+                    <p className="text-[10px] text-teal-500 font-medium">Hanya dapat melihat Dashboard dan Juknis/Juklak/SE. Tidak memerlukan unit kerja.</p>
                   </div>
                 </div>
               )}

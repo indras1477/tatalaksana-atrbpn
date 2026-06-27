@@ -379,8 +379,11 @@ function PanduanModal({ item, onClose }: { item: typeof PANDUAN_ITEMS[0]; onClos
 /* ---------- Halaman utama ---------- */
 
 export default function PanduanPage() {
-  const { isDarkMode } = useAppContext();
+  const { isDarkMode, currentUser } = useAppContext();
   const [activeItem, setActiveItem] = useState<typeof PANDUAN_ITEMS[0] | null>(null);
+  const visibleItems = currentUser?.role === 'admin'
+    ? PANDUAN_ITEMS
+    : PANDUAN_ITEMS.filter(item => item.id !== 'users');
 
   return (
     <div className="overflow-auto p-4 md:p-6 lg:p-8 h-full">
@@ -409,7 +412,7 @@ export default function PanduanPage() {
 
         {/* Grid kartu panduan */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-          {PANDUAN_ITEMS.map(item => {
+          {visibleItems.map(item => {
             const { icon: Icon, color, colorDark, border, borderDark, judul, ringkasan, Illust } = item;
             return (
               <button

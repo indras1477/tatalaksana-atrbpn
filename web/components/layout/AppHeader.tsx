@@ -100,7 +100,7 @@ export default function AppHeader({ onToggleSidebar, sidebarOpen }: Props) {
             {currentUser?.role || 'viewer'}
           </span>
         </div>
-        <div className="w-8 h-8 md:w-9 md:h-9 rounded-xl bg-gradient-to-br from-[#001F43] to-[#003a7a] flex items-center justify-center font-bold text-white text-xs md:text-sm shrink-0">
+        <div className="w-8 h-8 md:w-9 md:h-9 rounded-xl bg-linear-to-br from-[#001F43] to-[#003a7a] flex items-center justify-center font-bold text-white text-xs md:text-sm shrink-0">
           {(currentUser?.nama_lengkap || currentUser?.username || 'U')
             .substring(0, 2)
             .toUpperCase()}

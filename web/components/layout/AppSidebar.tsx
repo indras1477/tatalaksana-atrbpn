@@ -12,10 +12,15 @@ interface Props {
   onClose: () => void;
 }
 
-const NAV_ITEMS = [
+const NAV_ITEMS_ALL = [
   { label: 'Dashboard', icon: Home, href: '/' },
-  { label: 'Dokumen SOP', icon: FileSignature, href: '/sop' },
-  { label: 'Proses Bisnis (BPMN)', icon: GitBranch, href: '/bpmn' },
+  { label: 'Buat Proses Bisnis (BPMN)', icon: GitBranch, href: '/bpmn' },
+  { label: 'Buat SOP', icon: FileSignature, href: '/sop' },
+  { label: 'Juknis / Juklak / SE', icon: ScrollText, href: '/juknis' },
+];
+
+const NAV_ITEMS_VIEWER = [
+  { label: 'Dashboard', icon: Home, href: '/' },
   { label: 'Juknis / Juklak / SE', icon: ScrollText, href: '/juknis' },
 ];
 
@@ -24,17 +29,21 @@ export default function AppSidebar({ isOpen, onClose }: Props) {
   const router = useRouter();
   const { currentUser, handleLogout } = useAppContext();
 
+  const isViewer = currentUser?.role === 'viewer';
+
   const navigate = (href: string) => {
     router.push(href);
     onClose();
   };
 
-  const allNavItems = [
-    ...NAV_ITEMS,
-    ...(currentUser?.role === 'admin'
-      ? [{ label: 'Manajemen Pengguna', icon: Users, href: '/users' }]
-      : []),
-  ];
+  const allNavItems = isViewer
+    ? NAV_ITEMS_VIEWER
+    : [
+        ...NAV_ITEMS_ALL,
+        ...(currentUser?.role === 'admin'
+          ? [{ label: 'Manajemen Pengguna', icon: Users, href: '/users' }]
+          : []),
+      ];
 
   return (
     <>
@@ -49,7 +58,7 @@ export default function AppSidebar({ isOpen, onClose }: Props) {
       <aside
         className={`
           fixed top-0 left-0 h-screen z-30 flex flex-col shadow-2xl
-          bg-gradient-to-b from-[#001F43] to-[#000F24] text-white
+          bg-linear-to-b from-[#001F43] to-[#000F24] text-white
           transition-all duration-300 ease-in-out overflow-hidden
           ${isOpen
             ? 'translate-x-0 w-72'
@@ -102,7 +111,7 @@ export default function AppSidebar({ isOpen, onClose }: Props) {
                   transition-all duration-200 text-sm
                   ${isOpen ? 'gap-3 px-4' : 'justify-center px-3'}
                   ${active
-                    ? 'bg-gradient-to-r from-[#A29061] to-[#8c7a4b] text-white font-bold shadow-lg shadow-[#A29061]/25'
+                    ? 'bg-linear-to-r from-[#A29061] to-[#8c7a4b] text-white font-bold shadow-lg shadow-[#A29061]/25'
                     : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'}
                 `}
               >
@@ -112,27 +121,29 @@ export default function AppSidebar({ isOpen, onClose }: Props) {
             );
           })}
 
-          {/* Upload Manual — aksi cepat */}
-          <div className={`mt-4 ${isOpen ? 'px-1' : ''}`}>
-            {isOpen && (
-              <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 px-3">
-                Upload Manual
-              </p>
-            )}
-            <button
-              onClick={() => navigate('/?mode=tambah')}
-              title={!isOpen ? 'Tambah Dokumen Probis/SOP/SP Manual' : undefined}
-              className={`
-                w-full flex items-center py-3 mb-1 rounded-2xl
-                bg-[#A29061]/20 hover:bg-[#A29061]/40 text-[#c9b87a] hover:text-white
-                transition-all duration-200 text-sm font-bold
-                ${isOpen ? 'gap-3 px-4' : 'justify-center px-3'}
-              `}
-            >
-              <FilePlus className="w-5 h-5 shrink-0" />
-              {isOpen && <span className="leading-tight">Tambah Dokumen Probis/SOP/SP Manual</span>}
-            </button>
-          </div>
+          {/* Upload Manual — aksi cepat, disembunyikan untuk viewer */}
+          {!isViewer && (
+            <div className={`mt-4 ${isOpen ? 'px-1' : ''}`}>
+              {isOpen && (
+                <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 px-3">
+                  Upload Manual
+                </p>
+              )}
+              <button
+                onClick={() => navigate('/?mode=tambah')}
+                title={!isOpen ? 'Upload Dokumen Probis/SOP/SP Manual' : undefined}
+                className={`
+                  w-full flex items-center py-3 mb-1 rounded-2xl
+                  bg-[#A29061]/20 hover:bg-[#A29061]/40 text-[#c9b87a] hover:text-white
+                  transition-all duration-200 text-sm font-bold
+                  ${isOpen ? 'gap-3 px-4' : 'justify-center px-3'}
+                `}
+              >
+                <FilePlus className="w-5 h-5 shrink-0" />
+                {isOpen && <span className="leading-tight">Upload Dokumen Probis/SOP/SP Manual</span>}
+              </button>
+            </div>
+          )}
 
           {/* Sistem */}
           <div className="mt-6">
@@ -142,17 +153,20 @@ export default function AppSidebar({ isOpen, onClose }: Props) {
               </p>
             )}
 
-            <button
-              onClick={() => navigate('/panduan')}
-              title={!isOpen ? 'Panduan Penggunaan' : undefined}
-              className={`
-                w-full flex items-center py-3 mb-1 rounded-2xl text-slate-400 hover:bg-white/5 hover:text-white transition-all text-sm font-medium
-                ${isOpen ? 'gap-3 px-4' : 'justify-center px-3'}
-              `}
-            >
-              <HelpCircle className="w-5 h-5 shrink-0" />
-              {isOpen && <span>Panduan Penggunaan</span>}
-            </button>
+            {/* Panduan disembunyikan untuk viewer */}
+            {!isViewer && (
+              <button
+                onClick={() => navigate('/panduan')}
+                title={!isOpen ? 'Panduan Penggunaan' : undefined}
+                className={`
+                  w-full flex items-center py-3 mb-1 rounded-2xl text-slate-400 hover:bg-white/5 hover:text-white transition-all text-sm font-medium
+                  ${isOpen ? 'gap-3 px-4' : 'justify-center px-3'}
+                `}
+              >
+                <HelpCircle className="w-5 h-5 shrink-0" />
+                {isOpen && <span>Panduan Penggunaan</span>}
+              </button>
+            )}
 
             <button
               onClick={handleLogout}

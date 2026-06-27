@@ -52,7 +52,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
               : 'border-slate-200 text-slate-400 bg-white'
           }`}
         >
-          Dibuat dengan <span className="text-red-400">❤</span> oleh{' '}
+          Dibuat oleh{' '}
           <a
             href="https://www.instagram.com/ferdiansyah_nanda"
             target="_blank"
@@ -61,7 +61,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
           >
             Ferdiansyah
           </a>{' '}
-          untuk Biro ORTALAMR ATR/BPN &copy; 2022–{new Date().getFullYear()}
+          &copy; 2025–{new Date().getFullYear()}
         </footer>
       </div>
     </div>
