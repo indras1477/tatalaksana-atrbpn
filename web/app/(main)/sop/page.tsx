@@ -5,7 +5,7 @@ import { useRouter } from 'next/navigation';
 import {
   ArrowLeft, Plus, Edit, CheckCircle,
   Clock, XCircle, Search, X, FileEdit, FileStack, AlertCircle, Filter,
-  Trash2, Calendar, GitCommit, FileSignature
+  Trash2, Calendar, GitCommit, FileSignature, Lock
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
 
@@ -95,11 +95,12 @@ function apiFetch(path: string, token: string, options?: RequestInit) {
 }
 
 interface SOPModel {
-  id: number; process_title: string; process_key: string; l1_id: number | null; l2_id: number | null;
+  id: number; process_title: string; process_key: string | null; l1_id: number | null; l2_id: number | null;
   description: string | null; sop_data: string | null;
   status: string; catatan?: string | null;
   version: number; created_by: number; created_at: string; updated_at: string;
   unit_l1?: string; unit_l2?: string;
+  jenis_proses?: string | null; klasifikasi_proses?: string | null;
 }
 
 interface AuthUser {
@@ -134,7 +135,12 @@ export default function SOPDashboardPage() {
     processKey: '',
     orgUnitL1: '',
     orgUnitL2: '',
-    description: ''
+    description: '',
+    jenisSOP: '',
+    klasifikasiSOP: '',
+    jabatanPengesah: '',
+    namaPengesah: '',
+    nipPengesah: '',
   });
 
   const [rejectModal, setRejectModal] = useState({ isOpen: false, modelId: 0, note: '' });
@@ -194,20 +200,32 @@ export default function SOPDashboardPage() {
     setConfig({ ...config, orgUnitL1: e.target.value, orgUnitL2: '' });
   };
 
+  const handleOpenNewSOP = () => {
+    if (currentUser?.role === 'user' && currentUser.unit_l1) {
+      setConfig(c => ({ ...c, orgUnitL1: currentUser.unit_l1 || '', orgUnitL2: '' }));
+    }
+    setShowConfigModal(true);
+  };
+
   const handleStartSOP = () => {
-    if (!config.processTitle || !config.processKey || !config.orgUnitL1) {
-      return alert("Harap lengkapi Judul, Nomor SOP, dan Unit Kerja Utama.");
+    if (!config.processTitle || !config.orgUnitL1) {
+      return alert("Harap lengkapi Judul SOP dan Unit Kerja Utama.");
     }
     if (typeof window !== 'undefined') localStorage.removeItem('e-sop-draft-local');
 
-    const query = new URLSearchParams({
+    const params: Record<string, string> = {
       title: config.processTitle,
-      key: config.processKey,
       l1: config.orgUnitL1,
-      l2: config.orgUnitL2
-    }).toString();
+    };
+    if (config.processKey) params.key = config.processKey;
+    if (config.orgUnitL2) params.l2 = config.orgUnitL2;
+    if (config.jenisSOP) params.jenis = config.jenisSOP;
+    if (config.klasifikasiSOP) params.klasifikasi = config.klasifikasiSOP;
+    if (config.jabatanPengesah) params.jabatan = config.jabatanPengesah;
+    if (config.namaPengesah) params.nama = config.namaPengesah;
+    if (config.nipPengesah) params.nip = config.nipPengesah;
 
-    window.location.href = `/e-sop-atrbpn/sop/studio?${query}`;
+    window.location.href = `/e-sop-atrbpn/sop/studio?${new URLSearchParams(params).toString()}`;
   };
 
   const currentFilteredModels = useMemo(() => {
@@ -283,27 +301,70 @@ export default function SOPDashboardPage() {
 
       {showConfigModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className={`w-full max-w-lg rounded-2xl shadow-2xl p-6 animate-in zoom-in-95 duration-200 ${isDarkMode ? 'bg-[#151F32] border border-slate-700' : 'bg-white border border-slate-200'}`}>
-            <div className="flex justify-between items-center mb-6">
+          <div className={`w-full max-w-lg rounded-2xl shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh] ${isDarkMode ? 'bg-[#151F32] border border-slate-700' : 'bg-white border border-slate-200'}`}>
+            <div className="flex justify-between items-center p-6 pb-3 shrink-0">
               <h3 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>Informasi SOP Baru</h3>
               <button onClick={() => setShowConfigModal(false)} className={`p-2 rounded-lg ${isDarkMode ? 'hover:bg-slate-800 text-slate-500' : 'hover:bg-slate-100 text-slate-400'}`}><X size={20} /></button>
             </div>
+            <div className="px-6 pb-4 overflow-y-auto">
             <p className={`text-sm mb-6 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Lengkapi data identitas SOP sebelum masuk ke halaman penyusunan tabel Mutu Baku.</p>
             <div className="space-y-4">
               <div>
                 <label className={`block text-sm font-bold mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Judul SOP <span className="text-red-500">*</span></label>
                 <input type="text" placeholder="Contoh: Pemberian Hak Guna Bangunan" value={config.processTitle} onChange={(e) => setConfig({ ...config, processTitle: e.target.value })} className={`w-full px-4 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white placeholder:text-slate-500' : 'bg-slate-50 border-slate-300 text-slate-900'}`} />
               </div>
+
               <div>
-                <label className={`block text-sm font-bold mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Nomor SOP <span className="text-red-500">*</span></label>
+                <label className={`block text-sm font-bold mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                  Nomor SOP
+                  <span className={`ml-2 text-[10px] font-normal ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>(opsional)</span>
+                </label>
                 <input type="text" placeholder="Contoh: SOP/14/ATRBPN" value={config.processKey} onChange={(e) => setConfig({ ...config, processKey: e.target.value.toUpperCase() })} className={`w-full px-4 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-mono ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white placeholder:text-slate-500' : 'bg-slate-50 border-slate-300 text-slate-900'}`} />
               </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className={`block text-sm font-bold mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Jenis SOP <span className="text-red-500">*</span></label>
+                  <select value={config.jenisSOP} onChange={(e) => setConfig({ ...config, jenisSOP: e.target.value })} className={`w-full px-4 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'}`}>
+                    <option value="" disabled>-- Pilih Jenis --</option>
+                    <option value="Pusat">Pusat</option>
+                    <option value="Kantor Wilayah">Kantor Wilayah</option>
+                    <option value="Kantor Pertanahan">Kantor Pertanahan</option>
+                  </select>
+                </div>
+                <div>
+                  <label className={`block text-sm font-bold mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Klasifikasi SOP <span className="text-red-500">*</span></label>
+                  <select value={config.klasifikasiSOP} onChange={(e) => setConfig({ ...config, klasifikasiSOP: e.target.value })} className={`w-full px-4 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'}`}>
+                    <option value="" disabled>-- Pilih Klasifikasi --</option>
+                    <option value="SOP Administrasi Pemerintah">SOP Administrasi Pemerintah</option>
+                    <option value="SOP Layanan Pertanahan">SOP Layanan Pertanahan</option>
+                    <option value="SOP Layanan Tata Ruang">SOP Layanan Tata Ruang</option>
+                    <option value="SOP Layanan Pengaduan dan Informasi">SOP Layanan Pengaduan dan Informasi</option>
+                    <option value="SOP Layanan Data, Keamanan dan Infrastruktur">SOP Layanan Data, Keamanan dan Infrastruktur</option>
+                  </select>
+                </div>
+              </div>
+
               <div>
-                <label className={`block text-sm font-bold mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Unit Kerja Utama (Level 1) <span className="text-red-500">*</span></label>
-                <select value={config.orgUnitL1} onChange={handleL1Change} className={`w-full px-4 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'}`}>
-                  <option value="" disabled>-- Pilih Unit Utama --</option>
-                  {l1Options.map(u => <option key={u} value={u}>{u}</option>)}
-                </select>
+                <label className={`block text-sm font-bold mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                  Unit Kerja Utama (Level 1) <span className="text-red-500">*</span>
+                  {currentUser?.role === 'user' && (
+                    <span className={`ml-2 text-[10px] font-normal inline-flex items-center gap-0.5 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-600'}`}>
+                      <Lock size={9} /> dikunci sesuai profil
+                    </span>
+                  )}
+                </label>
+                {currentUser?.role === 'user' ? (
+                  <div className={`w-full px-4 py-2.5 text-sm border rounded-xl flex items-center gap-2 ${isDarkMode ? 'bg-[#0F172A] border-emerald-700 text-slate-300' : 'bg-emerald-50 border-emerald-300 text-slate-700'}`}>
+                    <Lock size={14} className="text-emerald-500 shrink-0" />
+                    <span className="font-medium truncate">{config.orgUnitL1 || '-'}</span>
+                  </div>
+                ) : (
+                  <select value={config.orgUnitL1} onChange={handleL1Change} className={`w-full px-4 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'}`}>
+                    <option value="" disabled>-- Pilih Unit Utama --</option>
+                    {l1Options.map(u => <option key={u} value={u}>{u}</option>)}
+                  </select>
+                )}
               </div>
               <div>
                 <label className={`block text-sm font-bold mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Sub-Unit (Level 2)</label>
@@ -312,8 +373,28 @@ export default function SOPDashboardPage() {
                   {l2Options.map(u => <option key={u} value={u}>{u}</option>)}
                 </select>
               </div>
+
+              {/* Disahkan Oleh — masuk ke cover SOP (Jabatan, Nama Pejabat, NIP) */}
+              <div className={`sm:col-span-2 pt-2 mt-1 border-t ${isDarkMode ? 'border-slate-800' : 'border-slate-100'}`}>
+                <p className={`text-sm font-bold mb-2 ${isDarkMode ? 'text-slate-200' : 'text-[#002855]'}`}>Disahkan Oleh <span className={`font-normal ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>(muncul di cover — opsional)</span></p>
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div className="sm:col-span-2">
+                    <label className={`block text-sm font-bold mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Jabatan Pejabat</label>
+                    <input type="text" placeholder="Contoh: Direktur Jenderal Penetapan Hak dan Pendaftaran Tanah" value={config.jabatanPengesah} onChange={(e) => setConfig({ ...config, jabatanPengesah: e.target.value })} className={`w-full px-4 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white placeholder:text-slate-500' : 'bg-slate-50 border-slate-300 text-slate-900'}`} />
+                  </div>
+                  <div>
+                    <label className={`block text-sm font-bold mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Nama Pejabat</label>
+                    <input type="text" placeholder="Nama lengkap" value={config.namaPengesah} onChange={(e) => setConfig({ ...config, namaPengesah: e.target.value })} className={`w-full px-4 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white placeholder:text-slate-500' : 'bg-slate-50 border-slate-300 text-slate-900'}`} />
+                  </div>
+                  <div>
+                    <label className={`block text-sm font-bold mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>NIP</label>
+                    <input type="text" placeholder="NIP pejabat" value={config.nipPengesah} onChange={(e) => setConfig({ ...config, nipPengesah: e.target.value })} className={`w-full px-4 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 font-mono ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white placeholder:text-slate-500' : 'bg-slate-50 border-slate-300 text-slate-900'}`} />
+                  </div>
+                </div>
+              </div>
             </div>
-            <div className={`flex justify-end gap-3 mt-8 pt-4 border-t ${isDarkMode ? 'border-slate-800' : 'border-slate-100'}`}>
+            </div>
+            <div className={`flex justify-end gap-3 p-6 pt-4 border-t shrink-0 ${isDarkMode ? 'border-slate-800' : 'border-slate-100'}`}>
               <button onClick={() => setShowConfigModal(false)} className={`px-5 py-2.5 text-sm font-bold border rounded-xl transition-colors ${isDarkMode ? 'border-slate-700 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}>Batal</button>
               <button onClick={handleStartSOP} className="px-6 py-2.5 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-md transition-all flex items-center gap-2 active:scale-95">
                  Buat SOP <ArrowLeft className="w-4 h-4 rotate-180" />
@@ -346,7 +427,7 @@ export default function SOPDashboardPage() {
           <p className={`text-sm font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
             {currentUser.role === 'admin' ? 'Manajemen Pengajuan (Pusat)' : `${currentUser.unit_l1}${currentUser.unit_l2 ? ' › ' + currentUser.unit_l2 : ''}`}
           </p>
-          <button onClick={() => setShowConfigModal(true)} className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-md flex items-center gap-2 font-bold transition-all self-start sm:self-auto"><Plus size={18} /> Buat SOP Baru</button>
+          <button onClick={handleOpenNewSOP} className="px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-md flex items-center gap-2 font-bold transition-all self-start sm:self-auto"><Plus size={18} /> Buat SOP Baru</button>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4 mb-8">
           <div className={`p-5 rounded-2xl border shadow-sm flex justify-between items-center transition-all hover:shadow-md ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
@@ -429,8 +510,20 @@ export default function SOPDashboardPage() {
                         <button onClick={() => window.location.href = `/e-sop-atrbpn/sop/studio?id=${model.id}&mode=view`} className={`font-bold text-base text-left hover:underline ${isDarkMode ? 'text-white hover:text-emerald-400' : 'text-[#002855] hover:text-emerald-600'}`}>
                           {model.process_title}
                         </button>
-                        <div className="flex flex-wrap items-center gap-2 mt-2">
-                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${isDarkMode ? 'text-slate-400 bg-slate-800 border-slate-700' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>No: {model.process_key}</span>
+                        <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                          {model.process_key && (
+                            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${isDarkMode ? 'text-slate-400 bg-slate-800 border-slate-700' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>No: {model.process_key}</span>
+                          )}
+                          {model.jenis_proses && (
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${isDarkMode ? 'text-violet-300 bg-violet-900/30 border-violet-700' : 'text-violet-700 bg-violet-50 border-violet-200'}`}>
+                              {model.jenis_proses}
+                            </span>
+                          )}
+                          {model.klasifikasi_proses && (
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${isDarkMode ? 'text-teal-300 bg-teal-900/30 border-teal-700' : 'text-teal-700 bg-teal-50 border-teal-200'}`}>
+                              {model.klasifikasi_proses}
+                            </span>
+                          )}
                           <span className={`text-[10px] flex items-center gap-1 px-1.5 py-0.5 rounded border ${isDarkMode ? 'text-slate-400 bg-slate-800 border-slate-700' : 'text-slate-500 bg-slate-50 border-slate-200'}`}><Calendar className="w-3 h-3" />{new Date(model.updated_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
                           <span className="text-[10px] font-bold text-emerald-600 flex items-center gap-1 bg-emerald-50 px-1.5 py-0.5 rounded border border-emerald-200" title="Total perubahan yang sudah disimpan"><GitCommit className="w-3 h-3" />Versi {model.version}</span>
                         </div>

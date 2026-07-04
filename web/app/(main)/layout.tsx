@@ -33,7 +33,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
       {/* Content column — shifts right on desktop when sidebar is open */}
       <div
-        className={`h-full flex flex-col overflow-hidden transition-[margin] duration-300 ${
+        className={`h-full flex flex-col overflow-hidden transition-[margin] duration-300 print:ml-0! ${
           sidebarOpen ? 'lg:ml-72' : 'lg:ml-16'
         }`}
       >

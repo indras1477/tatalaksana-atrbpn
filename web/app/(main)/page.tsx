@@ -4,6 +4,7 @@ import {
   ChevronRight, ArrowLeft, Download, FileText,
   Activity, BookOpen, Filter, X, Eye, EyeOff, Search, ChevronLeft,
   RefreshCw, ExternalLink, FolderOpen, Layers,
+  UploadCloud, Globe, Folder, Plus, CheckCircle2, AlertCircle, FileSpreadsheet,
 } from 'lucide-react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import * as XLSX from 'xlsx';
@@ -57,7 +58,7 @@ const HIERARKI_UNIT: Record<string, Record<string, string[]>> = {
   "DIREKTORAT JENDERAL SURVEI DAN PEMETAAN PERTANAHAN DAN RUANG": {
     "Sekretariat Direktorat Jenderal Survei dan Pemetaan": ["Bagian Program dan Hukum", "Bagian Kepegawaian, Keuangan, dan Umum", "Bagian Manajemen Risiko"],
     "Direktorat Pengukuran dan Pemetaan Kadastral": ["Subdirektorat Pengukuran dan Pemetaan Bidang", "Subdirektorat Pengukuran dan Pemetaan Ruang", "Subdirektorat Penanganan Masalah dan Peningkatan Kualitas Kadastral"],
-    "Direktorat Pengukuran dan Pemetaan Dasar": ["Subdirektorat Pemetaan dan Pengelolaan Data Dasar", "Subdirektorat Pengukuran Dasar dan Peralatan", "Subdirektorat Pemetaan dan Pengelolaan Model Dasar dan Ruang"],
+    "Direktorat Pengukuran dan Pemetaan Dasar Pertanahan dan Ruang": ["Subdirektorat Pemetaan dan Pengelolaan Data Dasar", "Subdirektorat Pengukuran Dasar dan Peralatan", "Subdirektorat Pemetaan dan Pengelolaan Model Dasar dan Ruang"],
     "Direktorat Survei dan Pemetaan Tematik": ["Subdirektorat Tematik Pertanahan dan Ruang", "Subdirektorat Tematik Kawasan", "Subdirektorat Layanan Informasi Geospasial Tematik Multiguna"]
   },
   "DIREKTORAT JENDERAL PENETAPAN HAK DAN PENDAFTARAN TANAH": {
@@ -74,8 +75,8 @@ const HIERARKI_UNIT: Record<string, Record<string, string[]>> = {
   },
   "DIREKTORAT JENDERAL PENGADAAN TANAH DAN PENGEMBANGAN PERTANAHAN": {
     "Sekretariat Direktorat Jenderal Pengadaan Tanah": ["Bagian Program dan Hukum", "Bagian Kepegawaian, Keuangan, dan Umum"],
-    "Direktorat Bina Pengadaan and Pencadangan Tanah": ["Subdirektorat Bina Pengadaan Tanah Wilayah I", "Subdirektorat Bina Pengadaan Tanah Wilayah II", "Subdirektorat Pencadangan Tanah dan Kerjasama Pengadaan Lintas Rektor"],
-    "Direktorat Konsolidasi Tanah dan Pengembangan": ["Subdirektorat Penyelenggaraan Konsolidasi Tanah Wilayah I", "Subdirektorat Penyelenggaraan Konsolidasi Tanah Wilayah II", "Subdirektorat Pengembangan Pertanahan dan Pemanfaatan Tanah"],
+    "Direktorat Bina Pengadaan dan Pencadangan Tanah": ["Subdirektorat Bina Pengadaan Tanah Wilayah I", "Subdirektorat Bina Pengadaan Tanah Wilayah II", "Subdirektorat Pencadangan Tanah dan Kerjasama Pengadaan Lintas Rektor"],
+    "Direktorat Konsolidasi Tanah dan Pengembangan Pertanahan": ["Subdirektorat Penyelenggaraan Konsolidasi Tanah Wilayah I", "Subdirektorat Penyelenggaraan Konsolidasi Tanah Wilayah II", "Subdirektorat Pengembangan Pertanahan dan Pemanfaatan Tanah"],
     "Direktorat Penilaian Tanah dan Ekonomi Pertanahan": ["Subdirektorat Penyediaan dan Pemanfaatan Nilai Tanah", "Subdirektorat Penilaian Tanah dan Dampak Sosial", "Subdirektorat Pendayagunaan Ekonomi Pertanahan"]
   },
   "DIREKTORAT JENDERAL PENGENDALIAN DAN PENERTIBAN TANAH DAN RUANG": {
@@ -86,7 +87,7 @@ const HIERARKI_UNIT: Record<string, Record<string, string[]>> = {
     "Direktorat Penertiban Penguasaan, Pemilikan, dan Penggunaan Tanah": ["Subdirektorat Potensi Penertiban Tanah", "Subdirektorat Penertiban Penguasaan dan Pemilikan Tanah", "Subdirektorat Penertiban Penggunaan dan Pemanfaatan Tanah"]
     
   },
-  "DIREKTORAT JENDERAL PENANGANAN SENGKETA DAN KONFLIK PERTANAHA": {
+  "DIREKTORAT JENDERAL PENANGANAN SENGKETA DAN KONFLIK PERTANAHAN": {
     "Sekretariat Direktorat Jenderal Penanganan Sengketa": ["Bagian Program dan Hukum", "Bagian Kepegawaian, Keuangan, dan Umum"],
     "Direktorat Penanganan Sengketa Pertanahan": ["Subdirektorat Penanganan Sengketa Penetapan Hak dan Pendaftaran Tanah", "Subdirektorat Penanganan Sengketa Batas Bidang Tanah", "Subdirektorat Penanganan Sengketa Penguasaan dan Pemilikan Tanah"],
     "Direktorat Penanganan Perkara Pertanahan": ["Subdirektorat Penanganan Perkara Wilayah I", "Subdirektorat Penanganan Perkara Wilayah II", "Subdirektorat Penanganan Perkara Wilayah III"],
@@ -116,7 +117,7 @@ const CHART_LABELS: Record<string, string> = {
   "DIREKTORAT JENDERAL PENATAAN AGRARIA": "PENTAG", 
   "DIREKTORAT JENDERAL PENGADAAN TANAH DAN PENGEMBANGAN PERTANAHAN": "PENGADAAN",
   "DIREKTORAT JENDERAL PENGENDALIAN DAN PENERTIBAN TANAH DAN RUANG": "PENGENDALIAN", 
-  "DIREKTORAT JENDERAL PENANGANAN SENGKETA DAN KONFLIK PERTANAHA": "PSKP",
+  "DIREKTORAT JENDERAL PENANGANAN SENGKETA DAN KONFLIK PERTANAHAN": "PSKP",
   "INSPEKTORAT JENDERAL": "ITJEN", 
   "BADAN PENGEMBANGAN SUMBER DAYA MANUSIA": "BPSDM", 
   "SEKOLAH TINGGI PERTANAHAN NASIONAL": "STPN"
@@ -124,6 +125,43 @@ const CHART_LABELS: Record<string, string> = {
 
 const listL1 = Object.keys(HIERARKI_UNIT);
 const getListL2 = (l1: string) => l1 && HIERARKI_UNIT[l1] ? Object.keys(HIERARKI_UNIT[l1]) : [];
+
+const PROBIS_L1_MAP: Record<string, string> = {
+  '1. Sekretariat Jenderal': 'SEKRETARIAT JENDERAL',
+  '2. Inspektorat Jenderal': 'INSPEKTORAT JENDERAL',
+  '3. Direktorat Jenderal Tata Ruang': 'DIREKTORAT JENDERAL TATA RUANG',
+  '4. Direktorat Jenderal SPPR': 'DIREKTORAT JENDERAL SURVEI DAN PEMETAAN PERTANAHAN DAN RUANG',
+  '5. Direktorat Jenderal PHPT': 'DIREKTORAT JENDERAL PENETAPAN HAK DAN PENDAFTARAN TANAH',
+  '6. Direktorat Jenderal Penataan Agraria': 'DIREKTORAT JENDERAL PENATAAN AGRARIA',
+  '7. Direktorat Jenderal PTPP': 'DIREKTORAT JENDERAL PENGADAAN TANAH DAN PENGEMBANGAN PERTANAHAN',
+  '8. Direktorat Jenderal PPTR': 'DIREKTORAT JENDERAL PENGENDALIAN DAN PENERTIBAN TANAH DAN RUANG',
+  '9. Direktorat Jenderal PSKP': 'DIREKTORAT JENDERAL PENANGANAN SENGKETA DAN KONFLIK PERTANAHA',
+};
+
+interface ImportRow {
+  _key: string;
+  nama: string; jenis: string; tahun: string;
+  unitL1: string; unitL2: string; unitL3: string;
+  link: string; sumber: string;
+}
+interface CrawlFile { name: string; ext: string; url: string; }
+interface CrawlDir { name: string; path: string; }
+interface CrawlItem {
+  _key: string;
+  nama: string; ext: string; url: string;
+  jenis: string; tahun: string;
+  unitL1: string; unitL2: string; unitL3: string;
+  sumber: string;
+}
+interface DriveFolder { id: string; name: string; }
+interface DriveFile { id: string; name: string; webViewLink: string; }
+interface DriveItem {
+  _key: string;
+  fileId: string;
+  nama: string; link: string;
+  jenis: string; tahun: string;
+  unitL1: string; unitL2: string; unitL3: string;
+}
 
 interface Dokumen {
   id: number; nama: string; jenis: string; tahun: string;
@@ -167,6 +205,16 @@ function DashboardBPN() {
   const [unitL2List, setUnitL2List] = useState<{id: number; nama: string; l1_id: number}[]>([]);
   const [unitL3List, setUnitL3List] = useState<{id: number; nama: string; l2_id: number}[]>([]);
   const [unitTree, setUnitTree] = useState<UnitNode[]>([]);
+  // Tree lokal dari DB — dipakai form agar nama persis sama dengan unitL1List/L2List
+  const localUnitTree = useMemo<UnitNode[]>(() => unitL1List.map(l1 => ({
+    id: l1.id, nama: l1.nama,
+    children: unitL2List.filter(l2 => l2.l1_id === l1.id).map(l2 => ({
+      id: l2.id, nama: l2.nama,
+      children: unitL3List.filter(l3 => l3.l2_id === l2.id).map(l3 => ({
+        id: l3.id, nama: l3.nama, children: []
+      }))
+    }))
+  })) as unknown as UnitNode[], [unitL1List, unitL2List, unitL3List]);
 
   useEffect(() => {
     const initAuth = async () => {
@@ -203,6 +251,7 @@ function DashboardBPN() {
   }, []);
 
   const [activeMenu, setActiveMenu] = useState('dashboard');
+  const [dashboardTab, setDashboardTab] = useState<'2026' | 'arsip'>('2026');
   const [level, setLevel] = useState(1);
   const [selectedL1, setSelectedL1] = useState('');
   const [selectedL2, setSelectedL2] = useState('');
@@ -219,13 +268,52 @@ function DashboardBPN() {
 
   const [editingId, setEditingId] = useState<number | null>(null);
   const [viewDoc, setViewDoc] = useState<Dokumen | null>(null);
-  const [previewSvg, setPreviewSvg] = useState<string>(""); 
+  const [previewSvg, setPreviewSvg] = useState<string>("");
   const [showChart, setShowChart] = useState(true);
   const [chartFilterSatker, setChartFilterSatker] = useState('Semua');
+
+  // === IMPORT MODAL (Excel + Crawl tabs) ===
+  const [showImportModal, setShowImportModal] = useState(false);
+  const [importSource, setImportSource] = useState<'arsip' | '2026'>('arsip');
+  const [importTab, setImportTab] = useState<'excel' | 'crawl' | 'drive'>('excel');
+  // Excel
+  const [xlsRows, setXlsRows] = useState<ImportRow[]>([]);
+  const [xlsImporting, setXlsImporting] = useState(false);
+  const [xlsMsg, setXlsMsg] = useState('');
+  // Crawl Probis
+  const [crawlPath, setCrawlPath] = useState('');
+  const [crawlHistory, setCrawlHistory] = useState<CrawlDir[]>([]);
+  const [crawlDirs, setCrawlDirs] = useState<CrawlDir[]>([]);
+  const [crawlFiles, setCrawlFiles] = useState<CrawlFile[]>([]);
+  const [crawlLoading, setCrawlLoading] = useState(false);
+  const [crawlErr, setCrawlErr] = useState('');
+  const [crawlQueue, setCrawlQueue] = useState<CrawlItem[]>([]);
+  const [bulkImporting, setBulkImporting] = useState(false);
+  const [bulkMsg, setBulkMsg] = useState('');
+  // Google Drive
+  const DRIVE_ROOT = '1T4dQCI3CJYLOEJOCmC18Lsa9jjFRmGDP';
+  const [driveStack, setDriveStack] = useState<DriveFolder[]>([]);
+  const [driveFolders, setDriveFolders] = useState<DriveFolder[]>([]);
+  const [driveFiles, setDriveFiles] = useState<DriveFile[]>([]);
+  const [driveLoading, setDriveLoading] = useState(false);
+  const [driveErr, setDriveErr] = useState('');
+  const [driveQueue, setDriveQueue] = useState<DriveItem[]>([]);
+  const [driveImporting, setDriveImporting] = useState(false);
+  const [driveMsg, setDriveMsg] = useState('');
 
   useEffect(() => {
     setCurrentPage(1);
   }, [searchQuery, filterJenis, filterTahun, selectedL1, selectedL2]);
+
+  useEffect(() => {
+    setCurrentPage(1);
+    setLevel(1);
+    setSelectedL1('');
+    setSelectedL2('');
+    setFilterJenis('Semua');
+    setFilterTahun('Semua');
+    setSearchQuery('');
+  }, [dashboardTab]);
 
   useEffect(() => {
     if (!token) return;
@@ -305,13 +393,18 @@ function DashboardBPN() {
     link: '', sumber: ''
   });
 
-  const totalProbis = dokumenList.filter(d => d.jenis === 'Proses Bisnis').length;
-  const totalSOP = dokumenList.filter(d => d.jenis === 'SOP').length;
-  const totalSP = dokumenList.filter(d => d.jenis === 'Standar Pelayanan').length;
+  const dokumenByTab = useMemo(() => {
+    if (dashboardTab === '2026') return dokumenList.filter(d => d.tahun === '2026');
+    return dokumenList.filter(d => parseInt(d.tahun) <= 2025);
+  }, [dokumenList, dashboardTab]);
+
+  const totalProbis = dokumenByTab.filter(d => d.jenis === 'Proses Bisnis').length;
+  const totalSOP = dokumenByTab.filter(d => d.jenis === 'SOP').length;
+  const totalSP = dokumenByTab.filter(d => d.jenis === 'Standar Pelayanan').length;
 
   const rekapL1 = useMemo(() => {
     return listL1.map(unitL1 => {
-      const docs = dokumenList.filter(d => d.unitL1 === unitL1);
+      const docs = dokumenByTab.filter(d => d.unitL1 === unitL1);
       return {
         nama: unitL1, 
         labelChart: CHART_LABELS[unitL1] || unitL1.substring(0, 5),
@@ -320,7 +413,7 @@ function DashboardBPN() {
         sp: docs.filter(d => d.jenis === 'Standar Pelayanan').length,
       };
     });
-  }, [dokumenList]);
+  }, [dokumenByTab]);
 
   const chartData = useMemo(() => {
     if (chartFilterSatker === 'Semua') return rekapL1;
@@ -330,7 +423,7 @@ function DashboardBPN() {
   const rekapL2 = useMemo(() => {
     if (!selectedL1) return [];
     return getListL2(selectedL1).map(unitL2 => {
-      const docs = dokumenList.filter(d => d.unitL1 === selectedL1 && d.unitL2 === unitL2);
+      const docs = dokumenByTab.filter(d => d.unitL1 === selectedL1 && d.unitL2 === unitL2);
       return {
         nama: unitL2,
         probis: docs.filter(d => d.jenis === 'Proses Bisnis').length,
@@ -338,10 +431,10 @@ function DashboardBPN() {
         sp: docs.filter(d => d.jenis === 'Standar Pelayanan').length,
       };
     });
-  }, [selectedL1, dokumenList]);
+  }, [selectedL1, dokumenByTab]);
 
   const dokumenFiltered = useMemo(() => {
-    const filtered = dokumenList.filter(d => {
+    const filtered = dokumenByTab.filter(d => {
       const matchUnit = d.unitL1 === selectedL1 && (!selectedL2 || d.unitL2 === selectedL2);
       const matchJenis = filterJenis === 'Semua' || d.jenis === filterJenis;
       const matchTahun = filterTahun === 'Semua' || d.tahun === filterTahun;
@@ -365,14 +458,14 @@ function DashboardBPN() {
       const indexB = urutanL3.indexOf(b.unitL3);
       return indexA - indexB;
     });
-  }, [dokumenList, selectedL1, selectedL2, filterJenis, filterTahun, searchQuery]);
+  }, [dokumenByTab, selectedL1, selectedL2, filterJenis, filterTahun, searchQuery]);
 
   const indexOfLastItem = currentPage * itemsPerPage;
   const indexOfFirstItem = indexOfLastItem - itemsPerPage;
   const currentItems = dokumenFiltered.slice(indexOfFirstItem, indexOfLastItem);
   const totalPages = Math.ceil(dokumenFiltered.length / itemsPerPage);
   const uniqueTahunList = Array.from(new Set(
-    dokumenList.filter(d => d.unitL1 === selectedL1 && (!selectedL2 || d.unitL2 === selectedL2)).map(d => d.tahun)
+    dokumenByTab.filter(d => d.unitL1 === selectedL1 && (!selectedL2 || d.unitL2 === selectedL2)).map(d => d.tahun)
   )).sort();
 
   const handleExportExcel = () => {
@@ -502,6 +595,283 @@ function DashboardBPN() {
     } catch { alert('Gagal menghapus dokumen.'); }
   };
    
+
+  // === EXCEL IMPORT HANDLERS ===
+  const downloadXlsTemplate = () => {
+    const wb = XLSX.utils.book_new();
+
+    // Sheet 1: Template isian
+    const ws = XLSX.utils.json_to_sheet([
+      {
+        'Nama Proses/Layanan': 'Contoh: Evaluasi AKIP',
+        'Jenis': 'Proses Bisnis',
+        'Tahun': '2025',
+        'Unit Kerja L1': 'INSPEKTORAT JENDERAL',
+        'Unit Kerja L2': 'Sekretariat Inspektorat Jenderal',
+        'Unit Kerja L3': '',
+        'Link Dokumen': 'https://orpeg.atrbpn.go.id/probis/...',
+        'Sumber/Dasar Hukum': '',
+      },
+      {
+        'Nama Proses/Layanan': 'Contoh: Pengukuran dan Pemetaan Bidang Tanah',
+        'Jenis': 'SOP',
+        'Tahun': '2025',
+        'Unit Kerja L1': 'DIREKTORAT JENDERAL SURVEI DAN PEMETAAN PERTANAHAN DAN RUANG',
+        'Unit Kerja L2': 'Direktorat Pengukuran dan Pemetaan Kadastral',
+        'Unit Kerja L3': '',
+        'Link Dokumen': '',
+        'Sumber/Dasar Hukum': '',
+      },
+    ]);
+    // Lebar kolom
+    ws['!cols'] = [{ wch: 60 }, { wch: 18 }, { wch: 8 }, { wch: 65 }, { wch: 50 }, { wch: 30 }, { wch: 50 }, { wch: 30 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Template');
+
+    // Sheet 2: Daftar Unit Kerja L1 resmi (nama harus persis seperti ini)
+    const unitL1Rows = [
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'SEKRETARIAT JENDERAL', 'Singkatan': 'SETJEN' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'DIREKTORAT JENDERAL TATA RUANG', 'Singkatan': 'TARU' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'DIREKTORAT JENDERAL SURVEI DAN PEMETAAN PERTANAHAN DAN RUANG', 'Singkatan': 'SPPR' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'DIREKTORAT JENDERAL PENETAPAN HAK DAN PENDAFTARAN TANAH', 'Singkatan': 'PHPT' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'DIREKTORAT JENDERAL PENATAAN AGRARIA', 'Singkatan': 'PENTAG' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'DIREKTORAT JENDERAL PENGADAAN TANAH DAN PENGEMBANGAN PERTANAHAN', 'Singkatan': 'PTPP' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'DIREKTORAT JENDERAL PENGENDALIAN DAN PENERTIBAN TANAH DAN RUANG', 'Singkatan': 'PPTR' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'DIREKTORAT JENDERAL PENANGANAN SENGKETA DAN KONFLIK PERTANAHAN', 'Singkatan': 'PSKP' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'INSPEKTORAT JENDERAL', 'Singkatan': 'ITJEN' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'BADAN PENGEMBANGAN SUMBER DAYA MANUSIA', 'Singkatan': 'BPSDM' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'SEKOLAH TINGGI PERTANAHAN NASIONAL', 'Singkatan': 'STPN' },
+    ];
+    const wsL1 = XLSX.utils.json_to_sheet(unitL1Rows);
+    wsL1['!cols'] = [{ wch: 70 }, { wch: 12 }];
+    XLSX.utils.book_append_sheet(wb, wsL1, 'Daftar Unit L1');
+
+    XLSX.writeFile(wb, 'Template_Import_Dokumen_2023-2025.xlsx');
+  };
+
+  const handleXlsUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const wb = XLSX.read(ev.target?.result, { type: 'array' });
+        const ws = wb.Sheets[wb.SheetNames[0]];
+        const json = XLSX.utils.sheet_to_json<Record<string, string>>(ws, { defval: '' });
+        if (json.length === 0) { setXlsMsg('✗ File kosong atau tidak ada data'); return; }
+
+        // Flexible column aliases — map any known variant to canonical key
+        const COL: Record<string, string[]> = {
+          nama:   ['Nama Proses/Layanan','Nama Proses','Nama Layanan','Nama SOP','Nama','Proses/Layanan','nama sop','nama proses'],
+          jenis:  ['Jenis','Tipe','Type'],
+          tahun:  ['Tahun','Year'],
+          unitL1: ['Unit Kerja L1','Unit L1','Direktorat Jenderal','Ditjen','L1','Unit Eselon I'],
+          unitL2: ['Unit Kerja L2','Unit L2','Direktorat','L2','Unit Eselon II'],
+          unitL3: ['Unit Kerja L3','Unit L3','L3','Unit Eselon III','Subdirektorat'],
+          link:   ['Link Dokumen','Link','URL','Tautan','Hyperlink','Link SOP','Link Dokumen/SOP'],
+          sumber: ['Sumber/Dasar Hukum','Sumber','Dasar Hukum','Referensi','Keterangan'],
+        };
+
+        const headers = Object.keys(json[0]);
+        // case-insensitive header matching
+        const resolve = (aliases: string[]) => {
+          for (const alias of aliases) {
+            const found = headers.find(h => h.trim().toLowerCase() === alias.toLowerCase());
+            if (found) return found;
+          }
+          return '';
+        };
+        const colMap = Object.fromEntries(Object.entries(COL).map(([k, v]) => [k, resolve(v)]));
+
+        const pick = (r: Record<string, string>, col: string, fallback = '') =>
+          col ? String(r[col] ?? '').trim() : fallback;
+
+        const rows: ImportRow[] = json.map((r, i) => ({
+          _key: `xls-${i}`,
+          nama: pick(r, colMap.nama),
+          jenis: pick(r, colMap.jenis) || 'Proses Bisnis',
+          tahun: String(pick(r, colMap.tahun) || '2023'),
+          unitL1: pick(r, colMap.unitL1),
+          unitL2: pick(r, colMap.unitL2),
+          unitL3: pick(r, colMap.unitL3),
+          link: pick(r, colMap.link),
+          sumber: pick(r, colMap.sumber),
+        }));
+
+        const validCount = rows.filter(r => r.nama.trim()).length;
+        if (validCount === 0) {
+          setXlsMsg(`✗ Tidak ada baris valid. Kolom terdeteksi: [${headers.join(', ')}]. Pastikan ada kolom "Nama Proses/Layanan" atau download template.`);
+          return;
+        }
+        const noL1Count = rows.filter(r => r.nama.trim() && !r.unitL1.trim()).length;
+        const noL2Count = rows.filter(r => r.nama.trim() && !r.unitL2.trim()).length;
+        const detectedCols = Object.entries(colMap).filter(([,v]) => v).map(([k]) => k).join(', ');
+        let msg = `✓ ${validCount} baris terbaca dari "${wb.SheetNames[0]}" (kolom terdeteksi: ${detectedCols})`;
+        if (noL1Count > 0) msg += ` — ⚠ ${noL1Count} baris tanpa Unit L1`;
+        if (noL2Count > 0) msg += `, ${noL2Count} tanpa Unit L2`;
+        setXlsRows(rows.filter(r => r.nama.trim()));
+        setXlsMsg(msg);
+      } catch (err) {
+        setXlsMsg(`✗ Gagal membaca file: ${err instanceof Error ? err.message : 'format tidak dikenali'}`);
+      }
+    };
+    reader.readAsArrayBuffer(file);
+    e.target.value = '';
+  };
+
+  const handleXlsImport = async () => {
+    if (xlsRows.length === 0) return;
+    setXlsImporting(true); setXlsMsg('');
+    try {
+      const res = await apiFetch('/dokumen/import', token, {
+        method: 'POST',
+        body: JSON.stringify({ items: xlsRows }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        let msg = `✓ Berhasil mengimport ${data.imported} dokumen.`;
+        if (data.errors?.length) {
+          msg += ` ${data.errors.length} baris gagal — contoh: ${data.errors.slice(0,2).join(' | ')}`;
+        }
+        setXlsMsg(msg);
+        if (data.imported > 0) { setXlsRows([]); await fetchDokumen(); }
+      } else {
+        setXlsMsg(`✗ ${data.error || 'Gagal import'}`);
+      }
+    } catch { setXlsMsg('✗ Tidak dapat terhubung ke server'); }
+    finally { setXlsImporting(false); }
+  };
+
+  // === CRAWL PROBIS HANDLERS ===
+  const fetchCrawlDir = async (path: string) => {
+    setCrawlLoading(true); setCrawlErr('');
+    try {
+      const res = await apiFetch(`/dokumen/crawl-probis?path=${encodeURIComponent(path)}`, token);
+      const data = await res.json();
+      if (!res.ok) { setCrawlErr(data.error || 'Gagal memuat'); return; }
+      setCrawlPath(path);
+      setCrawlDirs(data.dirs || []);
+      setCrawlFiles(data.files || []);
+    } catch { setCrawlErr('Tidak dapat terhubung ke server'); }
+    finally { setCrawlLoading(false); }
+  };
+
+  const crawlNavigateTo = (dir: CrawlDir) => {
+    setCrawlHistory(h => [...h, { name: dir.name, path: crawlPath }]);
+    fetchCrawlDir(dir.path);
+  };
+
+  const crawlGoBack = () => {
+    const h = [...crawlHistory];
+    const prev = h.pop();
+    setCrawlHistory(h);
+    fetchCrawlDir(prev?.path ?? '');
+  };
+
+  const crawlAddFile = (f: CrawlFile) => {
+    if (crawlQueue.find(q => q.url === f.url)) return;
+    // Auto-detect L1 from first item in history (root-level dir name)
+    const l1Raw = crawlHistory[0]?.name || '';
+    const l1Mapped = PROBIS_L1_MAP[l1Raw] || '';
+    // Auto-detect L2: second breadcrumb if it looks like a unit name (not "Proses Utama")
+    const l2Raw = crawlHistory[1]?.name || '';
+    const skipL2 = ['Proses Utama', 'Proses Pendukung', 'Sesitjen'].includes(l2Raw);
+    setCrawlQueue(prev => [...prev, {
+      _key: `cq-${Date.now()}-${Math.random().toString(36).slice(2)}`,
+      nama: f.name, ext: f.ext, url: f.url,
+      jenis: f.ext === 'pdf' ? 'SOP' : 'Proses Bisnis',
+      tahun: '2023',
+      unitL1: l1Mapped,
+      unitL2: skipL2 ? '' : l2Raw,
+      unitL3: '',
+      sumber: '',
+    }]);
+  };
+
+  const handleBulkImport = async () => {
+    if (crawlQueue.length === 0) return;
+    setBulkImporting(true); setBulkMsg('');
+    try {
+      const items = crawlQueue.map(q => ({
+        nama: q.nama, jenis: q.jenis, tahun: q.tahun,
+        unitL1: q.unitL1, unitL2: q.unitL2, unitL3: q.unitL3,
+        link: q.url, sumber: q.sumber,
+      }));
+      const res = await apiFetch('/dokumen/import', token, {
+        method: 'POST',
+        body: JSON.stringify({ items }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setBulkMsg(`✓ Berhasil mengimport ${data.imported} dokumen.${data.errors?.length ? ` ${data.errors.length} gagal.` : ''}`);
+        setCrawlQueue([]);
+        await fetchDokumen();
+      } else {
+        setBulkMsg(`✗ ${data.error || 'Gagal import'}`);
+      }
+    } catch { setBulkMsg('✗ Tidak dapat terhubung ke server'); }
+    finally { setBulkImporting(false); }
+  };
+
+  const fetchDriveFolder = async (folderId: string) => {
+    setDriveLoading(true); setDriveErr('');
+    try {
+      const res = await apiFetch(`/dokumen/drive-browse?folderId=${encodeURIComponent(folderId)}`, token);
+      const data = await res.json();
+      if (!res.ok) { setDriveErr(data.error || 'Gagal memuat folder'); return; }
+      setDriveFolders(data.folders || []);
+      setDriveFiles(data.files || []);
+    } catch { setDriveErr('Tidak dapat terhubung ke server'); }
+    finally { setDriveLoading(false); }
+  };
+
+  const driveNavigateTo = (folder: DriveFolder) => {
+    setDriveStack(prev => [...prev, folder]);
+    fetchDriveFolder(folder.id);
+  };
+
+  const driveGoBack = () => {
+    const newStack = driveStack.slice(0, -1);
+    setDriveStack(newStack);
+    fetchDriveFolder(newStack.length > 0 ? newStack[newStack.length - 1].id : DRIVE_ROOT);
+  };
+
+  const driveAddFile = (f: DriveFile) => {
+    const nama = f.name.replace(/\.pdf$/i, '').replace(/[_-]+/g, ' ').trim();
+    setDriveQueue(prev => [...prev, {
+      _key: `drive-${f.id}`,
+      fileId: f.id,
+      nama,
+      link: f.webViewLink,
+      jenis: 'SOP',
+      tahun: String(new Date().getFullYear()),
+      unitL1: '', unitL2: '', unitL3: '',
+    }]);
+  };
+
+  const handleDriveImport = async () => {
+    if (driveQueue.length === 0) return;
+    setDriveImporting(true); setDriveMsg('');
+    try {
+      const items = driveQueue.map(q => ({
+        nama: q.nama, jenis: q.jenis, tahun: q.tahun,
+        unitL1: q.unitL1, unitL2: q.unitL2, unitL3: q.unitL3,
+        link: q.link, sumber: '',
+      }));
+      const res = await apiFetch('/dokumen/import', token, {
+        method: 'POST',
+        body: JSON.stringify({ items }),
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setDriveMsg(`✓ Berhasil mengimport ${data.imported} dokumen.${data.errors?.length ? ` ${data.errors.length} gagal.` : ''}`);
+        setDriveQueue([]);
+        await fetchDokumen();
+      } else {
+        setDriveMsg(`✗ ${data.error || 'Gagal import'}`);
+      }
+    } catch { setDriveMsg('✗ Tidak dapat terhubung ke server'); }
+    finally { setDriveImporting(false); }
+  };
 
   if (isAuthChecking) {
     return (
@@ -644,17 +1014,458 @@ function DashboardBPN() {
         </div>
       )}
 
+      {/* ===== MODAL IMPORT DATA 2023-2025 ===== */}
+      {showImportModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
+          <div className={`w-full max-w-5xl h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden ${isDarkMode ? 'bg-[#151F32] border border-slate-700' : 'bg-white'}`}>
+            {/* Header */}
+            <div className={`flex justify-between items-center p-5 border-b shrink-0 ${isDarkMode ? 'border-slate-700 bg-[#0F172A]' : 'border-slate-200 bg-slate-50'}`}>
+              <div>
+                <h3 className={`font-extrabold text-xl ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{importSource === '2026' ? 'Import Data 2026' : 'Import Data 2023–2025'}</h3>
+                <p className={`text-xs mt-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{importSource === '2026' ? 'Import via Excel atau ambil langsung dari Google Drive' : 'Import via Excel atau ambil langsung dari orpeg.atrbpn.go.id'}</p>
+              </div>
+              <button onClick={() => { setShowImportModal(false); setCrawlQueue([]); setXlsRows([]); setXlsMsg(''); setBulkMsg(''); setDriveQueue([]); setDriveMsg(''); setImportTab('excel'); }}
+                className={`p-2.5 rounded-full ${isDarkMode ? 'hover:bg-red-900/30 text-red-400' : 'hover:bg-red-100 text-red-600'}`}>
+                <X className="w-6 h-6" />
+              </button>
+            </div>
+            {/* Tab switcher */}
+            <div className={`flex gap-1 p-3 border-b shrink-0 ${isDarkMode ? 'border-slate-800 bg-[#0F172A]' : 'border-slate-100 bg-slate-50'}`}>
+              <button onClick={() => setImportTab('excel')}
+                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold transition-all ${importTab === 'excel' ? (isDarkMode ? 'bg-blue-600 text-white' : 'bg-[#002855] text-white') : (isDarkMode ? 'text-slate-400 hover:text-white' : 'text-slate-500 hover:text-slate-700')}`}>
+                <FileSpreadsheet className="w-4 h-4" /> Import Excel
+              </button>
+              {importSource === 'arsip' && (
+                <button onClick={() => { setImportTab('crawl'); if (crawlDirs.length === 0 && !crawlLoading) fetchCrawlDir(''); }}
+                  className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold transition-all ${importTab === 'crawl' ? (isDarkMode ? 'bg-amber-600 text-white' : 'bg-[#A29061] text-white') : (isDarkMode ? 'text-slate-400 hover:text-white' : 'text-slate-500 hover:text-slate-700')}`}>
+                  <Globe className="w-4 h-4" /> Crawl orpeg.atrbpn.go.id
+                </button>
+              )}
+              <button onClick={() => { setImportTab('drive'); if (driveFolders.length === 0 && driveFiles.length === 0 && !driveLoading) fetchDriveFolder(DRIVE_ROOT); }}
+                className={`flex items-center gap-2 px-5 py-2 rounded-xl text-sm font-bold transition-all ${importTab === 'drive' ? (isDarkMode ? 'bg-emerald-600 text-white' : 'bg-emerald-700 text-white') : (isDarkMode ? 'text-slate-400 hover:text-white' : 'text-slate-500 hover:text-slate-700')}`}>
+                <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor"><path d="M1.9 17.4l2.1 3.6c.4.7 1 1 1.7 1h12.6c.7 0 1.3-.3 1.7-1l2.1-3.6H1.9zm10.1-14L8 9.8H4L1.9 13.4l.3.6h19.6l.3-.6L20.1 9.8H16l-4-6.4zM9.5 15l-1.5-2.6 6-2.6L15.5 15H9.5z"/></svg> Google Drive
+              </button>
+            </div>
+
+            {/* ─── TAB: EXCEL ─── */}
+            {importTab === 'excel' && (
+              <div className="flex-1 overflow-y-auto flex flex-col p-5 gap-5">
+                <div className="flex flex-wrap gap-3">
+                  <button onClick={downloadXlsTemplate}
+                    className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm border transition-all ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-300 text-slate-700 hover:bg-slate-100'}`}>
+                    <Download className="w-4 h-4" /> Download Template Excel
+                  </button>
+                  <label className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm cursor-pointer transition-all ${isDarkMode ? 'bg-blue-700 hover:bg-blue-600 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
+                    <UploadCloud className="w-4 h-4" /> Upload File Excel
+                    <input type="file" accept=".xlsx,.xls" className="hidden" onChange={handleXlsUpload} />
+                  </label>
+                </div>
+                {xlsRows.length === 0 && (
+                  <div className={`flex-1 flex flex-col items-center justify-center rounded-2xl border-2 border-dashed gap-3 py-16 ${isDarkMode ? 'border-slate-700 text-slate-500' : 'border-slate-200 text-slate-400'}`}>
+                    <FileSpreadsheet className="w-12 h-12 opacity-30" />
+                    <p className="font-bold text-sm">Download template, isi data, lalu upload kembali</p>
+                    <p className="text-xs">Kolom: Nama · Jenis · Tahun · Unit L1 · Unit L2 · Unit L3 · Link · Sumber</p>
+                  </div>
+                )}
+                {xlsRows.length > 0 && (
+                  <div className="flex-1 overflow-auto rounded-xl border">
+                    <table className={`w-full text-xs text-left ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
+                      <thead className={`text-[10px] uppercase font-bold ${isDarkMode ? 'bg-[#0F172A] text-slate-400' : 'bg-slate-50 text-slate-500'}`}>
+                        <tr>
+                          {['No','Nama','Jenis','Tahun','Unit L1','Unit L2','Link',''].map(h => (
+                            <th key={h} className="px-4 py-3">{h}</th>
+                          ))}
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {xlsRows.map((r, i) => (
+                          <tr key={r._key} className={`border-t ${isDarkMode ? 'border-slate-800' : 'border-slate-100'}`}>
+                            <td className="px-4 py-2 text-slate-400">{i+1}</td>
+                            <td className="px-4 py-2 font-medium max-w-48 truncate">{r.nama || <span className="text-red-400">kosong</span>}</td>
+                            <td className="px-4 py-2">{r.jenis}</td>
+                            <td className="px-4 py-2">{r.tahun}</td>
+                            <td className={`px-4 py-2 max-w-36 truncate ${r.unitL1 ? 'text-slate-500' : 'text-red-500 font-bold'}`}>{r.unitL1 || '⚠ kosong'}</td>
+                            <td className={`px-4 py-2 max-w-36 truncate ${r.unitL2 ? 'text-slate-500' : 'text-amber-500'}`}>{r.unitL2 || '-'}</td>
+                            <td className="px-4 py-2 max-w-32 truncate text-blue-500">{r.link ? '✓ ada' : '-'}</td>
+                            <td className="px-4 py-2">
+                              <button onClick={() => setXlsRows(prev => prev.filter(x => x._key !== r._key))}
+                                className="text-red-400 hover:text-red-600 font-bold">✕</button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+                {xlsMsg && (
+                  <p className={`text-sm font-bold ${xlsMsg.startsWith('✓') ? 'text-emerald-500' : 'text-red-500'}`}>{xlsMsg}</p>
+                )}
+                {xlsRows.length > 0 && (
+                  <button onClick={handleXlsImport} disabled={xlsImporting}
+                    className="flex items-center justify-center gap-2 px-8 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl shadow-lg disabled:opacity-60 self-end">
+                    {xlsImporting && <RefreshCw className="w-4 h-4 animate-spin" />}
+                    Import {xlsRows.length} Dokumen
+                  </button>
+                )}
+              </div>
+            )}
+
+            {/* ─── TAB: CRAWL PROBIS ─── */}
+            {importTab === 'crawl' && (
+              <div className="flex-1 overflow-hidden flex gap-0">
+                {/* Kiri: directory browser */}
+                <div className={`w-1/2 flex flex-col border-r overflow-hidden ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
+                  {/* Breadcrumb */}
+                  <div className={`px-4 py-2.5 flex items-center gap-1 text-xs font-bold border-b shrink-0 ${isDarkMode ? 'border-slate-800 text-slate-400 bg-[#0F172A]' : 'border-slate-100 text-slate-500 bg-slate-50'}`}>
+                    <button onClick={() => { setCrawlHistory([]); fetchCrawlDir(''); }} className="hover:underline text-amber-500">Root</button>
+                    {crawlHistory.map((h, i) => (
+                      <React.Fragment key={i}>
+                        <ChevronRight className="w-3 h-3 opacity-50" />
+                        <button onClick={() => {
+                          const newHist = crawlHistory.slice(0, i + 1);
+                          setCrawlHistory(newHist);
+                          fetchCrawlDir(h.path);
+                        }} className="hover:underline">{h.name}</button>
+                      </React.Fragment>
+                    ))}
+                    {crawlPath && <><ChevronRight className="w-3 h-3 opacity-50" /><span className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{crawlPath.split('/').pop()}</span></>}
+                  </div>
+                  {/* Back button */}
+                  {crawlHistory.length > 0 && (
+                    <button onClick={crawlGoBack}
+                      className={`flex items-center gap-2 px-4 py-2 text-xs font-bold border-b ${isDarkMode ? 'border-slate-800 text-slate-400 hover:bg-slate-800' : 'border-slate-100 text-slate-500 hover:bg-slate-50'}`}>
+                      <ArrowLeft className="w-3 h-3" /> Kembali
+                    </button>
+                  )}
+                  {/* Content */}
+                  <div className="flex-1 overflow-y-auto">
+                    {crawlLoading && (
+                      <div className="flex items-center justify-center py-12 gap-2 text-slate-500">
+                        <RefreshCw className="w-5 h-5 animate-spin" />
+                        <span className="text-sm font-medium">Memuat dari orpeg.atrbpn.go.id...</span>
+                      </div>
+                    )}
+                    {crawlErr && (
+                      <div className="p-4">
+                        <div className={`p-4 rounded-xl flex gap-3 items-start ${isDarkMode ? 'bg-red-900/20 text-red-400' : 'bg-red-50 text-red-600'}`}>
+                          <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+                          <div>
+                            <p className="font-bold text-sm">{crawlErr}</p>
+                            <button onClick={() => fetchCrawlDir(crawlPath)} className="text-xs underline mt-1">Coba lagi</button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {!crawlLoading && !crawlErr && (
+                      <>
+                        {crawlDirs.map(d => (
+                          <button key={d.path} onClick={() => crawlNavigateTo(d)}
+                            className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium border-b transition-colors ${isDarkMode ? 'border-slate-800 text-slate-300 hover:bg-slate-800' : 'border-slate-50 text-slate-700 hover:bg-slate-50'}`}>
+                            <Folder className="w-4 h-4 text-amber-500 shrink-0" />
+                            <span className="truncate text-left">{d.name}</span>
+                            <ChevronRight className="w-4 h-4 ml-auto text-slate-400 shrink-0" />
+                          </button>
+                        ))}
+                        {crawlFiles.map(f => {
+                          const alreadyAdded = crawlQueue.some(q => q.url === f.url);
+                          return (
+                            <div key={f.url} className={`flex items-center gap-3 px-4 py-3 border-b ${isDarkMode ? 'border-slate-800' : 'border-slate-50'}`}>
+                              <FileText className={`w-4 h-4 shrink-0 ${f.ext === 'pdf' ? 'text-red-400' : 'text-blue-400'}`} />
+                              <span className={`flex-1 truncate text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{f.name}</span>
+                              <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase ${f.ext === 'pdf' ? 'bg-red-100 text-red-600' : 'bg-blue-100 text-blue-600'}`}>{f.ext}</span>
+                              <button onClick={() => alreadyAdded ? setCrawlQueue(prev => prev.filter(q => q.url !== f.url)) : crawlAddFile(f)}
+                                className={`shrink-0 p-1.5 rounded-lg transition-all ${alreadyAdded ? 'bg-emerald-100 text-emerald-600 hover:bg-red-100 hover:text-red-600' : 'bg-blue-100 text-blue-600 hover:bg-blue-600 hover:text-white'}`}>
+                                {alreadyAdded ? <CheckCircle2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                              </button>
+                            </div>
+                          );
+                        })}
+                        {crawlDirs.length === 0 && crawlFiles.length === 0 && !crawlLoading && (
+                          <p className="text-center text-slate-400 text-sm py-10">Folder kosong atau tidak ada file SVG/PDF</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Kanan: antrian file terpilih */}
+                <div className="w-1/2 flex flex-col overflow-hidden">
+                  <div className={`px-4 py-2.5 text-xs font-extrabold uppercase tracking-wider border-b shrink-0 ${isDarkMode ? 'border-slate-800 text-slate-400 bg-[#0F172A]' : 'border-slate-100 text-slate-500 bg-slate-50'}`}>
+                    Dipilih ({crawlQueue.length}) — klik + pada file untuk menambahkan
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                    {crawlQueue.length === 0 && (
+                      <div className="flex flex-col items-center justify-center py-12 gap-2 text-slate-400">
+                        <Plus className="w-10 h-10 opacity-20" />
+                        <p className="text-sm font-medium">Belum ada file dipilih</p>
+                      </div>
+                    )}
+                    {crawlQueue.map((item) => (
+                      <div key={item._key} className={`p-3 rounded-xl border space-y-2 text-xs ${isDarkMode ? 'border-slate-700 bg-[#0F172A]' : 'border-slate-200 bg-slate-50'}`}>
+                        <div className="flex items-start justify-between gap-2">
+                          <p className={`font-bold text-sm leading-tight ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{item.nama}</p>
+                          <button onClick={() => setCrawlQueue(prev => prev.filter(q => q._key !== item._key))}
+                            className="text-red-400 hover:text-red-600 shrink-0">✕</button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-slate-500 font-bold">Jenis</label>
+                            <select value={item.jenis} onChange={e => setCrawlQueue(prev => prev.map(q => q._key === item._key ? { ...q, jenis: e.target.value } : q))}
+                              className={`w-full mt-0.5 px-2 py-1 rounded-lg border text-xs ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-white' : 'bg-white border-slate-300'}`}>
+                              <option>Proses Bisnis</option><option>SOP</option><option>Standar Pelayanan</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-slate-500 font-bold">Tahun</label>
+                            <input type="number" value={item.tahun} onChange={e => setCrawlQueue(prev => prev.map(q => q._key === item._key ? { ...q, tahun: e.target.value } : q))}
+                              className={`w-full mt-0.5 px-2 py-1 rounded-lg border text-xs ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-white' : 'bg-white border-slate-300'}`} />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-slate-500 font-bold">Unit Kerja L1</label>
+                          <select value={item.unitL1} onChange={e => setCrawlQueue(prev => prev.map(q => q._key === item._key ? { ...q, unitL1: e.target.value, unitL2: '', unitL3: '' } : q))}
+                            className={`w-full mt-0.5 px-2 py-1 rounded-lg border text-xs ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-white' : 'bg-white border-slate-300'}`}>
+                            <option value="">-- Pilih L1 --</option>
+                            {listL1.map(l => <option key={l} value={l}>{l}</option>)}
+                          </select>
+                        </div>
+                        {item.unitL1 && (
+                          <div>
+                            <label className="text-slate-500 font-bold">Unit Kerja L2</label>
+                            <select value={item.unitL2} onChange={e => setCrawlQueue(prev => prev.map(q => q._key === item._key ? { ...q, unitL2: e.target.value, unitL3: '' } : q))}
+                              className={`w-full mt-0.5 px-2 py-1 rounded-lg border text-xs ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-white' : 'bg-white border-slate-300'}`}>
+                              <option value="">-- Pilih L2 --</option>
+                              {getListL2(item.unitL1).map(l => <option key={l} value={l}>{l}</option>)}
+                            </select>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                  {crawlQueue.length > 0 && (
+                    <div className={`p-3 border-t shrink-0 ${isDarkMode ? 'border-slate-800' : 'border-slate-200'}`}>
+                      {bulkMsg && <p className={`text-xs font-bold mb-2 ${bulkMsg.startsWith('✓') ? 'text-emerald-500' : 'text-red-500'}`}>{bulkMsg}</p>}
+                      <button onClick={handleBulkImport} disabled={bulkImporting}
+                        className="w-full flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-sm disabled:opacity-60">
+                        {bulkImporting && <RefreshCw className="w-4 h-4 animate-spin" />}
+                        Import {crawlQueue.length} File Terpilih
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* ─── TAB: GOOGLE DRIVE ─── */}
+            {importTab === 'drive' && (
+              <div className="flex-1 overflow-hidden flex gap-0">
+                {/* Kiri: folder browser */}
+                <div className={`w-1/2 flex flex-col border-r overflow-hidden ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
+                  {/* Breadcrumb */}
+                  <div className={`px-4 py-2.5 flex items-center gap-1 text-xs font-bold border-b shrink-0 flex-wrap ${isDarkMode ? 'border-slate-800 text-slate-400 bg-[#0F172A]' : 'border-slate-100 text-slate-500 bg-slate-50'}`}>
+                    <button onClick={() => { setDriveStack([]); fetchDriveFolder(DRIVE_ROOT); }} className="hover:underline text-emerald-500">Root</button>
+                    {driveStack.map((f, i) => (
+                      <React.Fragment key={f.id}>
+                        <ChevronRight className="w-3 h-3 opacity-50" />
+                        <button onClick={() => {
+                          const newStack = driveStack.slice(0, i + 1);
+                          setDriveStack(newStack);
+                          fetchDriveFolder(f.id);
+                        }} className="hover:underline truncate max-w-24">{f.name}</button>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                  {/* Back button */}
+                  {driveStack.length > 0 && (
+                    <button onClick={driveGoBack}
+                      className={`flex items-center gap-2 px-4 py-2 text-xs font-bold border-b ${isDarkMode ? 'border-slate-800 text-slate-400 hover:bg-slate-800' : 'border-slate-100 text-slate-500 hover:bg-slate-50'}`}>
+                      <ArrowLeft className="w-3 h-3" /> Kembali
+                    </button>
+                  )}
+                  {/* Content */}
+                  <div className="flex-1 overflow-y-auto">
+                    {driveLoading && (
+                      <div className="flex items-center justify-center py-12 gap-2 text-slate-500">
+                        <RefreshCw className="w-5 h-5 animate-spin" />
+                        <span className="text-sm font-medium">Memuat dari Google Drive...</span>
+                      </div>
+                    )}
+                    {driveErr && (
+                      <div className="p-4">
+                        <div className={`p-4 rounded-xl flex gap-3 items-start ${isDarkMode ? 'bg-red-900/20 text-red-400' : 'bg-red-50 text-red-600'}`}>
+                          <AlertCircle className="w-5 h-5 shrink-0 mt-0.5" />
+                          <div>
+                            <p className="font-bold text-sm">{driveErr}</p>
+                            <button onClick={() => fetchDriveFolder(driveStack.length > 0 ? driveStack[driveStack.length - 1].id : DRIVE_ROOT)} className="text-xs underline mt-1">Coba lagi</button>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                    {!driveLoading && !driveErr && (
+                      <>
+                        {driveFolders.map(f => (
+                          <button key={f.id} onClick={() => driveNavigateTo(f)}
+                            className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium border-b transition-colors ${isDarkMode ? 'border-slate-800 text-slate-300 hover:bg-slate-800' : 'border-slate-50 text-slate-700 hover:bg-slate-50'}`}>
+                            <Folder className="w-4 h-4 text-emerald-500 shrink-0" />
+                            <span className="truncate text-left">{f.name}</span>
+                            <ChevronRight className="w-4 h-4 ml-auto text-slate-400 shrink-0" />
+                          </button>
+                        ))}
+                        {driveFiles.map(f => {
+                          const alreadyAdded = driveQueue.some(q => q.fileId === f.id);
+                          return (
+                            <div key={f.id} className={`flex items-center gap-3 px-4 py-3 border-b ${isDarkMode ? 'border-slate-800' : 'border-slate-50'}`}>
+                              <FileText className="w-4 h-4 shrink-0 text-red-400" />
+                              <span className={`flex-1 truncate text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{f.name}</span>
+                              <span className="text-[10px] font-bold px-1.5 py-0.5 rounded uppercase bg-red-100 text-red-600">PDF</span>
+                              <button onClick={() => alreadyAdded ? setDriveQueue(prev => prev.filter(q => q.fileId !== f.id)) : driveAddFile(f)}
+                                className={`shrink-0 p-1.5 rounded-lg transition-all ${alreadyAdded ? 'bg-emerald-100 text-emerald-600 hover:bg-red-100 hover:text-red-600' : 'bg-blue-100 text-blue-600 hover:bg-blue-600 hover:text-white'}`}>
+                                {alreadyAdded ? <CheckCircle2 className="w-4 h-4" /> : <Plus className="w-4 h-4" />}
+                              </button>
+                            </div>
+                          );
+                        })}
+                        {driveFolders.length === 0 && driveFiles.length === 0 && !driveLoading && (
+                          <p className="text-center text-slate-400 text-sm py-10">Tidak ada folder atau file PDF</p>
+                        )}
+                      </>
+                    )}
+                  </div>
+                </div>
+
+                {/* Kanan: antrian file terpilih */}
+                <div className="w-1/2 flex flex-col overflow-hidden">
+                  <div className={`px-4 py-2.5 text-xs font-extrabold uppercase tracking-wider border-b shrink-0 ${isDarkMode ? 'border-slate-800 text-slate-400 bg-[#0F172A]' : 'border-slate-100 text-slate-500 bg-slate-50'}`}>
+                    Dipilih ({driveQueue.length}) — klik + pada file untuk menambahkan
+                  </div>
+                  <div className="flex-1 overflow-y-auto p-3 space-y-2">
+                    {driveQueue.length === 0 && (
+                      <div className="flex flex-col items-center justify-center py-12 gap-2 text-slate-400">
+                        <Plus className="w-10 h-10 opacity-20" />
+                        <p className="text-sm font-medium">Belum ada file dipilih</p>
+                      </div>
+                    )}
+                    {driveQueue.map((item) => (
+                      <div key={item._key} className={`p-3 rounded-xl border space-y-2 text-xs ${isDarkMode ? 'border-slate-700 bg-[#0F172A]' : 'border-slate-200 bg-slate-50'}`}>
+                        <div className="flex items-start justify-between gap-2">
+                          <p className={`font-bold text-sm leading-tight ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{item.nama}</p>
+                          <button onClick={() => setDriveQueue(prev => prev.filter(q => q._key !== item._key))}
+                            className="text-red-400 hover:text-red-600 shrink-0">✕</button>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                          <div>
+                            <label className="text-slate-500 font-bold">Jenis</label>
+                            <select value={item.jenis} onChange={e => setDriveQueue(prev => prev.map(q => q._key === item._key ? { ...q, jenis: e.target.value } : q))}
+                              className={`w-full mt-0.5 px-2 py-1 rounded-lg border text-xs ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-white' : 'bg-white border-slate-300'}`}>
+                              <option>Proses Bisnis</option><option>SOP</option><option>Standar Pelayanan</option>
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-slate-500 font-bold">Tahun</label>
+                            <input type="number" value={item.tahun} onChange={e => setDriveQueue(prev => prev.map(q => q._key === item._key ? { ...q, tahun: e.target.value } : q))}
+                              className={`w-full mt-0.5 px-2 py-1 rounded-lg border text-xs ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-white' : 'bg-white border-slate-300'}`} />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="text-slate-500 font-bold">Unit Kerja L1</label>
+                          <select value={item.unitL1} onChange={e => setDriveQueue(prev => prev.map(q => q._key === item._key ? { ...q, unitL1: e.target.value, unitL2: '', unitL3: '' } : q))}
+                            className={`w-full mt-0.5 px-2 py-1 rounded-lg border text-xs ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-white' : 'bg-white border-slate-300'}`}>
+                            <option value="">-- Pilih L1 --</option>
+                            {listL1.map(l => <option key={l} value={l}>{l}</option>)}
+                          </select>
+                        </div>
+                        {item.unitL1 && (
+                          <div>
+                            <label className="text-slate-500 font-bold">Unit Kerja L2</label>
+                            <select value={item.unitL2} onChange={e => setDriveQueue(prev => prev.map(q => q._key === item._key ? { ...q, unitL2: e.target.value, unitL3: '' } : q))}
+                              className={`w-full mt-0.5 px-2 py-1 rounded-lg border text-xs ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-white' : 'bg-white border-slate-300'}`}>
+                              <option value="">-- Pilih L2 --</option>
+                              {getListL2(item.unitL1).map(l => <option key={l} value={l}>{l}</option>)}
+                            </select>
+                          </div>
+                        )}
+                        <div>
+                          <label className="text-slate-500 font-bold">Link</label>
+                          <p className="text-blue-500 truncate mt-0.5">{item.link}</p>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                  {driveQueue.length > 0 && (
+                    <div className={`p-3 border-t shrink-0 ${isDarkMode ? 'border-slate-800' : 'border-slate-200'}`}>
+                      {driveMsg && <p className={`text-xs font-bold mb-2 ${driveMsg.startsWith('✓') ? 'text-emerald-500' : 'text-red-500'}`}>{driveMsg}</p>}
+                      <button onClick={handleDriveImport} disabled={driveImporting}
+                        className="w-full flex items-center justify-center gap-2 py-3 bg-emerald-600 hover:bg-emerald-700 text-white font-extrabold rounded-xl text-sm disabled:opacity-60">
+                        {driveImporting && <RefreshCw className="w-4 h-4 animate-spin" />}
+                        Import {driveQueue.length} File dari Drive
+                      </button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* KONTEN UTAMA */}
       <div className="overflow-auto p-4 md:p-6 lg:p-8 scroll-smooth h-full">
         {activeMenu === 'dashboard' && (
           <div className="max-w-7xl mx-auto space-y-6 animate-in fade-in duration-500 pb-12">
+
+            {/* Tab Switcher */}
+            <div className={`flex gap-1 p-1 rounded-2xl w-fit ${isDarkMode ? 'bg-[#0F172A]' : 'bg-slate-100'}`}>
+              <button
+                onClick={() => setDashboardTab('2026')}
+                className={`px-5 py-2.5 rounded-xl text-sm font-extrabold transition-all duration-200 ${
+                  dashboardTab === '2026'
+                    ? isDarkMode ? 'bg-blue-600 text-white shadow-lg' : 'bg-[#002855] text-white shadow-md'
+                    : isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                2026 — Terbaru
+              </button>
+              <button
+                onClick={() => setDashboardTab('arsip')}
+                className={`px-5 py-2.5 rounded-xl text-sm font-extrabold transition-all duration-200 ${
+                  dashboardTab === 'arsip'
+                    ? isDarkMode ? 'bg-amber-600 text-white shadow-lg' : 'bg-[#A29061] text-white shadow-md'
+                    : isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-700'
+                }`}
+              >
+                2023 – 2025
+              </button>
+            </div>
+
             <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end gap-4 mb-8">
               <div>
-                <h2 className={`text-2xl md:text-3xl xl:text-4xl font-extrabold tracking-tight transition-colors ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{level === 1 ? 'Dashboard Monitoring' : level === 2 ? selectedL1 : (selectedL2 || 'Semua Dokumen')}</h2>
-                <p className={`mt-2 font-medium transition-colors text-sm md:text-base ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{level === 1 ? 'Rekapitulasi Dokumen Ketatalaksanaan Seluruh Unit Kerja' : level === 2 ? 'Rincian Rekapitulasi per Unit Kerja' : (selectedL2 ? 'Daftar Dokumen Detail' : `Semua Dokumen di ${selectedL1}`)}</p>
+                <h2 className={`text-2xl md:text-3xl xl:text-4xl font-extrabold tracking-tight transition-colors ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>
+                  {level === 1
+                    ? dashboardTab === '2026' ? 'Dashboard Monitoring 2026' : 'Arsip Probis & SOP 2023–2025'
+                    : level === 2 ? selectedL1 : (selectedL2 || 'Semua Dokumen')}
+                </h2>
+                <p className={`mt-2 font-medium transition-colors text-sm md:text-base ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  {level === 1
+                    ? dashboardTab === '2026'
+                      ? 'Rekapitulasi Dokumen Ketatalaksanaan Tahun 2026'
+                      : 'Dokumen Proses Bisnis dan SOP yang Telah Ditetapkan Tahun 2023–2025'
+                    : level === 2 ? 'Rincian Rekapitulasi per Unit Kerja' : (selectedL2 ? 'Daftar Dokumen Detail' : `Semua Dokumen di ${selectedL1}`)}
+                </p>
               </div>
               <div className="flex items-center gap-3 shrink-0">
                 {level > 1 && <button onClick={() => { setLevel(level - 1); setFilterJenis('Semua'); setFilterTahun('Semua'); setSearchQuery(''); }} className={`flex items-center px-4 py-2 border rounded-xl shadow-sm transition-all font-semibold text-sm ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-slate-300 hover:bg-slate-800' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}><ArrowLeft className="w-4 h-4 mr-2" /> Kembali</button>}
+                {level === 1 && dashboardTab === '2026' && currentUser?.role === 'admin' && (
+                  <button onClick={() => { setShowImportModal(true); setImportSource('2026'); setImportTab('excel'); }}
+                    className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm shadow-md transition-all ${isDarkMode ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-[#002855] hover:bg-[#003580] text-white'}`}>
+                    <UploadCloud className="w-4 h-4" /> Import Data 2026
+                  </button>
+                )}
+                {level === 1 && dashboardTab === 'arsip' && currentUser?.role === 'admin' && (
+                  <button onClick={() => { setShowImportModal(true); setImportSource('arsip'); setImportTab('excel'); }}
+                    className={`flex items-center gap-2 px-5 py-2.5 rounded-xl font-bold text-sm shadow-md transition-all ${isDarkMode ? 'bg-amber-600 hover:bg-amber-500 text-white' : 'bg-[#A29061] hover:bg-[#8c7a4b] text-white'}`}>
+                    <UploadCloud className="w-4 h-4" /> Import Data 2023–2025
+                  </button>
+                )}
               </div>
             </div>
 
@@ -683,7 +1494,7 @@ function DashboardBPN() {
                       <button onClick={() => setShowChart(!showChart)} className={`flex items-center px-4 py-2 text-sm font-bold rounded-xl transition-colors ${isDarkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}>{showChart ? <><EyeOff className="w-4 h-4 mr-2"/> Sembunyikan</> : <><Eye className="w-4 h-4 mr-2"/> Tampilkan</>}</button>
                     </div>
                   </div>
-                  {showChart && <div className="h-72 min-h-75 w-full animate-in fade-in slide-in-from-top-4 duration-500"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData} margin={{ top: 5, right: 0, left: -20, bottom: 5 }}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? '#334155' : '#e2e8f0'} /><XAxis dataKey="labelChart" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: isDarkMode ? '#94a3b8' : '#64748b', fontWeight: 500 }} /><YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: isDarkMode ? '#94a3b8' : '#64748b' }} /><Tooltip cursor={{ fill: isDarkMode ? '#1e293b' : '#f8fafc' }} contentStyle={{ backgroundColor: isDarkMode ? '#0F172A' : '#ffffff', borderColor: isDarkMode ? '#334155' : '#e2e8f0', borderRadius: '12px', color: isDarkMode ? '#f8fafc' : '#002855' }}/><Legend wrapperStyle={{ paddingTop: '20px' }} iconType="circle"/><Bar dataKey="probis" fill="#3b82f6" name="Proses Bisnis" radius={[6, 6, 0, 0]} /><Bar dataKey="sop" fill="#A29061" name="SOP" radius={[6, 6, 0, 0]} /><Bar dataKey="sp" fill="#10b981" name="Standar Pelayanan" radius={[6, 6, 0, 0]} /></BarChart></ResponsiveContainer></div>}
+                  {showChart && <div className="h-72 w-full animate-in fade-in slide-in-from-top-4 duration-500"><ResponsiveContainer width="100%" height={288}><BarChart data={chartData} margin={{ top: 5, right: 0, left: -20, bottom: 5 }}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? '#334155' : '#e2e8f0'} /><XAxis dataKey="labelChart" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: isDarkMode ? '#94a3b8' : '#64748b', fontWeight: 500 }} /><YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: isDarkMode ? '#94a3b8' : '#64748b' }} /><Tooltip cursor={{ fill: isDarkMode ? '#1e293b' : '#f8fafc' }} contentStyle={{ backgroundColor: isDarkMode ? '#0F172A' : '#ffffff', borderColor: isDarkMode ? '#334155' : '#e2e8f0', borderRadius: '12px', color: isDarkMode ? '#f8fafc' : '#002855' }}/><Legend wrapperStyle={{ paddingTop: '20px' }} iconType="circle"/><Bar dataKey="probis" fill="#3b82f6" name="Proses Bisnis" radius={[6, 6, 0, 0]} /><Bar dataKey="sop" fill="#A29061" name="SOP" radius={[6, 6, 0, 0]} /><Bar dataKey="sp" fill="#10b981" name="Standar Pelayanan" radius={[6, 6, 0, 0]} /></BarChart></ResponsiveContainer></div>}
                 </div>
               </>
             )}
@@ -801,7 +1612,7 @@ function DashboardBPN() {
                   <div>
                     <label className="block text-xs font-bold mb-2 text-slate-500">Level 1 (Unit Utama) <span className="text-red-500">*</span></label>
                     <SearchableSelect
-                      options={unitTree.map(n => n.nama)}
+                      options={localUnitTree.map(n => n.nama)}
                       value={formData.unitL1}
                       onChange={v => setFormData({ ...formData, unitL1: v, unitL2: '', unitL3: '' })}
                       placeholder="Cari dan pilih unit utama..."
@@ -811,7 +1622,7 @@ function DashboardBPN() {
                   <div>
                     <label className="block text-xs font-bold mb-2 text-slate-500">Level 2 (Direktorat/Biro)</label>
                     <SearchableSelect
-                      options={unitTree.find(n => n.nama === formData.unitL1)?.children.map(c => c.nama) || []}
+                      options={localUnitTree.find(n => n.nama === formData.unitL1)?.children.map(c => c.nama) || []}
                       value={formData.unitL2}
                       onChange={v => setFormData({ ...formData, unitL2: v, unitL3: '' })}
                       placeholder={formData.unitL1 ? 'Cari sub-unit...' : 'Pilih Level 1 dahulu'}
@@ -822,7 +1633,7 @@ function DashboardBPN() {
                   <div>
                     <label className="block text-xs font-bold mb-2 text-slate-500">Level 3 (Subdit/Bagian)</label>
                     <SearchableSelect
-                      options={unitTree.find(n => n.nama === formData.unitL1)?.children.find(c => c.nama === formData.unitL2)?.children.map(c => c.nama) || []}
+                      options={localUnitTree.find(n => n.nama === formData.unitL1)?.children.find(c => c.nama === formData.unitL2)?.children.map(c => c.nama) || []}
                       value={formData.unitL3}
                       onChange={v => setFormData({ ...formData, unitL3: v })}
                       placeholder={formData.unitL2 ? 'Cari sub-sub-unit...' : 'Pilih Level 2 dahulu'}

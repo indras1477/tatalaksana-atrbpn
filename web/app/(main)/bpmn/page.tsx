@@ -28,6 +28,7 @@ interface BPMNModel {
   status: string; catatan?: string | null;
   version: number; created_by: number; created_at: string; updated_at: string;
   unit_l1?: string; unit_l2?: string;
+  jenis_proses?: string | null; klasifikasi_proses?: string | null;
 }
 
 interface AuthUser {
@@ -198,7 +199,7 @@ export default function BPMNDashboardPage() {
           <p className={`text-sm font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
             {currentUser.role === 'admin' ? 'Manajemen Pengajuan (Pusat)' : `${currentUser.unit_l1}${currentUser.unit_l2 ? ' › ' + currentUser.unit_l2 : ''}`}
           </p>
-          <button onClick={() => router.push('/bpmn/studio')} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center gap-2 font-bold transition-all self-start sm:self-auto"><Plus className="w-4 h-4" /> Buat BPMN Baru</button>
+          <button onClick={() => router.push(`/bpmn/studio?t=${Date.now()}`)} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center gap-2 font-bold transition-all self-start sm:self-auto"><Plus className="w-4 h-4" /> Buat BPMN Baru</button>
         </div>
 
         {/* STATS SUMMARY */}
@@ -303,18 +304,29 @@ export default function BPMNDashboardPage() {
                           {model.process_title}
                         </button>
 
-                        {/* PENAMBAHAN TANGGAL & VERSI DI SINI */}
-                        <div className="flex flex-wrap items-center gap-2 mt-2">
-                          <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${isDarkMode ? 'text-slate-400 bg-slate-800 border-slate-700' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>
-                            ID: {model.process_key}
-                          </span>
+                        <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                          {model.process_key && (
+                            <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${isDarkMode ? 'text-slate-400 bg-slate-800 border-slate-700' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>
+                              {model.process_key}
+                            </span>
+                          )}
+                          {model.jenis_proses && (
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${isDarkMode ? 'text-violet-300 bg-violet-900/30 border-violet-700' : 'text-violet-700 bg-violet-50 border-violet-200'}`}>
+                              {model.jenis_proses}
+                            </span>
+                          )}
+                          {model.klasifikasi_proses && (
+                            <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${isDarkMode ? 'text-teal-300 bg-teal-900/30 border-teal-700' : 'text-teal-700 bg-teal-50 border-teal-200'}`}>
+                              {model.klasifikasi_proses}
+                            </span>
+                          )}
                           <span className={`text-[10px] flex items-center gap-1 px-1.5 py-0.5 rounded border ${isDarkMode ? 'text-slate-400 bg-slate-800 border-slate-700' : 'text-slate-500 bg-slate-50 border-slate-200'}`}>
                             <Calendar className="w-3 h-3" />
                             {new Date(model.updated_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })}
                           </span>
-                          <span className="text-[10px] font-bold text-blue-600 flex items-center gap-1 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200" title="Total perubahan yang sudah disimpan">
+                          <span className="text-[10px] font-bold text-blue-600 flex items-center gap-1 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
                             <GitCommit className="w-3 h-3" />
-                            Versi {model.version}
+                            v{model.version}
                           </span>
                         </div>
                       </td>

@@ -3,7 +3,7 @@
 import { usePathname, useRouter } from 'next/navigation';
 import {
   Home, FileSignature, GitBranch, Users, LogOut,
-  HelpCircle, X, FilePlus, ScrollText,
+  HelpCircle, X, FilePlus, ScrollText, Landmark,
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
 
@@ -16,11 +16,13 @@ const NAV_ITEMS_ALL = [
   { label: 'Dashboard', icon: Home, href: '/' },
   { label: 'Buat Proses Bisnis (BPMN)', icon: GitBranch, href: '/bpmn' },
   { label: 'Buat SOP', icon: FileSignature, href: '/sop' },
+  { label: 'Peraturan', icon: Landmark, href: '/peraturan' },
   { label: 'Juknis / Juklak / SE', icon: ScrollText, href: '/juknis' },
 ];
 
 const NAV_ITEMS_VIEWER = [
   { label: 'Dashboard', icon: Home, href: '/' },
+  { label: 'Peraturan', icon: Landmark, href: '/peraturan' },
   { label: 'Juknis / Juklak / SE', icon: ScrollText, href: '/juknis' },
 ];
 

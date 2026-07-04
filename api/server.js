@@ -4,6 +4,7 @@ const { Pool } = require('pg');
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
+const puppeteer = require('puppeteer');
 require('dotenv').config({ path: __dirname + '/.env' });
 
 const app = express();
@@ -178,6 +179,20 @@ const initDatabase = async () => {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
+      CREATE TABLE IF NOT EXISTS peraturan_menteri (
+        id SERIAL PRIMARY KEY,
+        nama VARCHAR(500) NOT NULL,
+        jenis VARCHAR(50) DEFAULT 'Peraturan Menteri',
+        tahun VARCHAR(4),
+        tanggal_ditetapkan DATE,
+        nomor VARCHAR(200),
+        tentang TEXT,
+        link_drive TEXT,
+        created_by INTEGER REFERENCES users(id),
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+
       CREATE TABLE IF NOT EXISTS juknis_dokumen (
         id SERIAL PRIMARY KEY,
         judul VARCHAR(500) NOT NULL,
@@ -216,6 +231,24 @@ const initDatabase = async () => {
         BEGIN
           ALTER TABLE juknis_dokumen ADD COLUMN tanggal_terbit DATE;
         EXCEPTION WHEN duplicate_column THEN NULL; END;
+      END $$;
+    `);
+
+    // MIGRASI KOLOM BARU KE SOP_MODELS (jenis_proses, klasifikasi_proses, process_key nullable)
+    await client.query(`
+      DO $$
+      BEGIN
+        BEGIN ALTER TABLE sop_models ADD COLUMN jenis_proses VARCHAR(100); EXCEPTION WHEN duplicate_column THEN NULL; END;
+        BEGIN ALTER TABLE sop_models ADD COLUMN klasifikasi_proses VARCHAR(200); EXCEPTION WHEN duplicate_column THEN NULL; END;
+        BEGIN ALTER TABLE sop_models ALTER COLUMN process_key DROP NOT NULL; EXCEPTION WHEN others THEN NULL; END;
+      END $$;
+    `);
+
+    // MIGRASI: bpmn_models.process_key nullable (field opsional, agar save tidak gagal 500)
+    await client.query(`
+      DO $$
+      BEGIN
+        BEGIN ALTER TABLE bpmn_models ALTER COLUMN process_key DROP NOT NULL; EXCEPTION WHEN others THEN NULL; END;
       END $$;
     `);
 
@@ -602,7 +635,7 @@ app.get('/api/bpmn/models', authenticate, async (req, res) => {
     query += ` ORDER BY m.created_at DESC`;
     const result = await pool.query(query, params);
     res.json(result.rows);
-  } catch (err) { res.status(500).json({ error: 'Internal Server Error' }); }
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
 });
 
 app.get('/api/bpmn/models/:id', authenticate, async (req, res) => {
@@ -616,19 +649,57 @@ app.get('/api/bpmn/models/:id', authenticate, async (req, res) => {
     `, [req.params.id]);
     if (result.rows.length === 0) return res.status(404).json({ error: 'Model not found' });
     res.json(result.rows[0]);
-  } catch (err) { res.status(500).json({ error: 'Internal Server Error' }); }
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
 });
 
 app.post('/api/bpmn/models', authenticate, async (req, res) => {
   try {
-    const { process_title, process_key, l1_id, l2_id, description } = req.body;
+    const { process_title, process_key, l1_id, l2_id, description, jenis_proses, klasifikasi_proses, bpmn_xml, svg_xml } = req.body;
     const modelResult = await pool.query(
-      `INSERT INTO bpmn_models (process_title, process_key, l1_id, l2_id, description, status, created_by)
-       VALUES ($1, $2, $3, $4, $5, 'draft', $6) RETURNING *`,
-      [process_title, process_key, l1_id, l2_id || null, description || null, req.user.id]
+      `INSERT INTO bpmn_models (process_title, process_key, l1_id, l2_id, description, jenis_proses, klasifikasi_proses, status, created_by, bpmn_xml, svg_xml)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, 'draft', $8, $9, $10) RETURNING *`,
+      [process_title, process_key || null, l1_id, l2_id || null, description || null,
+       jenis_proses || null, klasifikasi_proses || null, req.user.id, bpmn_xml || null, svg_xml || null]
     );
-    res.json(modelResult.rows[0]);
-  } catch (err) { res.status(500).json({ error: 'Internal Server Error' }); }
+    const full = await pool.query(
+      `SELECT m.*, u1.nama as unit_l1, u2.nama as unit_l2
+       FROM bpmn_models m
+       LEFT JOIN unit_kerja_l1 u1 ON m.l1_id = u1.id
+       LEFT JOIN unit_kerja_l2 u2 ON m.l2_id = u2.id
+       WHERE m.id = $1`,
+      [modelResult.rows[0].id]
+    );
+    res.json(full.rows[0]);
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
+});
+
+app.put('/api/bpmn/models/:id', authenticate, async (req, res) => {
+  try {
+    const { process_title, process_key, l1_id, l2_id, description, bpmn_xml, svg_xml, status, jenis_proses, klasifikasi_proses } = req.body;
+    const result = await pool.query(
+      `UPDATE bpmn_models
+       SET process_title = $1, process_key = $2, l1_id = $3, l2_id = $4, description = $5,
+           bpmn_xml = $6, svg_xml = $7, status = $8::varchar,
+           jenis_proses = $9, klasifikasi_proses = $10,
+           updated_at = NOW(), version = version + 1,
+           catatan = CASE WHEN $8::varchar IN ('draft', 'pending') THEN NULL ELSE catatan END
+       WHERE id = $11
+       RETURNING *`,
+      [process_title, process_key || null, l1_id || null, l2_id || null, description || null,
+       bpmn_xml, svg_xml, status || 'draft',
+       jenis_proses || null, klasifikasi_proses || null, req.params.id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Model not found' });
+    const full = await pool.query(
+      `SELECT m.*, u1.nama as unit_l1, u2.nama as unit_l2
+       FROM bpmn_models m
+       LEFT JOIN unit_kerja_l1 u1 ON m.l1_id = u1.id
+       LEFT JOIN unit_kerja_l2 u2 ON m.l2_id = u2.id
+       WHERE m.id = $1`,
+      [result.rows[0].id]
+    );
+    res.json(full.rows[0]);
+  } catch (err) { console.error('PUT /bpmn/models/:id error:', err.message, err.detail || ''); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
 });
 
 app.put('/api/bpmn/models/:id/save', authenticate, async (req, res) => {
@@ -644,14 +715,14 @@ app.put('/api/bpmn/models/:id/save', authenticate, async (req, res) => {
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Model not found' });
     res.json(result.rows[0]);
-  } catch (err) { res.status(500).json({ error: 'Internal Server Error' }); }
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
 });
 
 app.delete('/api/bpmn/models/:id', authenticate, async (req, res) => {
   try {
     await pool.query('DELETE FROM bpmn_models WHERE id = $1', [req.params.id]);
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: 'Internal Server Error' }); }
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
 });
 
 
@@ -716,11 +787,81 @@ app.get('/api/sop/models/:id', authenticate, async (req, res) => {
   }
 });
 
+// ====== EXPORT PDF VEKTOR (F4 330x215mm) via headless Chrome ======
+// Merender halaman studio (mode view) memakai mesin cetak Chromium pada ukuran F4 persis,
+// menghasilkan PDF VEKTOR (teks bisa diseleksi) yang diunduh langsung — tanpa dialog cetak.
+const PDF_BASE_URL = process.env.PDF_BASE_URL || 'https://tlrb.ortalamr.id/e-sop-atrbpn';
+app.get('/api/sop/models/:id/pdf', authenticate, async (req, res) => {
+  const { id } = req.params;
+  const token = (req.headers.authorization || '').split(' ')[1];
+  let browser;
+  try {
+    const chk = await pool.query('SELECT process_title FROM sop_models WHERE id = $1', [id]);
+    if (chk.rows.length === 0) return res.status(404).json({ error: 'SOP tidak ditemukan' });
+
+    browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    const page = await browser.newPage();
+    // Sisipkan token sebelum skrip app jalan agar halaman studio bisa memuat data (baca localStorage).
+    await page.evaluateOnNewDocument((t) => { try { localStorage.setItem('token', t); } catch (e) {} }, token);
+    await page.goto(`${PDF_BASE_URL}/sop/studio?id=${id}&mode=view`, { waitUntil: 'networkidle0', timeout: 60000 });
+    await page.waitForSelector('.print-page-target', { timeout: 30000 });
+    await page.emulateMediaType('print');
+    // Picu perhitungan ulang panah (getBoundingClientRect) & tunggu font termuat.
+    await page.evaluate(async () => {
+      window.dispatchEvent(new Event('resize'));
+      if (document.fonts && document.fonts.ready) { try { await document.fonts.ready; } catch (e) {} }
+    });
+    await new Promise((r) => setTimeout(r, 2500)); // beri waktu panah dihitung (timer s/d ~1.5s) + font
+    await page.evaluate(() => window.dispatchEvent(new Event('resize')));
+    await new Promise((r) => setTimeout(r, 800));
+
+    // FIT-TO-PAGE: bila konten sebuah halaman sedikit melebihi F4 (215mm) — yang tanpa ini akan
+    // TERPOTONG karena overflow:hidden — perkecil (scale) konten halaman itu agar muat penuh.
+    await page.evaluate(() => {
+      document.querySelectorAll('.page-container, .cover-page-container').forEach((el) => {
+        try {
+          const cs = getComputedStyle(el);
+          const padT = parseFloat(cs.paddingTop) || 0;
+          const padB = parseFloat(cs.paddingBottom) || 0;
+          const availH = el.clientHeight - padT - padB;   // tinggi area isi (F4)
+          const contentH = el.scrollHeight - padT - padB; // tinggi isi sebenarnya
+          if (availH > 0 && contentH > availH + 2) {
+            const k = availH / contentH;
+            if (k >= 0.5 && k < 1) {
+              const wrap = document.createElement('div');
+              wrap.style.cssText = 'display:flex;flex-direction:column;transform-origin:top left;width:' +
+                (100 / k).toFixed(4) + '%;height:' + contentH + 'px;transform:scale(' + k.toFixed(4) + ');';
+              while (el.firstChild) wrap.appendChild(el.firstChild);
+              el.appendChild(wrap);
+            }
+          }
+        } catch (e) { /* abaikan */ }
+      });
+    });
+    await new Promise((r) => setTimeout(r, 300));
+
+    const pdf = await page.pdf({
+      width: '330mm', height: '215mm', printBackground: true,
+      margin: { top: '0mm', right: '0mm', bottom: '0mm', left: '0mm' },
+    });
+
+    // Nama file = nama SOP itu sendiri (spasi dipertahankan, karakter ilegal dibuang).
+    const safe = String(chk.rows[0].process_title || 'Dokumen SOP').replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ').trim() || 'Dokumen SOP';
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', `attachment; filename="${safe}.pdf"`);
+    res.end(Buffer.from(pdf));
+  } catch (err) {
+    console.error('PDF gen error:', err);
+    if (!res.headersSent) res.status(500).json({ error: 'Gagal membuat PDF: ' + err.message });
+  } finally {
+    if (browser) { try { await browser.close(); } catch (e) {} }
+  }
+});
+
 app.post('/api/sop/models', authenticate, async (req, res) => {
   try {
-    const { process_title, process_key, unit_l1, unit_l2, sop_data, status } = req.body;
-    
-    // Cari ID berdasarkan nama Unit Kerja yang dikirim Frontend
+    const { process_title, process_key, unit_l1, unit_l2, sop_data, status, jenis_proses, klasifikasi_proses } = req.body;
+
     let final_l1 = null;
     let final_l2 = null;
 
@@ -732,16 +873,18 @@ app.post('/api/sop/models', authenticate, async (req, res) => {
       const r2 = await pool.query('SELECT id FROM unit_kerja_l2 WHERE nama = $1 AND l1_id = $2', [unit_l2, final_l1]);
       if (r2.rows.length > 0) final_l2 = r2.rows[0].id;
     }
-    
+
+    const finalKey = process_key && process_key.trim() ? process_key.trim() : null;
+
     const modelResult = await pool.query(
-      `INSERT INTO sop_models (process_title, process_key, l1_id, l2_id, sop_data, status, created_by)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *`,
-      [process_title, process_key, final_l1, final_l2, sop_data || null, status || 'draft', req.user.id]
+      `INSERT INTO sop_models (process_title, process_key, l1_id, l2_id, sop_data, status, jenis_proses, klasifikasi_proses, created_by)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
+      [process_title, finalKey, final_l1, final_l2, sop_data || null, status || 'draft',
+       jenis_proses || null, klasifikasi_proses || null, req.user.id]
     );
     res.json(modelResult.rows[0]);
   } catch (err) {
     console.error(err);
-    // Jika key duplicate
     if(err.code === '23505') {
        return res.status(400).json({ error: 'Nomor SOP ini sudah ada di database.' });
     }
@@ -751,9 +894,8 @@ app.post('/api/sop/models', authenticate, async (req, res) => {
 
 app.put('/api/sop/models/:id', authenticate, async (req, res) => {
   try {
-    const { process_title, process_key, unit_l1, unit_l2, sop_data, status } = req.body;
-    
-    // Cari ID berdasarkan nama Unit Kerja yang dikirim Frontend
+    const { process_title, process_key, unit_l1, unit_l2, sop_data, status, jenis_proses, klasifikasi_proses } = req.body;
+
     let final_l1 = null;
     let final_l2 = null;
 
@@ -765,15 +907,23 @@ app.put('/api/sop/models/:id', authenticate, async (req, res) => {
       const r2 = await pool.query('SELECT id FROM unit_kerja_l2 WHERE nama = $1 AND l1_id = $2', [unit_l2, final_l1]);
       if (r2.rows.length > 0) final_l2 = r2.rows[0].id;
     }
-    
+
+    const finalKey = process_key && process_key.trim() ? process_key.trim() : null;
+
+    // Jika status tidak dikirim (mis. saat simpan-untuk-ekspor PDF), pertahankan status lama
+    // agar dokumen yang sudah 'pending' tidak turun jadi 'draft'.
+    const statusParam = (typeof status === 'string' && status) ? status : null;
+
     const result = await pool.query(
-      `UPDATE sop_models 
-       SET process_title = $1, process_key = $2, l1_id = $3, l2_id = $4, 
-           sop_data = $5, status = $6, updated_at = NOW(), version = version + 1
-       WHERE id = $7 RETURNING *`,
-      [process_title, process_key, final_l1, final_l2, sop_data || null, status || 'draft', req.params.id]
+      `UPDATE sop_models
+       SET process_title = $1, process_key = $2, l1_id = $3, l2_id = $4,
+           sop_data = $5, status = COALESCE($6, status), jenis_proses = $7, klasifikasi_proses = $8,
+           updated_at = NOW(), version = version + 1
+       WHERE id = $9 RETURNING *`,
+      [process_title, finalKey, final_l1, final_l2, sop_data || null, statusParam,
+       jenis_proses || null, klasifikasi_proses || null, req.params.id]
     );
-    
+
     if (result.rows.length === 0) return res.status(404).json({ error: 'Model not found' });
     res.json(result.rows[0]);
   } catch (err) {
@@ -806,6 +956,125 @@ app.patch('/api/sop/models/status/:id', authenticate, requireRole('admin'), asyn
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Error update status SOP:', err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// ============ PERATURAN / KEPUTUSAN MENTERI ============
+app.get('/api/peraturan/drive-files', authenticate, requireRole('admin'), async (req, res) => {
+  const apiKey = process.env.GOOGLE_DRIVE_API_KEY;
+  const folderId = '1T4dQCI3CJYLOEJOCmC18Lsa9jjFRmGDP';
+  if (!apiKey) return res.status(503).json({ error: 'GOOGLE_DRIVE_API_KEY belum dikonfigurasi di api/.env' });
+  try {
+    const url = `https://www.googleapis.com/drive/v3/files?q=%27${folderId}%27+in+parents+and+trashed%3Dfalse&fields=files(id,name,webViewLink,mimeType)&orderBy=name&pageSize=200&key=${apiKey}`;
+    const response = await fetch(url);
+    const data = await response.json();
+    if (!response.ok) return res.status(502).json({ error: data.error?.message || 'Gagal mengambil file dari Drive' });
+    const files = (data.files || []).filter(f => f.mimeType !== 'application/vnd.google-apps.folder');
+    res.json(files);
+  } catch (err) {
+    console.error('Drive files error:', err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+// ============ DOKUMEN DRIVE BROWSER ============
+app.get('/api/dokumen/drive-browse', authenticate, requireRole('admin'), async (req, res) => {
+  const apiKey = process.env.GOOGLE_DRIVE_API_KEY;
+  const folderId = req.query.folderId || '1T4dQCI3CJYLOEJOCmC18Lsa9jjFRmGDP';
+  if (!apiKey) return res.status(503).json({ error: 'GOOGLE_DRIVE_API_KEY belum dikonfigurasi di api/.env' });
+  try {
+    const q = encodeURIComponent(`'${folderId}' in parents and trashed=false`);
+    const fields = encodeURIComponent('files(id,name,webViewLink,mimeType)');
+    const url = `https://www.googleapis.com/drive/v3/files?q=${q}&fields=${fields}&orderBy=name&pageSize=500&key=${apiKey}`;
+    const response = await fetch(url);
+    const data = await response.json();
+    if (!response.ok) return res.status(502).json({ error: data.error?.message || 'Gagal mengambil file dari Drive' });
+    const all = data.files || [];
+    const folders = all.filter(f => f.mimeType === 'application/vnd.google-apps.folder').map(f => ({ id: f.id, name: f.name }));
+    const files = all.filter(f => f.mimeType === 'application/pdf' || f.name.toLowerCase().endsWith('.pdf')).map(f => ({
+      id: f.id,
+      name: f.name,
+      webViewLink: f.webViewLink || `https://drive.google.com/file/d/${f.id}/view`,
+    }));
+    res.json({ folders, files });
+  } catch (err) {
+    console.error('Drive browse error:', err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.get('/api/peraturan', authenticate, async (req, res) => {
+  try {
+    const result = await pool.query(
+      `SELECT id, nama, jenis, nomor, tahun,
+              TO_CHAR(tanggal_ditetapkan, 'YYYY-MM-DD') AS tanggal_ditetapkan,
+              tentang, link_drive, created_at
+       FROM peraturan_menteri ORDER BY tanggal_ditetapkan DESC NULLS LAST, created_at DESC`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('GET /api/peraturan error:', err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.post('/api/peraturan', authenticate, requireRole('admin'), async (req, res) => {
+  const { nama, jenis, nomor, tahun, tanggal_ditetapkan, tentang, link_drive } = req.body;
+  if (!nama || !nama.trim()) return res.status(400).json({ error: 'Nama peraturan wajib diisi' });
+  const validJenis = ['Peraturan Menteri', 'Keputusan Menteri'];
+  const safeJenis = validJenis.includes(jenis) ? jenis : 'Peraturan Menteri';
+  const safeTanggal = tanggal_ditetapkan && /^\d{4}-\d{2}-\d{2}$/.test(tanggal_ditetapkan) ? tanggal_ditetapkan : null;
+  try {
+    const result = await pool.query(
+      `INSERT INTO peraturan_menteri (nama, jenis, nomor, tahun, tanggal_ditetapkan, tentang, link_drive, created_by)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [
+        sanitizeString(nama), safeJenis,
+        sanitizeString(nomor || ''), sanitizeString(tahun || ''),
+        safeTanggal, sanitizeString(tentang || ''),
+        (link_drive || '').substring(0, 2000), req.user.id,
+      ]
+    );
+    res.status(201).json(result.rows[0]);
+  } catch (err) {
+    console.error('POST /api/peraturan error:', err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.put('/api/peraturan/:id', authenticate, requireRole('admin'), async (req, res) => {
+  const { id } = req.params;
+  const { nama, jenis, nomor, tahun, tanggal_ditetapkan, tentang, link_drive } = req.body;
+  if (!nama || !nama.trim()) return res.status(400).json({ error: 'Nama peraturan wajib diisi' });
+  const validJenis = ['Peraturan Menteri', 'Keputusan Menteri'];
+  const safeJenis = validJenis.includes(jenis) ? jenis : 'Peraturan Menteri';
+  const safeTanggal = tanggal_ditetapkan && /^\d{4}-\d{2}-\d{2}$/.test(tanggal_ditetapkan) ? tanggal_ditetapkan : null;
+  try {
+    const result = await pool.query(
+      `UPDATE peraturan_menteri SET nama=$1, jenis=$2, nomor=$3, tahun=$4, tanggal_ditetapkan=$5,
+       tentang=$6, link_drive=$7, updated_at=NOW() WHERE id=$8 RETURNING *`,
+      [
+        sanitizeString(nama), safeJenis,
+        sanitizeString(nomor || ''), sanitizeString(tahun || ''),
+        safeTanggal, sanitizeString(tentang || ''),
+        (link_drive || '').substring(0, 2000), id,
+      ]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Peraturan tidak ditemukan' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('PUT /api/peraturan/:id error:', err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.delete('/api/peraturan/:id', authenticate, requireRole('admin'), async (req, res) => {
+  try {
+    const result = await pool.query('DELETE FROM peraturan_menteri WHERE id=$1', [req.params.id]);
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Peraturan tidak ditemukan' });
+    res.json({ success: true });
+  } catch (err) {
+    console.error('DELETE /api/peraturan/:id error:', err);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
@@ -899,6 +1168,200 @@ app.delete('/api/juknis/:id', authenticate, async (req, res) => {
     console.error('DELETE /api/juknis/:id error:', err);
     res.status(500).json({ error: 'Internal Server Error' });
   }
+});
+
+// ============ CRAWL PROBIS & BULK IMPORT ============
+const _https = require('https');
+
+function probisGet(url) {
+  return new Promise((resolve, reject) => {
+    const req = _https.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) Chrome/120.0.0.0',
+        'Accept': 'text/html,application/xhtml+xml,*/*;q=0.9',
+      }
+    }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', d => body += d);
+      res.on('end', () => resolve({ body, status: res.statusCode }));
+    });
+    req.on('error', reject);
+    req.setTimeout(15000, () => { req.destroy(); reject(new Error('Timeout 15s')); });
+  });
+}
+
+function parseProbisDir(html, currentPath) {
+  const dirs = [], files = [];
+  const seenD = new Set(), seenF = new Set();
+  let m;
+
+  // Gunakan data-href yang ada di setiap <li> — lebih reliable dari href
+  // Format: data-href="?dir=PATH" untuk folder, data-href="FULL/PATH.svg" untuk file
+  const re = /data-href="([^"]+)"/gi;
+  while ((m = re.exec(html)) !== null) {
+    const val = m[1];
+    if (val.startsWith('http')) continue; // parent dir (absolute URL)
+
+    if (val.startsWith('?dir=')) {
+      // Folder
+      const fp = decodeURIComponent(val.slice(5));
+      if (seenD.has(fp) || fp === currentPath) continue;
+      if (currentPath) {
+        if (!fp.startsWith(currentPath + '/')) continue;
+        if (fp.slice(currentPath.length + 1).includes('/')) continue;
+      } else {
+        if (fp.includes('/')) continue;
+      }
+      seenD.add(fp);
+      dirs.push({ name: fp.split('/').pop(), path: fp });
+    } else if (/\.(svg|pdf)$/i.test(val)) {
+      // File — val sudah berupa full relative path dari root probis, URL-encoded
+      if (seenF.has(val)) continue;
+      seenF.add(val);
+      const decoded = decodeURIComponent(val);
+      const filename = decoded.split('/').pop();
+      const ext = filename.split('.').pop().toLowerCase();
+      const name = filename.replace(/\.(svg|pdf)$/i, '');
+      files.push({ name, ext, url: 'https://orpeg.atrbpn.go.id/probis/' + val });
+    }
+  }
+
+  return { dirs, files };
+}
+
+app.get('/api/dokumen/crawl-probis', authenticate, requireRole('admin'), async (req, res) => {
+  const path = (req.query.path || '').trim();
+  const encodedPath = path
+    ? path.split('/').map(p => encodeURIComponent(p)).join('/')
+    : '';
+  const url = `https://orpeg.atrbpn.go.id/probis/${encodedPath ? '?dir=' + encodedPath : ''}`;
+
+  try {
+    const { body, status } = await probisGet(url);
+    if (status !== 200) return res.status(502).json({ error: `Situs merespons HTTP ${status}` });
+    res.json({ path, ...parseProbisDir(body, path) });
+  } catch (err) {
+    console.error('[crawl-probis]', err.message);
+    res.status(502).json({ error: 'Gagal akses orpeg.atrbpn.go.id: ' + err.message });
+  }
+});
+
+// Map singkatan/alias L1 → nama resmi (ALL CAPS sesuai DB)
+const L1_ALIAS = {
+  // Singkatan resmi
+  'SPPR': 'DIREKTORAT JENDERAL SURVEI DAN PEMETAAN PERTANAHAN DAN RUANG',
+  'DITJEN SPPR': 'DIREKTORAT JENDERAL SURVEI DAN PEMETAAN PERTANAHAN DAN RUANG',
+  'SURVEI DAN PEMETAAN': 'DIREKTORAT JENDERAL SURVEI DAN PEMETAAN PERTANAHAN DAN RUANG',
+  'PHPT': 'DIREKTORAT JENDERAL PENETAPAN HAK DAN PENDAFTARAN TANAH',
+  'DITJEN PHPT': 'DIREKTORAT JENDERAL PENETAPAN HAK DAN PENDAFTARAN TANAH',
+  'TARU': 'DIREKTORAT JENDERAL TATA RUANG',
+  'DITJEN TATA RUANG': 'DIREKTORAT JENDERAL TATA RUANG',
+  'PENTAG': 'DIREKTORAT JENDERAL PENATAAN AGRARIA',
+  'PENATAAN AGRARIA': 'DIREKTORAT JENDERAL PENATAAN AGRARIA',
+  'PTPP': 'DIREKTORAT JENDERAL PENGADAAN TANAH DAN PENGEMBANGAN PERTANAHAN',
+  'PENGADAAN TANAH': 'DIREKTORAT JENDERAL PENGADAAN TANAH DAN PENGEMBANGAN PERTANAHAN',
+  'PPTR': 'DIREKTORAT JENDERAL PENGENDALIAN DAN PENERTIBAN TANAH DAN RUANG',
+  'PENGENDALIAN': 'DIREKTORAT JENDERAL PENGENDALIAN DAN PENERTIBAN TANAH DAN RUANG',
+  'PSKP': 'DIREKTORAT JENDERAL PENANGANAN SENGKETA DAN KONFLIK PERTANAHAN',
+  'SENGKETA': 'DIREKTORAT JENDERAL PENANGANAN SENGKETA DAN KONFLIK PERTANAHAN',
+  'SETJEN': 'SEKRETARIAT JENDERAL',
+  'SEKJEN': 'SEKRETARIAT JENDERAL',
+  'ITJEN': 'INSPEKTORAT JENDERAL',
+  'INSPEKTORAT': 'INSPEKTORAT JENDERAL',
+  'BPSDM': 'BADAN PENGEMBANGAN SUMBER DAYA MANUSIA',
+  'STPN': 'SEKOLAH TINGGI PERTANAHAN NASIONAL',
+  // Typo umum — "Direktortat" (t ekstra)
+  'DIREKTORTAT JENDERAL SURVEI DAN PEMETAAN PERTANAHAN DAN RUANG': 'DIREKTORAT JENDERAL SURVEI DAN PEMETAAN PERTANAHAN DAN RUANG',
+  'DIREKTORTAT JENDERAL PENETAPAN HAK DAN PENDAFTARAN TANAH': 'DIREKTORAT JENDERAL PENETAPAN HAK DAN PENDAFTARAN TANAH',
+  'DIREKTORTAT JENDERAL TATA RUANG': 'DIREKTORAT JENDERAL TATA RUANG',
+  'DIREKTORTAT JENDERAL PENATAAN AGRARIA': 'DIREKTORAT JENDERAL PENATAAN AGRARIA',
+  'DIREKTORTAT JENDERAL PENGADAAN TANAH DAN PENGEMBANGAN PERTANAHAN': 'DIREKTORAT JENDERAL PENGADAAN TANAH DAN PENGEMBANGAN PERTANAHAN',
+  'DIREKTORTAT JENDERAL PENGENDALIAN DAN PENERTIBAN TANAH DAN RUANG': 'DIREKTORAT JENDERAL PENGENDALIAN DAN PENERTIBAN TANAH DAN RUANG',
+  'DIREKTORTAT JENDERAL PENANGANAN SENGKETA DAN KONFLIK PERTANAHAN': 'DIREKTORAT JENDERAL PENANGANAN SENGKETA DAN KONFLIK PERTANAHAN',
+};
+
+async function resolveL1(client, raw) {
+  if (!raw?.trim()) return null;
+  const norm = raw.trim().toUpperCase();
+  // 1. Cek alias singkatan → selalu ambil id terkecil (ALL CAPS)
+  if (L1_ALIAS[norm]) {
+    const r = await client.query('SELECT id FROM unit_kerja_l1 WHERE nama ILIKE $1 ORDER BY id LIMIT 1', [L1_ALIAS[norm]]);
+    if (r.rows[0]) return r.rows[0].id;
+  }
+  // 2. Exact case-insensitive → id terkecil menang (ALL CAPS lebih dulu)
+  const r1 = await client.query('SELECT id FROM unit_kerja_l1 WHERE nama ILIKE $1 ORDER BY id LIMIT 1', [raw.trim()]);
+  if (r1.rows[0]) return r1.rows[0].id;
+  // 3. Partial match → id terkecil menang
+  const r2 = await client.query(
+    "SELECT id FROM unit_kerja_l1 WHERE nama ILIKE '%' || $1 || '%' ORDER BY id LIMIT 1",
+    [raw.trim()]
+  );
+  return r2.rows[0]?.id || null;
+}
+
+async function resolveL2(client, raw, l1Id) {
+  if (!raw?.trim() || !l1Id) return null;
+  // 1. Exact case-insensitive
+  const r1 = await client.query('SELECT id FROM unit_kerja_l2 WHERE nama ILIKE $1 AND l1_id=$2 ORDER BY id LIMIT 1', [raw.trim(), l1Id]);
+  if (r1.rows[0]) return r1.rows[0].id;
+  // 2. Partial match
+  const r2 = await client.query(
+    "SELECT id FROM unit_kerja_l2 WHERE nama ILIKE '%' || $1 || '%' AND l1_id=$2 ORDER BY length(nama) LIMIT 1",
+    [raw.trim(), l1Id]
+  );
+  return r2.rows[0]?.id || null;
+}
+
+app.post('/api/dokumen/import', authenticate, requireRole('admin'), async (req, res) => {
+  const { items } = req.body;
+  if (!Array.isArray(items) || items.length === 0) {
+    return res.status(400).json({ error: 'Data kosong atau tidak valid' });
+  }
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    let ok = 0;
+    const errs = [];
+    const safeJenisList = ['Proses Bisnis', 'SOP', 'Standar Pelayanan'];
+
+    for (const it of items) {
+      try {
+        if (!it.nama?.trim()) { errs.push('Baris tanpa nama dilewati'); continue; }
+        const l1Id = await resolveL1(client, it.unitL1);
+        if (!l1Id) { errs.push(`"${it.nama.trim().slice(0,60)}": Unit L1 tidak ditemukan ("${it.unitL1 || 'kosong'}")`); continue; }
+        const l2Id = await resolveL2(client, it.unitL2, l1Id);
+        let l3Id = null;
+        if (it.unitL3 && l2Id) {
+          const r = await client.query('SELECT id FROM unit_kerja_l3 WHERE nama ILIKE $1 AND l2_id=$2 LIMIT 1', [it.unitL3.trim(), l2Id]);
+          l3Id = r.rows[0]?.id || null;
+        }
+        await client.query(
+          `INSERT INTO dokumen (nama,jenis,tahun,l1_id,l2_id,l3_id,link,sumber,status,created_by)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'approved',$9)`,
+          [it.nama.trim().slice(0, 500),
+           safeJenisList.includes(it.jenis) ? it.jenis : 'Proses Bisnis',
+           String(it.tahun || '2023'), l1Id, l2Id, l3Id,
+           String(it.link || '').slice(0, 2000),
+           String(it.sumber || '').slice(0, 1000),
+           req.user.id]
+        );
+        ok++;
+      } catch (e) { errs.push(`"${it.nama || '?'}": ${e.message}`); }
+    }
+
+    await client.query('COMMIT');
+    res.json({ imported: ok, errors: errs });
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally { client.release(); }
+});
+
+// Global error logger — tangkap semua error yang tidak tertangani per-route
+app.use((err, req, res, _next) => {
+  console.error(`[GLOBAL ERROR] ${req.method} ${req.path}:`, err.message, err.stack ? err.stack.split('\n')[1] : '');
+  res.status(500).json({ error: err.message || 'Internal Server Error' });
 });
 
 // START SERVER

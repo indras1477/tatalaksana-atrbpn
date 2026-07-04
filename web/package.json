@@ -10,6 +10,8 @@
   },
   "dependencies": {
     "bpmn-js": "^17.11.1",
+    "html2canvas": "^1.4.1",
+    "html2canvas-pro": "^2.2.1",
     "jspdf": "^2.5.2",
     "lucide-react": "^1.7.0",
     "next": "16.2.2",

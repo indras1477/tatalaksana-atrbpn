@@ -2,11 +2,41 @@
 
 import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle, useMemo } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { 
-  Plus, Trash2, Printer, UserPlus, UserMinus, Save,
+import {
+  Plus, Trash2, UserPlus, UserMinus, Save,
   Circle, Square, Diamond, Shield,
-  FileSpreadsheet, ArrowDownToLine, Send, ArrowLeft, Info, MousePointer2, X, ChevronLeft, ChevronRight
+  FileSpreadsheet, ArrowDownToLine, Send, ArrowLeft, Info, MousePointer2, X, ChevronLeft, ChevronRight,
+  Edit2, FileDown, Loader2
 } from 'lucide-react';
+
+const L1_OPTIONS = [
+  "SEKRETARIAT JENDERAL",
+  "DIREKTORAT JENDERAL TATA RUANG",
+  "DIREKTORAT JENDERAL SURVEI DAN PEMETAAN PERTANAHAN DAN RUANG",
+  "DIREKTORAT JENDERAL PENETAPAN HAK DAN PENDAFTARAN TANAH",
+  "DIREKTORAT JENDERAL PENATAAN AGRARIA",
+  "DIREKTORAT JENDERAL PENGADAAN TANAH DAN PENGEMBANGAN PERTANAHAN",
+  "DIREKTORAT JENDERAL PENGENDALIAN DAN PENERTIBAN TANAH DAN RUANG",
+  "DIREKTORAT JENDERAL PENANGAN SENGKETA DAN KONFLIK PERTANAHA",
+  "INSPEKTORAT JENDERAL",
+  "BADAN PENGEMBANGAN SUMBER DAYA MANUSIA",
+  "SEKOLAH TINGGI PERTANAHAN NASIONAL",
+];
+
+const JENIS_SOP_OPTIONS = ["Pusat", "Kantor Wilayah", "Kantor Pertanahan"];
+const KLASIFIKASI_SOP_OPTIONS = [
+  "SOP Administrasi Pemerintah",
+  "SOP Layanan Pertanahan",
+  "SOP Layanan Tata Ruang",
+  "SOP Layanan Pengaduan dan Informasi",
+  "SOP Layanan Data, Keamanan dan Infrastruktur",
+];
+
+// --- HELPER ID UNIK ---
+// Date.now() saja bisa bertabrakan jika dua baris dibuat dalam milidetik yang sama
+// (klik cepat), menyebabkan key React duplikat & target cabang (loopTarget by id) ambigu.
+let __stepIdSeq = 0;
+const genStepId = () => `step-${Date.now()}-${(__stepIdSeq++).toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 
 // --- TIPE DATA ---
 type SOPFlowSymbol = 'start' | 'process' | 'decision' | 'connector' | 'end';
@@ -58,10 +88,13 @@ export interface SOPBuilderProps {
   initialKey?: string;
   initialL1?: string;
   initialL2?: string;
+  initialJenis?: string;
+  initialKlasifikasi?: string;
   isViewOnly?: boolean;
   onSaveTrigger?: (data: string) => void;
   onSubmitTrigger?: (data: string) => void;
   onBackTrigger?: () => void;
+  onDownloadPdf?: (data: string) => Promise<void> | void;
 }
 
 // --- KOMPONEN LABEL TEKS BISA DIGESER & DIEDIT ---
@@ -141,6 +174,7 @@ const BranchArrowLocal = ({
   const svgRef = useRef<SVGSVGElement>(null);
   const [textPos, setTextPos] = useState({ x: 0, y: 0, show: false });
   const [connPos, setConnPos] = useState({ x: 0, y: 0, type: 'none' });
+  const [headPos, setHeadPos] = useState<{ x: number; y: number; dir: 'none' | 'left' | 'right' }>({ x: 0, y: 0, dir: 'none' });
 
   useEffect(() => {
     let reqId: number = 0;
@@ -150,10 +184,11 @@ const BranchArrowLocal = ({
       const tgtCell = document.getElementById(`cell-${targetIdx}-${targetCol}`);
       const svgEl = svgRef.current;
       const pathEl = pathRef.current;
-      
+
       if (!srcShape || !tgtCell || !svgEl || !pathEl) {
         setTextPos({ x: 0, y: 0, show: false });
         setConnPos({ x: 0, y: 0, type: 'none' });
+        setHeadPos({ x: 0, y: 0, dir: 'none' });
         if (pathEl) pathEl.removeAttribute('d');
         return;
       }
@@ -198,6 +233,7 @@ const BranchArrowLocal = ({
         
         setTextPos({ x: startX + (isLeft ? -18 : 18), y: startY, show: true });
         setConnPos({ x: 0, y: 0, type: 'none' });
+        setHeadPos({ x: endX, y: startY, dir: enterFromLeft ? 'right' : 'left' });
         return;
       }
 
@@ -206,10 +242,11 @@ const BranchArrowLocal = ({
         const pageContainer = svgEl.closest('.page-container');
         const pageRect = pageContainer ? pageContainer.getBoundingClientRect() : svgRect;
         const endY = isUpward ? pageRect.top - svgRect.top + 45 : pageRect.bottom - svgRect.top - 25;
-        
+
         pathEl.setAttribute('d', `M ${startX} ${startY} L ${gutterX} ${startY} L ${gutterX} ${endY}`);
         setTextPos({ x: startX + (isLeft ? -18 : 18), y: startY, show: true });
         setConnPos({ x: gutterX, y: endY, type: isUpward ? 'to-top' : 'to-bottom' });
+        setHeadPos({ x: 0, y: 0, dir: 'none' });
         return;
       }
 
@@ -219,6 +256,7 @@ const BranchArrowLocal = ({
       pathEl.setAttribute('d', `M ${startX} ${startY} L ${gutterX} ${startY} L ${gutterX} ${endY} L ${endX} ${endY}`);
       setTextPos({ x: startX + (isLeft ? -18 : 18), y: startY, show: true });
       setConnPos({ x: 0, y: 0, type: 'none' });
+      setHeadPos({ x: endX, y: endY, dir: isLeft ? 'right' : 'left' });
     };
 
     update(); 
@@ -242,10 +280,13 @@ const BranchArrowLocal = ({
   return (
     <>
       <svg ref={svgRef} className={`absolute top-0 left-0 w-full h-full overflow-visible pointer-events-none ${isPrinting ? 'z-50' : 'z-40'}`}>
-        <path ref={pathRef} fill="none" stroke="black" strokeWidth="1.5" markerEnd={connPos.type === 'none' ? `url(#head-branch-${sourceIdx}-${sourceCol}-${targetIdx})` : undefined} />
-        {connPos.type === 'to-bottom' && <polygon points={`${connPos.x-8},${connPos.y} ${connPos.x+8},${connPos.y} ${connPos.x+8},${connPos.y+9} ${connPos.x},${connPos.y+18} ${connPos.x-8},${connPos.y+9}`} fill="white" stroke="black" strokeWidth="1.5" />}
-        {connPos.type === 'to-top' && <polygon points={`${connPos.x-8},${connPos.y} ${connPos.x+8},${connPos.y} ${connPos.x+8},${connPos.y-9} ${connPos.x},${connPos.y-18} ${connPos.x-8},${connPos.y-9}`} fill="white" stroke="black" strokeWidth="1.5" />}
-        <defs><marker id={`head-branch-${sourceIdx}-${sourceCol}-${targetIdx}`} viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="black" /></marker></defs>
+        <path ref={pathRef} fill="none" stroke="black" strokeWidth="2" shapeRendering="crispEdges" />
+        {/* Kepala panah horizontal (polygon ukuran tetap — marker SVG tidak ter-render di PDF cetak Chrome
+            dan ikut membesar mengikuti strokeWidth). Ukuran seragam dengan panah lain. */}
+        {headPos.dir === 'right' && <polygon points={`${headPos.x},${headPos.y} ${headPos.x-9},${headPos.y-4.5} ${headPos.x-9},${headPos.y+4.5}`} fill="black" />}
+        {headPos.dir === 'left' && <polygon points={`${headPos.x},${headPos.y} ${headPos.x+9},${headPos.y-4.5} ${headPos.x+9},${headPos.y+4.5}`} fill="black" />}
+        {connPos.type === 'to-bottom' && <polygon points={`${connPos.x-8},${connPos.y} ${connPos.x+8},${connPos.y} ${connPos.x+8},${connPos.y+9} ${connPos.x},${connPos.y+18} ${connPos.x-8},${connPos.y+9}`} fill="white" stroke="black" strokeWidth="2" />}
+        {connPos.type === 'to-top' && <polygon points={`${connPos.x-8},${connPos.y} ${connPos.x+8},${connPos.y} ${connPos.x+8},${connPos.y-9} ${connPos.x},${connPos.y-18} ${connPos.x-8},${connPos.y-9}`} fill="white" stroke="black" strokeWidth="2" />}
       </svg>
       {textPos.show && (
         <DraggableLabel 
@@ -267,6 +308,7 @@ const IncomingArrowLocal = ({
   const pathRef = useRef<SVGPathElement>(null);
   const svgRef = useRef<SVGSVGElement>(null);
   const [connPos, setConnPos] = useState({ x: 0, y: 0, type: 'none' });
+  const [headPos, setHeadPos] = useState<{ x: number; y: number; dir: 'none' | 'left' | 'right' }>({ x: 0, y: 0, dir: 'none' });
 
   useEffect(() => {
     let reqId: number = 0;
@@ -274,7 +316,7 @@ const IncomingArrowLocal = ({
       const tgtCell = document.getElementById(`cell-${targetIdx}-${targetCol}`);
       const svgEl = svgRef.current;
       const pathEl = pathRef.current;
-      if (!tgtCell || !svgEl || !pathEl) return;
+      if (!tgtCell || !svgEl || !pathEl) { setHeadPos({ x: 0, y: 0, dir: 'none' }); return; }
 
       const tgtRect = tgtCell.getBoundingClientRect();
       const svgRect = svgEl.getBoundingClientRect(); 
@@ -300,6 +342,7 @@ const IncomingArrowLocal = ({
 
       pathEl.setAttribute('d', `M ${gutterX} ${pathStartY} L ${gutterX} ${endY} L ${endX} ${endY}`);
       setConnPos({ x: gutterX, y: startY, type: isFromAbove ? 'from-top' : 'from-bottom' });
+      setHeadPos({ x: endX, y: endY, dir: isLeft ? 'right' : 'left' });
     };
 
     update(); 
@@ -322,10 +365,11 @@ const IncomingArrowLocal = ({
 
   return (
     <svg ref={svgRef} className={`absolute top-0 left-0 w-full h-full overflow-visible pointer-events-none ${isPrinting ? 'z-50' : 'z-40'}`}>
-      <path ref={pathRef} fill="none" stroke="black" strokeWidth="1.5" markerEnd={`url(#incoming-head-${sourceIdx}-${sourceCol}-${targetIdx})`} />
-      {connPos.type === 'from-top' && <polygon points={`${connPos.x-8},${connPos.y} ${connPos.x+8},${connPos.y} ${connPos.x+8},${connPos.y+9} ${connPos.x},${connPos.y+18} ${connPos.x-8},${connPos.y+9}`} fill="white" stroke="black" strokeWidth="1.5" />}
-      {connPos.type === 'from-bottom' && <polygon points={`${connPos.x-8},${connPos.y} ${connPos.x+8},${connPos.y} ${connPos.x+8},${connPos.y-9} ${connPos.x},${connPos.y-18} ${connPos.x-8},${connPos.y-9}`} fill="white" stroke="black" strokeWidth="1.5" />}
-      <defs><marker id={`incoming-head-${sourceIdx}-${sourceCol}-${targetIdx}`} viewBox="0 0 10 10" refX="10" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M 0 0 L 10 5 L 0 10 z" fill="black" /></marker></defs>
+      <path ref={pathRef} fill="none" stroke="black" strokeWidth="2" shapeRendering="crispEdges" />
+      {headPos.dir === 'right' && <polygon points={`${headPos.x},${headPos.y} ${headPos.x-9},${headPos.y-4.5} ${headPos.x-9},${headPos.y+4.5}`} fill="black" />}
+      {headPos.dir === 'left' && <polygon points={`${headPos.x},${headPos.y} ${headPos.x+9},${headPos.y-4.5} ${headPos.x+9},${headPos.y+4.5}`} fill="black" />}
+      {connPos.type === 'from-top' && <polygon points={`${connPos.x-8},${connPos.y} ${connPos.x+8},${connPos.y} ${connPos.x+8},${connPos.y+9} ${connPos.x},${connPos.y+18} ${connPos.x-8},${connPos.y+9}`} fill="white" stroke="black" strokeWidth="2" />}
+      {connPos.type === 'from-bottom' && <polygon points={`${connPos.x-8},${connPos.y} ${connPos.x+8},${connPos.y} ${connPos.x+8},${connPos.y-9} ${connPos.x},${connPos.y-18} ${connPos.x-8},${connPos.y-9}`} fill="white" stroke="black" strokeWidth="2" />}
     </svg>
   );
 };
@@ -370,7 +414,8 @@ const EditableCell = ({ value, onChange, className, placeholder, center = false 
 
 // --- KOMPONEN UTAMA (SOP BUILDER) ---
 const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
-  initialData, initialTitle, initialKey, initialL1, initialL2, isViewOnly = false, onSaveTrigger, onSubmitTrigger, onBackTrigger
+  initialData, initialTitle, initialKey, initialL1, initialL2, initialJenis, initialKlasifikasi,
+  isViewOnly = false, onSaveTrigger, onSubmitTrigger, onBackTrigger, onDownloadPdf
 }, ref) => {
   const searchParams = useSearchParams();
 
@@ -378,11 +423,13 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     if (!initialData) return null;
     try { return JSON.parse(initialData); } catch { return null; }
   }, [initialData]);
-  
+
   const [judul, setJudul] = useState<string>(parsedData?.judul || initialTitle || searchParams.get('title') || '');
   const [nomor, setNomor] = useState<string>(parsedData?.nomor || initialKey || searchParams.get('key') || '');
   const [unitKerja, setUnitKerja] = useState<string>(parsedData?.unitKerja || initialL1 || searchParams.get('l1') || 'Sekretariat Jenderal');
-  const [subUnitKerja, setSubUnitKerja] = useState<string>(parsedData?.subUnitKerja || initialL2 || searchParams.get('l2') || ''); 
+  const [subUnitKerja, setSubUnitKerja] = useState<string>(parsedData?.subUnitKerja || initialL2 || searchParams.get('l2') || '');
+  const [jenisSOP, setJenisSOP] = useState<string>(parsedData?.jenisSOP || initialJenis || searchParams.get('jenis') || '');
+  const [klasifikasiSOP, setKlasifikasiSOP] = useState<string>(parsedData?.klasifikasiSOP || initialKlasifikasi || searchParams.get('klasifikasi') || ''); 
   
   const [pelaksanaHeaders, setPelaksanaHeaders] = useState<string[][]>(() => {
     const init = parsedData?.pelaksanaHeaders;
@@ -391,9 +438,9 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   });
   const colCount = pelaksanaHeaders[0]?.length || 3;
 
-  const [jabatanPengesah, setJabatanPengesah] = useState<string>(parsedData?.jabatanPengesah || '');
-  const [namaPengesah, setNamaPengesah] = useState<string>(parsedData?.namaPengesah || '');
-  const [nipPengesah, setNipPengesah] = useState<string>(parsedData?.nipPengesah || '');
+  const [jabatanPengesah, setJabatanPengesah] = useState<string>(parsedData?.jabatanPengesah || searchParams.get('jabatan') || '');
+  const [namaPengesah, setNamaPengesah] = useState<string>(parsedData?.namaPengesah || searchParams.get('nama') || '');
+  const [nipPengesah, setNipPengesah] = useState<string>(parsedData?.nipPengesah || searchParams.get('nip') || '');
   const [tglPembuatan, setTglPembuatan] = useState<string>(parsedData?.tglPembuatan || '');
   const [tglRevisi, setTglRevisi] = useState<string>(parsedData?.tglRevisi || '');
   const [tglEfektif, setTglEfektif] = useState<string>(parsedData?.tglEfektif || '');
@@ -405,17 +452,22 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   const [pencatatan, setPencatatan] = useState<string>(parsedData?.pencatatan || '1. ');
 
   const [steps, setSteps] = useState<SOPStep[]>(parsedData?.steps || [
-    { id: `step-${Date.now()}`, kegiatan: '', pelaksanaCol: 0, symbol: 'start', arrowDown: true, waktu: '', syarat: '', output: '', ket: '' }
+    { id: genStepId(), kegiatan: '', pelaksanaCol: 0, symbol: 'start', arrowDown: true, waktu: '', syarat: '', output: '', ket: '' }
   ]);
 
   const [coverBreaks, setCoverBreaks] = useState<{ [key: number]: boolean }>(parsedData?.coverBreaks || { 1: false, 2: false });
   const [activeTab, setActiveTab] = useState<'cover' | number>('cover');
   const [isSaveModalOpen, setIsSaveModalOpen] = useState<boolean>(false);
+  const [showSubmitConfirm, setShowSubmitConfirm] = useState<boolean>(false);
   const [isPrinting, setIsPrinting] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const [showInfoModal, setShowInfoModal] = useState(false);
+  const [infoForm, setInfoForm] = useState({ judul: '', nomor: '', unitKerja: '', subUnitKerja: '', jenisSOP: '', klasifikasiSOP: '' });
   
   const [activeTool, setActiveTool] = useState<SOPFlowSymbol | null>(null);
   const [connectingFrom, setConnectingFrom] = useState<{ row: number, col: number } | null>(null);
-  const [isPaletteOpen, setIsPaletteOpen] = useState<boolean>(true); 
+  const [isPaletteOpen, setIsPaletteOpen] = useState<boolean>(true);
+  const [openShapeMenu, setOpenShapeMenu] = useState<{ row: number, col: number } | null>(null);
 
   const effectiveIsViewOnly = isViewOnly || isPrinting;
 
@@ -484,6 +536,24 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     };
   }, []);
 
+  // Tutup popup ganti bentuk saat klik/ketuk di luar area bentuk atau menekan Escape.
+  // Pakai 'pointerdown' agar konsisten di mouse (desktop) maupun sentuhan (tablet/iPad).
+  useEffect(() => {
+    if (!openShapeMenu) return;
+    const handlePointer = (e: PointerEvent) => {
+      const target = e.target as HTMLElement;
+      if (target.closest('.shape-menu-trigger') || target.closest('.shape-menu-popup')) return;
+      setOpenShapeMenu(null);
+    };
+    const handleKey = (e: KeyboardEvent) => { if (e.key === 'Escape') setOpenShapeMenu(null); };
+    document.addEventListener('pointerdown', handlePointer);
+    document.addEventListener('keydown', handleKey);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointer);
+      document.removeEventListener('keydown', handleKey);
+    };
+  }, [openShapeMenu]);
+
   useEffect(() => {
     if (!initialData && typeof window !== 'undefined') {
       const savedData = localStorage.getItem('e-sop-draft-local');
@@ -494,6 +564,8 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
           if (pd.nomor) setNomor(pd.nomor);
           if (pd.unitKerja) setUnitKerja(pd.unitKerja);
           if (pd.subUnitKerja) setSubUnitKerja(pd.subUnitKerja);
+          if (pd.jenisSOP) setJenisSOP(pd.jenisSOP);
+          if (pd.klasifikasiSOP) setKlasifikasiSOP(pd.klasifikasiSOP);
           if (pd.pelaksanaHeaders && pd.pelaksanaHeaders.length > 0) setPelaksanaHeaders(typeof pd.pelaksanaHeaders[0] === 'string' ? [pd.pelaksanaHeaders] : pd.pelaksanaHeaders);
           if (pd.jabatanPengesah) setJabatanPengesah(pd.jabatanPengesah);
           if (pd.namaPengesah) setNamaPengesah(pd.namaPengesah);
@@ -537,6 +609,9 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         }
         .page-container { height: 215mm !important; overflow: hidden !important; }
         .cover-page-container { min-height: 215mm !important; height: auto !important; }
+        /* Cegah halaman kosong terakhir: page-break-after: always ikut memicu break setelah
+           halaman terakhir → 1 halaman F4 kosong. Halaman terakhir tak boleh break-after. */
+        .last-print-page { page-break-after: avoid !important; break-after: avoid !important; }
         table { display: table !important; width: 100% !important; table-layout: fixed !important; border-collapse: collapse !important; }
         thead { display: table-header-group !important; } tbody { display: table-row-group !important; }
         tr { display: table-row !important; page-break-inside: avoid !important; }
@@ -551,7 +626,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     return () => { document.head.removeChild(style); };
   }, []);
 
-  const getSOPData = () => JSON.stringify({ judul, nomor, unitKerja, subUnitKerja, pelaksanaHeaders, jabatanPengesah, namaPengesah, nipPengesah, tglPembuatan, tglRevisi, tglEfektif, dasarHukum, kualifikasi, keterkaitan, peralatan, peringatan, pencatatan, steps, coverBreaks });
+  const getSOPData = () => JSON.stringify({ judul, nomor, unitKerja, subUnitKerja, jenisSOP, klasifikasiSOP, pelaksanaHeaders, jabatanPengesah, namaPengesah, nipPengesah, tglPembuatan, tglRevisi, tglEfektif, dasarHukum, kualifikasi, keterkaitan, peralatan, peringatan, pencatatan, steps, coverBreaks });
 
   const handleSaveFlow = (silent = false) => {
     const data = getSOPData();
@@ -565,15 +640,23 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   const handleSubmitOrtala = () => {
     handleSaveFlow(true); 
     if (onSubmitTrigger) onSubmitTrigger(getSOPData());
-    else alert("Simulasi Terkirim! Data siap diluncurkan ke API Biro Ortala.");
+    else alert("Simulasi Terkirim! Data siap diluncurkan ke API Biro Ortala MR.");
   };
 
-  const handlePrintAction = () => {
-    setIsPrinting(true);
-    setTimeout(() => {
-      window.dispatchEvent(new Event('resize'));
-      setTimeout(() => { window.print(); setTimeout(() => setIsPrinting(false), 500); }, 500); 
-    }, 300);
+  // Unduh PDF VEKTOR F4: disimpan dulu lalu dirender di server (headless Chrome) pada ukuran
+  // 330x215mm persis, menghasilkan PDF vektor (teks bisa diseleksi) yang diunduh langsung.
+  const handleDownloadPDF = async () => {
+    if (isExporting) return;
+    if (!onDownloadPdf) { alert('Fitur unduh PDF tidak tersedia pada mode ini.'); return; }
+    setIsExporting(true);
+    try {
+      await onDownloadPdf(getSOPData());
+    } catch (e) {
+      const msg = e instanceof Error ? (e.message || e.name) : String(e);
+      alert('Gagal membuat PDF: ' + msg);
+    } finally {
+      setIsExporting(false);
+    }
   };
 
   const handleExportExcel = () => {
@@ -657,7 +740,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     const insertIndex = targetNum - 1;
     const prevCol = insertIndex > 0 ? steps[insertIndex - 1].pelaksanaCol : 0;
     const newSteps = [...steps];
-    newSteps.splice(insertIndex, 0, { id: `step-${Date.now()}`, kegiatan: '', pelaksanaCol: prevCol, symbol: 'process', arrowDown: true, waktu: '', syarat: '', output: '', ket: '' });
+    newSteps.splice(insertIndex, 0, { id: genStepId(), kegiatan: '', pelaksanaCol: prevCol, symbol: 'process', arrowDown: true, waktu: '', syarat: '', output: '', ket: '' });
     setSteps(newSteps);
   };
 
@@ -712,12 +795,23 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     
     const prevStep = absIdx > 0 ? steps[absIdx - 1] : null;
     const prevCol = (localIdx > 0 && prevStep && prevStep.arrowDown) ? prevStep.pelaksanaCol : null;
+    // Jika baris sebelumnya punya bentuk EXTRA tepat di atas bentuk utama baris ini (kolom sama)
+    // dan mengalir ke bawah, aliran masuk harus LURUS dari extra itu — bukan dirutekan mendatar
+    // dari bentuk utama baris sebelumnya (yang menyebabkan panah tertumpuk).
+    const prevExtraAboveMain = localIdx > 0 && !!prevStep && !!prevStep.extraShapes?.some(e => e.colIdx === step.pelaksanaCol && e.arrowDown);
+    // Kebalikannya: baris SEBELUMNYA (bentuk utama) mengalir turun ke kolom yang di baris ini justru
+    // berisi bentuk EXTRA. Maka aliran harus lurus masuk ke EXTRA itu, dan rute ke bentuk utama baris
+    // ini ditekan (kalau tidak, garis dari atas menumpuk: lurus ke extra + berbelok ke main).
+    const rowHasExtraAtPrevMain = prevCol !== null && !!step.extraShapes?.some(e => e.colIdx === prevCol);
     const currentSymbol = isMainShape ? step.symbol : extraShapeObj?.symbol;
     const isDiamond = currentSymbol === 'decision';
     
-    let shapeClass = "w-14 h-8"; let diamondClass = "w-8 h-8"; let offsetH = isDiamond ? 24 : 16;
-    if (colCount > 7) { shapeClass = "w-8 h-6"; diamondClass = "w-6 h-6"; offsetH = isDiamond ? 16 : 12; } 
-    else if (colCount > 5) { shapeClass = "w-10 h-6"; diamondClass = "w-7 h-7"; offsetH = isDiamond ? 20 : 12; }
+    // Konektor (pentagon) selalu 32px (tepi atas 16px dari pusat) → butuh offset >16 agar kepala
+    // panah masuk tidak menimpa bentuknya.
+    const isConnector = currentSymbol === 'connector';
+    let shapeClass = "w-14 h-8"; let diamondClass = "w-8 h-8"; let offsetH = isDiamond ? 24 : (isConnector ? 20 : 16);
+    if (colCount > 7) { shapeClass = "w-8 h-6"; diamondClass = "w-6 h-6"; offsetH = isDiamond ? 16 : (isConnector ? 20 : 12); }
+    else if (colCount > 5) { shapeClass = "w-10 h-6"; diamondClass = "w-7 h-7"; offsetH = isDiamond ? 20 : (isConnector ? 20 : 12); }
 
     const isHighlight = connectingFrom !== null || activeTool !== null;
     const cellOverlayClass = `absolute inset-0 z-20 transition-all ${isHighlight ? 'cursor-crosshair hover:bg-emerald-100/50 hover:border-2 hover:border-dashed hover:border-emerald-400' : 'cursor-pointer hover:bg-slate-50/50'}`;
@@ -733,11 +827,11 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         <div className="relative w-full h-full min-h-16 flex items-center justify-center">
           <div {...dropProps} />
           <div className="absolute top-0 left-0 w-full h-full pointer-events-none z-10">
-            {prevCol !== null && localIdx > 0 && (
+            {prevCol !== null && localIdx > 0 && !prevExtraAboveMain && !rowHasExtraAtPrevMain && (
               <>
-                {colIdx === prevCol && <div className="absolute top-0 left-[calc(50%-0.75px)] w-[1.5px] h-2 pointer-events-none z-20"><svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="0" y2="100%" stroke="black" strokeWidth="1.5" /></svg></div>}
-                {colIdx === prevCol && <div className="absolute top-2 h-[1.5px] pointer-events-none z-20" style={{ left: step.pelaksanaCol > colIdx ? '50%' : 0, right: step.pelaksanaCol > colIdx ? 0 : '50%' }}><svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="100%" y2="0" stroke="black" strokeWidth="1.5" /></svg></div>}
-                {((colIdx > prevCol && colIdx < step.pelaksanaCol) || (colIdx < prevCol && colIdx > step.pelaksanaCol)) && <div className="absolute top-2 left-0 w-full h-[1.5px] pointer-events-none z-20"><svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="100%" y2="0" stroke="black" strokeWidth="1.5" /></svg></div>}
+                {colIdx === prevCol && <div className="absolute top-0 left-[calc(50%-0.75px)] w-[1.5px] h-2 pointer-events-none z-20"><svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="0" y2="100%" stroke="black" strokeWidth="2" shapeRendering="crispEdges" /></svg></div>}
+                {colIdx === prevCol && <div className="absolute top-2 h-[1.5px] pointer-events-none z-20" style={{ left: step.pelaksanaCol > colIdx ? '50%' : 0, right: step.pelaksanaCol > colIdx ? 0 : '50%' }}><svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="100%" y2="0" stroke="black" strokeWidth="2" shapeRendering="crispEdges" /></svg></div>}
+                {((colIdx > prevCol && colIdx < step.pelaksanaCol) || (colIdx < prevCol && colIdx > step.pelaksanaCol)) && <div className="absolute top-2 left-0 w-full h-[1.5px] pointer-events-none z-20"><svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="100%" y2="0" stroke="black" strokeWidth="2" shapeRendering="crispEdges" /></svg></div>}
               </>
             )}
           </div>
@@ -751,7 +845,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     switch (currentSymbol) {
       case 'start': case 'end': Shape = <div id={shapeId} className={`${commonClass} rounded-full`}></div>; break;
       case 'decision': Shape = <div id={shapeId} className={`${commonClass.replace(/w-\d+ h-\d+/, diamondClass)} rotate-45`}></div>; break;
-      case 'connector': Shape = <div id={shapeId} className="w-8 h-8 relative flex items-center justify-center mx-auto z-30 bg-white"><svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full overflow-visible"><polygon points="0,0 100,0 100,65 50,100 0,65" fill="white" stroke="black" strokeWidth="6" /></svg></div>; break;
+      case 'connector': Shape = <div id={shapeId} className={`${diamondClass} relative flex items-center justify-center mx-auto z-30 bg-white`}><svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full overflow-visible"><polygon points="0,0 100,0 100,65 50,100 0,65" fill="white" stroke="black" strokeWidth="8" /></svg></div>; break;
       default: Shape = <div id={shapeId} className={`${commonClass}`}></div>;
     }
 
@@ -881,17 +975,21 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         </div>
 
         <div className="absolute top-0 left-0 w-full h-full pointer-events-none z-10">
-          {isMainShape && prevCol !== null && prevCol !== colIdx && localIdx > 0 && (
+          {isMainShape && prevCol !== null && prevCol !== colIdx && localIdx > 0 && !prevExtraAboveMain && !rowHasExtraAtPrevMain && (
             <>
-              <div className="absolute top-2 h-[1.5px] pointer-events-none z-20" style={{ left: prevCol < colIdx ? 0 : '50%', right: prevCol < colIdx ? '50%' : 0 }}><svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="100%" y2="0" stroke="black" strokeWidth="1.5" /></svg></div>
-              <div className="absolute top-2 left-[calc(50%-0.75px)] w-[1.5px] pointer-events-none z-20" style={{ height: `calc(50% - ${offsetH + 8}px)` }}><svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="0" y2="100%" stroke="black" strokeWidth="1.5" /></svg><div className="absolute bottom-0 left-1/2 -translate-x-1/2 z-20"><svg width="8" height="6" viewBox="0 0 8 6" className="block"><polygon points="0,0 8,0 4,6" fill="black" /></svg></div></div>
+              <div className="absolute top-2 h-[1.5px] pointer-events-none z-20" style={{ left: prevCol < colIdx ? 0 : '50%', right: prevCol < colIdx ? '50%' : 0 }}><svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="100%" y2="0" stroke="black" strokeWidth="2" shapeRendering="crispEdges" /></svg></div>
+              <div className="absolute top-2 left-[calc(50%-0.75px)] w-[1.5px] pointer-events-none z-20" style={{ height: `calc(50% - ${offsetH + 8}px)` }}><svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="0" y2="100%" stroke="black" strokeWidth="2" shapeRendering="crispEdges" /></svg><div className="absolute bottom-0 left-0 -translate-x-1/2 z-20" style={{ width: 0, height: 0, borderLeft: '4.5px solid transparent', borderRight: '4.5px solid transparent', borderTop: '9px solid black' }} /></div>
             </>
           )}
-          {isMainShape && prevCol !== null && prevCol === colIdx && localIdx > 0 && (
-            <div className="absolute top-0 left-[calc(50%-0.75px)] w-[1.5px] pointer-events-none z-20" style={{ height: `calc(50% - ${offsetH}px)` }}><svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="0" y2="100%" stroke="black" strokeWidth="1.5" /></svg><div className="absolute bottom-0 left-1/2 -translate-x-1/2 z-20"><svg width="8" height="6" viewBox="0 0 8 6" className="block"><polygon points="0,0 8,0 4,6" fill="black" /></svg></div></div>
+          {isMainShape && localIdx > 0 && ((prevCol !== null && prevCol === colIdx) || prevExtraAboveMain) && (
+            <div className="absolute top-0 left-[calc(50%-0.75px)] w-[1.5px] pointer-events-none z-20" style={{ height: `calc(50% - ${offsetH}px)` }}><svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="0" y2="100%" stroke="black" strokeWidth="2" shapeRendering="crispEdges" /></svg><div className="absolute bottom-0 left-0 -translate-x-1/2 z-20" style={{ width: 0, height: 0, borderLeft: '4.5px solid transparent', borderRight: '4.5px solid transparent', borderTop: '9px solid black' }} /></div>
+          )}
+          {/* Bentuk EXTRA yang tepat di bawah bentuk utama baris sebelumnya: garis masuk LURUS + kepala panah. */}
+          {!isMainShape && prevCol !== null && prevCol === colIdx && localIdx > 0 && (
+            <div className="absolute top-0 left-[calc(50%-0.75px)] w-[1.5px] pointer-events-none z-20" style={{ height: `calc(50% - ${offsetH}px)` }}><svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="0" y2="100%" stroke="black" strokeWidth="2" shapeRendering="crispEdges" /></svg><div className="absolute bottom-0 left-0 -translate-x-1/2 z-20" style={{ width: 0, height: 0, borderLeft: '4.5px solid transparent', borderRight: '4.5px solid transparent', borderTop: '9px solid black' }} /></div>
           )}
           {showDownLine && (
-            <div className="absolute bottom-0 left-[calc(50%-0.75px)] w-[1.5px] pointer-events-none z-20" style={{ height: `calc(50% - ${offsetH}px)` }}><svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="0" y2="100%" stroke="black" strokeWidth="1.5" /></svg></div>
+            <div className="absolute bottom-0 left-[calc(50%-0.75px)] w-[1.5px] pointer-events-none z-20" style={{ height: `calc(50% - ${offsetH}px)` }}><svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="0" y2="100%" stroke="black" strokeWidth="2" shapeRendering="crispEdges" /></svg></div>
           )}
         </div>
 
@@ -902,10 +1000,18 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
           />
         )}
 
-        <div className="relative z-30 group/sym pointer-events-auto" onClick={(e) => { e.stopPropagation(); if(activeTool || connectingFrom !== null) handleCellAction(absIdx, colIdx); }}>
+        <div
+          className="shape-menu-trigger relative z-30 pointer-events-auto cursor-pointer"
+          onClick={(e) => {
+            e.stopPropagation();
+            if (activeTool || connectingFrom !== null) { handleCellAction(absIdx, colIdx); return; }
+            if (effectiveIsViewOnly) return;
+            setOpenShapeMenu(prev => (prev && prev.row === absIdx && prev.col === colIdx) ? null : { row: absIdx, col: colIdx });
+          }}
+        >
           {Shape}
-          {!effectiveIsViewOnly && connectingFrom === null && !activeTool && (
-            <div className="absolute -top-24 left-1/2 -translate-x-1/2 flex flex-col gap-1 bg-white border border-slate-300 p-1.5 rounded-lg shadow-xl opacity-0 group-hover/sym:opacity-100 transition-opacity z-50 no-print font-sans pointer-events-auto">
+          {!effectiveIsViewOnly && connectingFrom === null && !activeTool && openShapeMenu?.row === absIdx && openShapeMenu?.col === colIdx && (
+            <div onClick={(e) => e.stopPropagation()} className={`shape-menu-popup absolute ${localIdx === 0 ? 'top-full mt-2' : '-top-24'} left-1/2 -translate-x-1/2 flex flex-col gap-1 bg-white border border-slate-300 p-1.5 rounded-lg shadow-xl transition-opacity z-50 no-print font-sans pointer-events-auto animate-in fade-in zoom-in-95 duration-150`}>
               
               <div className="flex gap-1 border-b border-slate-200 pb-1.5">
                 <button onClick={(e) => { e.stopPropagation(); updateShapeSymbol('start'); }} className="p-1 hover:bg-slate-100 rounded" title="Start/End"><Circle size={14}/></button>
@@ -1006,6 +1112,78 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         </div>
       )}
 
+      {/* MODAL EDIT INFO SOP */}
+      {showInfoModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 no-print font-sans">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="flex justify-between items-center p-5 border-b border-slate-100">
+              <h3 className="text-lg font-bold text-[#002855] flex items-center gap-2">
+                <Edit2 className="w-5 h-5 text-emerald-600" /> Edit Informasi SOP
+              </h3>
+              <button onClick={() => setShowInfoModal(false)} className="p-2 hover:bg-slate-100 rounded-lg transition-colors">
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+            <div className="p-6 space-y-4 max-h-[75vh] overflow-y-auto">
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Judul SOP <span className="text-red-500">*</span></label>
+                <input type="text" value={infoForm.judul} onChange={e => setInfoForm({ ...infoForm, judul: e.target.value })} className="w-full px-4 py-2.5 text-sm border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50 text-slate-900" placeholder="Judul SOP..." />
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Nomor SOP <span className="text-slate-400 font-normal normal-case">(opsional)</span></label>
+                <input type="text" value={infoForm.nomor} onChange={e => setInfoForm({ ...infoForm, nomor: e.target.value.toUpperCase() })} className="w-full px-4 py-2.5 text-sm border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50 text-slate-900 font-mono" placeholder="Contoh: SOP/14/ATRBPN" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Jenis SOP</label>
+                  <select value={infoForm.jenisSOP} onChange={e => setInfoForm({ ...infoForm, jenisSOP: e.target.value })} className="w-full px-4 py-2.5 text-sm border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50 text-slate-900 cursor-pointer">
+                    <option value="">-- Pilih Jenis --</option>
+                    {JENIS_SOP_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Klasifikasi SOP</label>
+                  <select value={infoForm.klasifikasiSOP} onChange={e => setInfoForm({ ...infoForm, klasifikasiSOP: e.target.value })} className="w-full px-4 py-2.5 text-sm border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50 text-slate-900 cursor-pointer">
+                    <option value="">-- Pilih Klasifikasi --</option>
+                    {KLASIFIKASI_SOP_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Unit Kerja Utama (L1) <span className="text-red-500">*</span></label>
+                <select value={infoForm.unitKerja} onChange={e => setInfoForm({ ...infoForm, unitKerja: e.target.value, subUnitKerja: '' })} className="w-full px-4 py-2.5 text-sm border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50 text-slate-900 cursor-pointer">
+                  <option value="">-- Pilih Unit Utama --</option>
+                  {L1_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                </select>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Sub-Unit / Direktorat (L2)</label>
+                <input type="text" value={infoForm.subUnitKerja} onChange={e => setInfoForm({ ...infoForm, subUnitKerja: e.target.value })} className="w-full px-4 py-2.5 text-sm border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50 text-slate-900" placeholder="Nama sub-unit / direktorat (opsional)" />
+              </div>
+            </div>
+            <div className="p-5 border-t border-slate-100 flex justify-end gap-3">
+              <button onClick={() => setShowInfoModal(false)} className="px-5 py-2.5 text-sm font-bold border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-xl transition-colors">Batal</button>
+              <button
+                onClick={() => {
+                  if (!infoForm.judul.trim()) return alert('Judul SOP wajib diisi.');
+                  if (!infoForm.unitKerja) return alert('Unit Kerja Utama wajib dipilih.');
+                  setJudul(infoForm.judul.trim());
+                  setNomor(infoForm.nomor.trim());
+                  setUnitKerja(infoForm.unitKerja);
+                  setSubUnitKerja(infoForm.subUnitKerja);
+                  setJenisSOP(infoForm.jenisSOP);
+                  setKlasifikasiSOP(infoForm.klasifikasiSOP);
+                  setShowInfoModal(false);
+                }}
+                className="px-6 py-2.5 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-md transition-all flex items-center gap-2 active:scale-95"
+              >
+                <Save size={16} /> Simpan Perubahan
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isSaveModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4 no-print font-sans">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
@@ -1017,12 +1195,35 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
               <button onClick={() => { handleSaveFlow(false); setIsSaveModalOpen(false); }} className="w-full flex items-center justify-center gap-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 p-3 rounded-xl font-bold transition-colors">
                 <Save size={18} /> Simpan sebagai Draft Lokal
               </button>
-              <button onClick={() => { handleSubmitOrtala(); setIsSaveModalOpen(false); }} className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white p-3 rounded-xl font-bold shadow-md transition-colors">
-                <Send size={18} /> Simpan & Kirim ke Biro Ortala
+              <button onClick={() => { setIsSaveModalOpen(false); setShowSubmitConfirm(true); }} className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white p-3 rounded-xl font-bold shadow-md transition-colors">
+                <Send size={18} /> Simpan &amp; Kirim ke Biro Ortala MR
               </button>
             </div>
             <div className="p-4 bg-slate-50 border-t border-slate-100 text-right">
               <button onClick={() => setIsSaveModalOpen(false)} className="px-4 py-2 text-sm font-bold text-slate-500 hover:text-slate-700 transition-colors">Batal</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* KONFIRMASI KIRIM KE BIRO ORTALA MR */}
+      {showSubmitConfirm && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4 no-print font-sans">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="p-6 border-b border-slate-100 flex items-start gap-3">
+              <div className="shrink-0 w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
+                <Send size={18} className="text-amber-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-black text-slate-800">Ajukan ke Biro Ortala MR?</h3>
+                <p className="text-sm text-slate-500 mt-1">Dokumen SOP ini akan disimpan lalu <b>dikirim ke Biro Ortala MR</b> untuk ditinjau. Pastikan seluruh data sudah benar sebelum melanjutkan.</p>
+              </div>
+            </div>
+            <div className="p-5 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
+              <button onClick={() => { setShowSubmitConfirm(false); setIsSaveModalOpen(true); }} className="px-5 py-2.5 text-sm font-bold border border-slate-200 text-slate-600 hover:bg-slate-100 rounded-xl transition-colors">Batal</button>
+              <button onClick={() => { setShowSubmitConfirm(false); handleSubmitOrtala(); }} className="px-6 py-2.5 text-sm font-bold bg-purple-600 hover:bg-purple-700 text-white rounded-xl shadow-md transition-all flex items-center gap-2 active:scale-95">
+                <Send size={16} /> Ya, Ajukan Sekarang
+              </button>
             </div>
           </div>
         </div>
@@ -1035,8 +1236,18 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
             <button onClick={handleGoBack} className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95 border border-slate-200"><ArrowLeft size={16} /> Kembali</button>
             {!isViewOnly && (
               <>
+                <button
+                  onClick={() => {
+                    setInfoForm({ judul, nomor, unitKerja, subUnitKerja, jenisSOP, klasifikasiSOP });
+                    setShowInfoModal(true);
+                  }}
+                  className="px-3 py-1.5 bg-slate-700 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95"
+                  title="Edit Informasi SOP"
+                >
+                  <Edit2 size={16} /> Edit Info
+                </button>
                 <button onClick={() => setIsSaveModalOpen(true)} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95"><Save size={16} /> Simpan</button>
-                <button onClick={() => setSteps([...steps, { id: `step-${Date.now()}`, kegiatan: '', pelaksanaCol: 0, symbol: 'process', arrowDown: true, waktu: '', syarat: '', output: '', ket: '' }])} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95"><Plus size={16} /> Baris Baru</button>
+                <button onClick={() => setSteps([...steps, { id: genStepId(), kegiatan: '', pelaksanaCol: 0, symbol: 'process', arrowDown: true, waktu: '', syarat: '', output: '', ket: '' }])} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95"><Plus size={16} /> Baris Baru</button>
                 <button onClick={handleInsertRow} className="px-3 py-1.5 bg-sky-500 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95"><ArrowDownToLine size={16} /> Sisip Baris</button>
                 <button onClick={addColumn} className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95"><UserPlus size={16} /> Kolom</button>
               </>
@@ -1044,7 +1255,10 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
           </div>
           <div className="flex gap-2">
             <button onClick={handleExportExcel} className="px-3 py-1.5 bg-green-700 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95"><FileSpreadsheet size={16} /> Excel</button>
-            <button onClick={handlePrintAction} className="px-3 py-1.5 bg-slate-800 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95"><Printer size={16} /> Cetak (F4)</button>
+            <button onClick={handleDownloadPDF} disabled={isExporting} title="Unduh PDF vektor ukuran F4 (330×215mm) — teks bisa diseleksi, sesuai canvas. Dokumen disimpan lalu dirender di server, langsung terunduh (tanpa dialog cetak)." className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed">
+              {isExporting ? <Loader2 size={16} className="animate-spin" /> : <FileDown size={16} />}
+              {isExporting ? 'Menyiapkan PDF…' : 'Unduh PDF (F4)'}
+            </button>
           </div>
         </div>
         <div className="flex flex-wrap justify-center bg-slate-100 p-1 rounded-xl shadow-inner w-full">
@@ -1059,6 +1273,13 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         <div className="w-full max-w-[330mm] bg-blue-50 border border-blue-200 text-blue-700 text-[11px] font-sans p-3 rounded-xl mb-4 print:hidden flex items-start gap-2 shadow-sm">
           <Info size={16} className="shrink-0 mt-0.5" />
           <p><b>Panduan PDF:</b> Saat menekan &quot;Cetak&quot;, pastikan Anda memilih ukuran kertas <b>F4 atau Custom (330x215mm)</b> di dialog print browser Anda.</p>
+        </div>
+      )}
+
+      {!effectiveIsViewOnly && activeTab !== 'cover' && (
+        <div className="w-full max-w-[330mm] bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-sans p-3 rounded-xl mb-4 print:hidden flex items-start gap-2 shadow-sm">
+          <MousePointer2 size={16} className="shrink-0 mt-0.5" />
+          <p><b>Tips:</b> <b>Klik/ketuk</b> sebuah bentuk pada kolom untuk membuka menu ganti bentuk, arah panah, atau cabang. Klik di luar bentuk untuk menutup menu.</p>
         </div>
       )}
 
@@ -1140,9 +1361,17 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         const currentHeaders = pelaksanaHeaders[chunkIdx] || Array(colCount).fill('');
 
         return (
-          <div key={chunkIdx} className={`print-page-target paper-f4-landscape shadow-2xl p-[6mm] border border-slate-300 text-black flex-col page-container ${activeTab === chunkIdx || isPrinting ? 'flex' : 'hidden print:flex'} font-bookman`}>
+          <div key={chunkIdx} className={`print-page-target paper-f4-landscape shadow-2xl p-[6mm] border border-slate-300 text-black flex-col page-container ${isLastChunk ? 'last-print-page' : ''} ${activeTab === chunkIdx || isPrinting ? 'flex' : 'hidden print:flex'} font-bookman`}>
             <div className="flex justify-between items-end mb-3 border-b-4 border-black pb-1 shrink-0">
-              <h2 className="text-xl font-black uppercase">{judul || 'JUDUL SOP'}</h2>
+              <div>
+                <h2 className="text-xl font-black uppercase">{judul || 'JUDUL SOP'}</h2>
+                {(jenisSOP || klasifikasiSOP) && (
+                  <div className="flex gap-2 mt-1 no-print font-sans">
+                    {jenisSOP && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">{jenisSOP}</span>}
+                    {klasifikasiSOP && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-teal-100 text-teal-700 border border-teal-200">{klasifikasiSOP}</span>}
+                  </div>
+                )}
+              </div>
             </div>
             
             <div className={`overflow-visible flex flex-col min-h-0 relative ${shouldStretch ? 'flex-1' : 'mb-auto'}`}>
@@ -1166,7 +1395,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                     {currentHeaders.map((h, i) => (
                       <th key={i} className={`border-b-2 border-r-2 border-black p-1 relative group/h ${i === colCount - 1 ? '' : 'border-r-2 border-black'}`}>
                         <EditableCell value={h} onChange={(val) => handleHeaderChange(chunkIdx, i, val)} center={true} placeholder={`P${i+1}`} className="font-black text-center wrap-break-word" />
-                        {!effectiveIsViewOnly && <button onClick={() => removeColumn(i)} className="absolute -top-1 -right-1 text-red-600 no-print opacity-0 group-hover/h:opacity-100 active:scale-125 bg-white rounded-full z-50"><UserMinus size={10}/></button>}
+                        {!effectiveIsViewOnly && <button onClick={() => removeColumn(i)} title="Hapus kolom pelaksana ini" className="absolute -top-1 -right-1 text-red-600 no-print opacity-40 group-hover/h:opacity-100 active:scale-125 bg-white rounded-full z-50"><UserMinus size={10}/></button>}
                       </th>
                     ))}
                     <th className={`border-b-2 border-r-2 border-black p-1 ${getWaktuFontClass()}`}>Kelengkapan</th>
@@ -1183,7 +1412,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                           <EditableCell value={displayNumbers[absIdx]} onChange={(val) => updateStep(absIdx, { nomorOverride: val.trim().toLowerCase() === 'auto' ? undefined : val })} center={true} className="text-[13px] h-full" />
                         </td>
                         <td className="border-r-2 border-black p-2 px-1.5 font-normal leading-snug relative overflow-visible align-top h-px">
-                          <EditableCell value={step.kegiatan} onChange={(val) => updateStep(absIdx, { kegiatan: val })} placeholder="..." className="text-[13px] h-full" />
+                          <EditableCell value={step.kegiatan} onChange={(val) => updateStep(absIdx, { kegiatan: val })} placeholder="..." className="text-[13px] h-full text-justify!" />
                         </td>
                         
                         {Array(colCount).fill(0).map((_, i) => (
