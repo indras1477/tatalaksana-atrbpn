@@ -306,15 +306,10 @@ export default function PeraturanPage() {
                 </thead>
                 <tbody>
                   {paginated.map((doc, idx) => (
-                    <tr key={doc.id} className={`border-b transition-colors ${dm ? 'border-slate-800 hover:bg-blue-900/10' : 'border-slate-50 hover:bg-blue-50/30'}`}>
+                    <tr key={doc.id} onClick={() => setViewDoc(doc)} className={`border-b transition-colors cursor-pointer ${dm ? 'border-slate-800 hover:bg-blue-900/20' : 'border-slate-50 hover:bg-blue-50/60'}`}>
                       <td className="px-4 py-4 text-center text-slate-400 text-sm">{(safePage - 1) * pageSize + idx + 1}</td>
                       <td className="px-4 py-4 max-w-sm">
-                        <button
-                          onClick={() => setViewDoc(doc)}
-                          className={`text-left font-bold text-sm hover:underline underline-offset-2 line-clamp-2 ${dm ? 'text-blue-300 hover:text-blue-200' : 'text-[#002855] hover:text-blue-700'}`}
-                        >
-                          {doc.nama}
-                        </button>
+                        <p className={`font-bold text-sm line-clamp-2 ${dm ? 'text-blue-100' : 'text-[#002855]'}`}>{doc.nama}</p>
                         {doc.tentang && <p className={`text-xs font-normal mt-0.5 line-clamp-1 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>{doc.tentang}</p>}
                       </td>
                       <td className="px-4 py-4">
@@ -331,20 +326,12 @@ export default function PeraturanPage() {
                           </p>
                         )}
                       </td>
-                      <td className="px-4 py-4 text-center">
+                      <td className="px-4 py-4 text-center" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-2">
-                          {doc.link_drive && (
-                            <button
-                              onClick={() => setViewDoc(doc)}
-                              className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${dm ? 'bg-blue-900/40 text-blue-400 hover:bg-blue-600 hover:text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white'}`}
-                            >
-                              Lihat <ExternalLink className="w-3 h-3" />
-                            </button>
-                          )}
                           {currentUser?.role === 'admin' && (
                             <>
-                              <button onClick={() => openEdit(doc)} className={`text-xs font-bold transition-colors ${dm ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'}`}>Edit</button>
-                              <button onClick={() => handleDelete(doc.id)} className={`text-xs font-bold transition-colors ${dm ? 'text-red-400 hover:text-red-300' : 'text-red-500 hover:text-red-600'}`}>Hapus</button>
+                              <button onClick={e => { e.stopPropagation(); openEdit(doc); }} className={`text-xs font-bold transition-colors ${dm ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'}`}>Edit</button>
+                              <button onClick={e => { e.stopPropagation(); handleDelete(doc.id); }} className={`text-xs font-bold transition-colors ${dm ? 'text-red-400 hover:text-red-300' : 'text-red-500 hover:text-red-600'}`}>Hapus</button>
                             </>
                           )}
                         </div>
@@ -380,45 +367,79 @@ export default function PeraturanPage() {
         </div>
       </div>
 
-      {/* Modal Lihat Dokumen */}
+      {/* Modal Lihat Dokumen — responsif */}
       {viewDoc && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4">
-          <div className={`w-full max-w-5xl max-h-[92vh] flex flex-col rounded-2xl shadow-2xl overflow-hidden ${dm ? 'bg-[#151F32] border border-slate-700' : 'bg-white'}`}>
-            <div className={`flex items-center justify-between p-4 border-b shrink-0 ${dm ? 'border-slate-700 bg-[#0F172A]' : 'border-slate-100 bg-slate-50'}`}>
-              <div className="flex items-center gap-3 min-w-0">
-                <div className={`p-2 rounded-xl shrink-0 ${dm ? 'bg-blue-900/40 text-blue-400' : 'bg-blue-50 text-blue-600'}`}>
-                  <Landmark className="w-5 h-5" />
-                </div>
-                <div className="min-w-0">
-                  <p className={`text-xs font-bold uppercase tracking-wider ${dm ? 'text-slate-400' : 'text-slate-500'}`}>{viewDoc.jenis}</p>
-                  <h3 className={`text-sm font-extrabold line-clamp-1 ${dm ? 'text-white' : 'text-[#002855]'}`}>{viewDoc.nama}</h3>
-                  {viewDoc.tanggal_ditetapkan && (
-                    <p className={`text-xs mt-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>Ditetapkan: {formatTanggal(viewDoc.tanggal_ditetapkan)}</p>
-                  )}
-                </div>
-              </div>
-              <div className="flex items-center gap-2 shrink-0">
-                {viewDoc.link_drive && (
-                  <a href={viewDoc.link_drive} target="_blank" rel="noreferrer" className={`flex items-center gap-1.5 px-3 py-2 rounded-xl text-xs font-bold transition-colors ${dm ? 'bg-blue-700 hover:bg-blue-600 text-white' : 'bg-blue-600 hover:bg-blue-700 text-white'}`}>
-                    <ExternalLink className="w-3.5 h-3.5" /> Buka di Drive
-                  </a>
-                )}
-                <button onClick={() => setViewDoc(null)} className={`p-2 rounded-xl transition-colors ${dm ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-400'}`}>
-                  <X className="w-5 h-5" />
-                </button>
-              </div>
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm sm:p-4"
+          onClick={() => setViewDoc(null)}
+        >
+          <div
+            className={`w-full sm:max-w-xl md:max-w-2xl flex flex-col rounded-t-2xl sm:rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-3 sm:zoom-in-95 duration-200 ${dm ? 'bg-[#0F172A] border border-slate-700' : 'bg-white'}`}
+            style={{ maxHeight: '88vh' }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Drag handle mobile */}
+            <div className="flex justify-center pt-2 pb-0 sm:hidden">
+              <div className={`w-10 h-1 rounded-full ${dm ? 'bg-slate-700' : 'bg-slate-200'}`} />
             </div>
-            <div className="flex-1 min-h-0">
+
+            {/* Header */}
+            <div className={`flex items-start justify-between px-4 py-3 border-b shrink-0 gap-3 ${dm ? 'border-slate-700 bg-[#0B1121]' : 'border-slate-100 bg-slate-50'}`}>
+              <div className="flex items-start gap-2 min-w-0">
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider shrink-0 mt-0.5 ${dm ? JENIS_BADGE_DARK[viewDoc.jenis] : JENIS_BADGE[viewDoc.jenis]}`}>
+                  {viewDoc.jenis === 'Peraturan Menteri' ? 'Permen' : 'Kepmen'}
+                </span>
+                <h3 className={`text-sm font-extrabold leading-snug line-clamp-2 ${dm ? 'text-white' : 'text-[#002855]'}`}>{viewDoc.nama}</h3>
+              </div>
+              <button onClick={() => setViewDoc(null)} className={`p-1.5 rounded-lg shrink-0 transition-colors ${dm ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-200 text-slate-500'}`}>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* PDF Viewer */}
+            <div className="shrink-0" style={{ height: 'clamp(180px, 38vh, 360px)' }}>
               {viewDoc.link_drive ? (
-                <iframe
-                  src={getEmbedUrl(viewDoc.link_drive)}
-                  className="w-full h-full min-h-125"
-                  allow="autoplay"
-                  title={viewDoc.nama}
-                />
+                <iframe src={getEmbedUrl(viewDoc.link_drive)} className="w-full h-full border-0" allow="autoplay" title={viewDoc.nama} />
               ) : (
-                <div className="flex items-center justify-center h-64 text-slate-400 text-sm">
-                  Tidak ada link dokumen yang tersedia.
+                <div className={`w-full h-full flex flex-col items-center justify-center gap-3 ${dm ? 'bg-[#151F32] text-slate-500' : 'bg-slate-50 text-slate-400'}`}>
+                  <FileText className="w-10 h-10 opacity-20" />
+                  <p className="text-xs font-medium">Tidak ada link dokumen</p>
+                </div>
+              )}
+            </div>
+
+            {/* Info */}
+            <div className={`px-4 py-3 border-t overflow-y-auto ${dm ? 'border-slate-700 bg-[#0B1121]' : 'border-slate-100 bg-slate-50'}`}>
+              {viewDoc.tentang && (
+                <p className={`text-xs mb-3 leading-relaxed line-clamp-3 ${dm ? 'text-slate-300' : 'text-slate-600'}`}>
+                  <span className={`font-bold ${dm ? 'text-slate-200' : 'text-slate-700'}`}>Deskripsi: </span>
+                  {viewDoc.tentang}
+                </p>
+              )}
+              <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+                {viewDoc.nomor && (
+                  <div className={`p-2.5 rounded-lg ${dm ? 'bg-[#151F32] border border-slate-800' : 'bg-white border border-slate-100'}`}>
+                    <p className={`text-[9px] font-bold uppercase tracking-wider mb-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>Nomor</p>
+                    <p className={`text-[11px] font-mono font-semibold break-all ${dm ? 'text-slate-300' : 'text-slate-700'}`}>{viewDoc.nomor}</p>
+                  </div>
+                )}
+                <div className={`p-2.5 rounded-lg ${dm ? 'bg-[#151F32] border border-slate-800' : 'bg-white border border-slate-100'}`}>
+                  <p className={`text-[9px] font-bold uppercase tracking-wider mb-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>Tahun</p>
+                  <p className={`text-[11px] font-bold ${dm ? 'text-slate-300' : 'text-slate-700'}`}>{viewDoc.tahun || '—'}</p>
+                </div>
+                {viewDoc.tanggal_ditetapkan && (
+                  <div className={`p-2.5 rounded-lg ${dm ? 'bg-[#151F32] border border-slate-800' : 'bg-white border border-slate-100'}`}>
+                    <p className={`text-[9px] font-bold uppercase tracking-wider mb-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>Ditetapkan</p>
+                    <p className={`text-[10px] font-semibold ${dm ? 'text-slate-300' : 'text-slate-700'}`}>{formatTanggal(viewDoc.tanggal_ditetapkan)}</p>
+                  </div>
+                )}
+              </div>
+              {viewDoc.link_drive && (
+                <div className="mt-3 flex justify-end">
+                  <a href={viewDoc.link_drive} target="_blank" rel="noreferrer"
+                    className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl font-bold text-xs transition-all shadow-sm ${dm ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-[#002855] hover:bg-[#001b3a] text-white'}`}>
+                    <ExternalLink className="w-3.5 h-3.5" /> Buka Dokumen
+                  </a>
                 </div>
               )}
             </div>

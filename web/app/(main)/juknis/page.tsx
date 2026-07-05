@@ -5,7 +5,7 @@ import * as XLSX from 'xlsx';
 import {
   ScrollText, FilePlus, Search, Filter,
   ExternalLink, FileText, ChevronLeft, ChevronRight, BookOpen, Inbox,
-  X, RefreshCw, Download, Calendar, Building2, Globe, Lock,
+  X, RefreshCw, Download, Calendar, Building2, Globe, Lock, Eye,
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
 import SearchableSelect from '@/components/SearchableSelect';
@@ -89,6 +89,7 @@ export default function JuknisPage() {
   const [pageSize, setPageSize] = useState(10);
   const [page, setPage] = useState(1);
 
+  const [previewDoc, setPreviewDoc] = useState<DokRef | null>(null);
   const [showForm, setShowForm] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [formData, setFormData] = useState(EMPTY_FORM);
@@ -124,9 +125,13 @@ export default function JuknisPage() {
 
   useEffect(() => { fetchDokumen(); }, [fetchDokumen]);
 
-  // Sumber data: user+tab unit → filter ke unit_l1 sendiri; lainnya → semua
+  // Sumber data: user+tab unit → dokumen unitnya (case-insensitive) + dokumen yang mereka tambahkan sendiri; lainnya → semua
+  const userUnit = currentUser?.unit_l1?.toLowerCase().trim();
   const baseList = isUser && activeTab === 'unit'
-    ? dokumenList.filter(d => d.unit_l1 === currentUser?.unit_l1)
+    ? dokumenList.filter(d =>
+        (userUnit && d.unit_l1?.toLowerCase().trim() === userUnit) ||
+        d.created_by === currentUser?.id
+      )
     : dokumenList;
 
   const tahunList   = [...new Set(baseList.map(d => d.tahun).filter(Boolean))].sort((a, b) => b.localeCompare(a));
@@ -165,6 +170,13 @@ export default function JuknisPage() {
     setFilterTahun('');
     setFilterUnitL1('');
     setSearchQuery('');
+  };
+
+  const getEmbedUrl = (link: string) => {
+    if (!link) return '';
+    const gd = link.match(/drive\.google\.com\/file\/d\/([^/?]+)/);
+    if (gd) return `https://drive.google.com/file/d/${gd[1]}/preview`;
+    return link;
   };
 
   const formatTanggal = (iso: string) => {
@@ -496,11 +508,16 @@ export default function JuknisPage() {
                 </thead>
                 <tbody>
                   {paginated.map((doc, idx) => (
-                    <tr key={doc.id} className={`border-b transition-colors ${dm ? 'border-slate-800 hover:bg-blue-900/10' : 'border-slate-50 hover:bg-blue-50/30'}`}>
+                    <tr key={doc.id} onClick={() => setPreviewDoc(doc)} className={`border-b transition-colors cursor-pointer ${dm ? 'border-slate-800 hover:bg-blue-900/20' : 'border-slate-50 hover:bg-blue-50/60'}`}>
                       <td className="px-4 py-4 text-center text-slate-400 text-sm">{(safePage - 1) * pageSize + idx + 1}</td>
                       <td className={`px-4 py-4 font-bold max-w-xs ${dm ? 'text-blue-100' : 'text-[#002855]'}`}>
-                        <p className="line-clamp-2 text-sm">{doc.judul}</p>
-                        {doc.tentang && <p className={`text-xs font-normal mt-0.5 line-clamp-1 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>{doc.tentang}</p>}
+                        <div className="flex items-start gap-2">
+                          <div className="min-w-0">
+                            <p className="line-clamp-2 text-sm">{doc.judul}</p>
+                            {doc.tentang && <p className={`text-xs font-normal mt-0.5 line-clamp-1 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>{doc.tentang}</p>}
+                          </div>
+                          <Eye className={`w-3.5 h-3.5 shrink-0 mt-0.5 opacity-30 ${dm ? 'text-blue-400' : 'text-blue-500'}`} />
+                        </div>
                       </td>
                       <td className="px-4 py-4 max-w-45">
                         {doc.unit_l1 ? (
@@ -525,19 +542,19 @@ export default function JuknisPage() {
                           </p>
                         )}
                       </td>
-                      <td className="px-4 py-4 text-center">
+                      <td className="px-4 py-4 text-center" onClick={e => e.stopPropagation()}>
                         <div className="flex items-center justify-center gap-2">
                           {doc.link && (
-                            <a href={doc.link} target="_blank" rel="noreferrer"
+                            <a href={doc.link} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
                               className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${dm ? 'bg-blue-900/40 text-blue-400 hover:bg-blue-600 hover:text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white'}`}>
                               Buka <ExternalLink className="w-3 h-3" />
                             </a>
                           )}
-                          {/* Edit/Hapus: admin selalu bisa, user hanya dokumen miliknya sendiri */}
-                          {(isAdmin || (isUser && doc.created_by === currentUser?.id)) && (
+                          {/* Edit/Hapus: admin selalu, user jika creator atau unit sama */}
+                          {(isAdmin || (isUser && (doc.created_by === currentUser?.id || (userUnit && doc.unit_l1?.toLowerCase().trim() === userUnit)))) && (
                             <>
-                              <button onClick={() => openEdit(doc)} className={`text-xs font-bold transition-colors ${dm ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'}`}>Edit</button>
-                              <button onClick={() => handleDelete(doc.id)} className={`text-xs font-bold transition-colors ${dm ? 'text-red-400 hover:text-red-300' : 'text-red-500 hover:text-red-600'}`}>Hapus</button>
+                              <button onClick={e => { e.stopPropagation(); openEdit(doc); }} className={`text-xs font-bold transition-colors ${dm ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'}`}>Edit</button>
+                              <button onClick={e => { e.stopPropagation(); handleDelete(doc.id); }} className={`text-xs font-bold transition-colors ${dm ? 'text-red-400 hover:text-red-300' : 'text-red-500 hover:text-red-600'}`}>Hapus</button>
                             </>
                           )}
                         </div>
@@ -572,6 +589,92 @@ export default function JuknisPage() {
           )}
         </div>
       </div>
+
+      {/* ── Modal Preview Dokumen ── */}
+      {previewDoc && (
+        <div
+          className="fixed inset-0 z-50 flex items-end sm:items-center justify-center bg-black/70 backdrop-blur-sm sm:p-4"
+          onClick={() => setPreviewDoc(null)}
+        >
+          <div
+            className={`w-full sm:max-w-xl md:max-w-2xl flex flex-col rounded-t-2xl sm:rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-3 sm:zoom-in-95 duration-200 ${dm ? 'bg-[#0F172A] border border-slate-700' : 'bg-white'}`}
+            style={{ maxHeight: '88vh' }}
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Drag handle (mobile hint) */}
+            <div className="flex justify-center pt-2 pb-0 sm:hidden">
+              <div className={`w-10 h-1 rounded-full ${dm ? 'bg-slate-700' : 'bg-slate-200'}`} />
+            </div>
+
+            {/* Header */}
+            <div className={`flex items-start justify-between px-4 py-3 border-b shrink-0 gap-3 ${dm ? 'border-slate-700 bg-[#0B1121]' : 'border-slate-100 bg-slate-50'}`}>
+              <div className="flex items-start gap-2 min-w-0">
+                <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider shrink-0 mt-0.5 ${dm ? JENIS_BADGE_DARK[previewDoc.jenis] : JENIS_BADGE[previewDoc.jenis]}`}>
+                  {previewDoc.jenis}
+                </span>
+                <h3 className={`text-sm font-extrabold leading-snug line-clamp-2 ${dm ? 'text-white' : 'text-[#002855]'}`}>{previewDoc.judul}</h3>
+              </div>
+              <button onClick={() => setPreviewDoc(null)} className={`p-1.5 rounded-lg shrink-0 transition-colors ${dm ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-200 text-slate-500'}`}>
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* PDF Viewer — responsif: lebih kecil di HP, lebih tinggi di desktop */}
+            <div className="shrink-0" style={{ height: 'clamp(180px, 38vh, 360px)' }}>
+              {previewDoc.link ? (
+                <iframe src={getEmbedUrl(previewDoc.link)} className="w-full h-full border-0" title={previewDoc.judul} allow="autoplay" />
+              ) : (
+                <div className={`w-full h-full flex flex-col items-center justify-center gap-3 ${dm ? 'bg-[#151F32] text-slate-500' : 'bg-slate-50 text-slate-400'}`}>
+                  <FileText className="w-10 h-10 opacity-20" />
+                  <p className="text-xs font-medium">Tidak ada link dokumen</p>
+                </div>
+              )}
+            </div>
+
+            {/* Info section */}
+            <div className={`px-4 py-3 border-t overflow-y-auto ${dm ? 'border-slate-700 bg-[#0B1121]' : 'border-slate-100 bg-slate-50'}`}>
+              {previewDoc.tentang && (
+                <p className={`text-xs mb-3 leading-relaxed line-clamp-3 ${dm ? 'text-slate-300' : 'text-slate-600'}`}>
+                  <span className={`font-bold ${dm ? 'text-slate-200' : 'text-slate-700'}`}>Deskripsi: </span>
+                  {previewDoc.tentang}
+                </p>
+              )}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                {previewDoc.unit_l1 && (
+                  <div className={`col-span-2 p-2.5 rounded-lg ${dm ? 'bg-[#151F32] border border-slate-800' : 'bg-white border border-slate-100'}`}>
+                    <p className={`text-[9px] font-bold uppercase tracking-wider mb-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>Unit Kerja</p>
+                    <p className={`text-[11px] font-semibold leading-snug ${dm ? 'text-slate-300' : 'text-slate-700'}`}>{previewDoc.unit_l1}</p>
+                    {previewDoc.unit_l2 && <p className={`text-[10px] mt-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>{previewDoc.unit_l2}</p>}
+                  </div>
+                )}
+                {previewDoc.nomor && (
+                  <div className={`p-2.5 rounded-lg ${dm ? 'bg-[#151F32] border border-slate-800' : 'bg-white border border-slate-100'}`}>
+                    <p className={`text-[9px] font-bold uppercase tracking-wider mb-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>Nomor</p>
+                    <p className={`text-[11px] font-mono font-semibold break-all ${dm ? 'text-slate-300' : 'text-slate-700'}`}>{previewDoc.nomor}</p>
+                  </div>
+                )}
+                <div className={`p-2.5 rounded-lg ${dm ? 'bg-[#151F32] border border-slate-800' : 'bg-white border border-slate-100'}`}>
+                  <p className={`text-[9px] font-bold uppercase tracking-wider mb-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>Tahun / Terbit</p>
+                  <p className={`text-[11px] font-bold ${dm ? 'text-slate-300' : 'text-slate-700'}`}>{previewDoc.tahun || '—'}</p>
+                  {previewDoc.tanggal_terbit && (
+                    <p className={`text-[10px] mt-0.5 flex items-center gap-1 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>
+                      <Calendar className="w-2.5 h-2.5 shrink-0" />{formatTanggal(previewDoc.tanggal_terbit)}
+                    </p>
+                  )}
+                </div>
+              </div>
+              {previewDoc.link && (
+                <div className="mt-3 flex justify-end">
+                  <a href={previewDoc.link} target="_blank" rel="noreferrer"
+                    className={`inline-flex items-center gap-1.5 px-4 py-2 rounded-xl font-bold text-xs transition-all shadow-sm ${dm ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-[#002855] hover:bg-[#001b3a] text-white'}`}>
+                    <ExternalLink className="w-3.5 h-3.5" /> Buka Dokumen
+                  </a>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ── Modal Form Tambah/Edit ── */}
       {showForm && (

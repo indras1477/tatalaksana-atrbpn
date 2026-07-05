@@ -1,81 +1,22 @@
 "use client";
 import React, { useState, useEffect, useMemo } from 'react';
-import { 
-  Plus, Edit, Trash2, X, ArrowLeft, Building2, 
-  ShieldCheck, UserCheck, KeyRound, Eye, EyeOff 
+import {
+  Plus, Edit, Trash2, X, Building2,
+  ShieldCheck, UserCheck, KeyRound, Eye, EyeOff, Download
 } from 'lucide-react';
+
 import { useRouter } from 'next/navigation';
+import { HIERARKI_UNIT } from '@/lib/constants';
+import * as XLSX from 'xlsx';
 
 // KONFIGURASI PATH
 const BASE_PATH = '/e-sop-atrbpn';
 const API_URL = `${BASE_PATH}/api/users`;
 
-// DATA HIERARKI UNIT KERJA (ADPOSI DARI DASHBOARD)
-const HIERARKI_UNIT: Record<string, string[]> = {
-  "SEKRETARIAT JENDERAL": [
-    "Biro Perencanaan dan Kerja Sama", 
-    "Biro Sumber Daya Manusia", 
-    "Biro Organisasi, Tata Laksana, dan Manajemen Risiko", 
-    "Biro Keuangan dan Barang Milik Negara", 
-    "Biro Hukum", 
-    "Biro Hubungan Masyarakat dan Protokol", 
-    "Biro Umum dan Layanan Pengadaan",
-    "Pusat Data dan Informasi Pertanahan dan Tata Ruang"
-  ],
-  "DIREKTORAT JENDERAL TATA RUANG": [
-    "Sekretariat Direktorat Jenderal Tata Ruang", 
-    "Direktorat Perencanaan Tata Ruang", 
-    "Direktorat Bina Perencanaan Tata Ruang Daerah Wilayah I", 
-    "Direktorat Bina Perencanaan Tata Ruang Daerah Wilayah II", 
-    "Direktorat Sinkronisasi Pemanfaatan Ruang"
-  ],
-  "DIREKTORAT JENDERAL SURVEI DAN PEMETAAN PERTANAHAN DAN RUANG": [
-    "Sekretariat Direktorat Jenderal Survei dan Pemetaan", 
-    "Direktorat Pengukuran dan Pemetaan Kadastral", 
-    "Direktorat Pengukuran dan Pemetaan Dasar", 
-    "Direktorat Survei dan Pemetaan Tematik"
-  ],
-  "DIREKTORAT JENDERAL PENETAPAN HAK DAN PENDAFTARAN TANAH": [
-    "Sekretariat Direktorat Jenderal PENETAPAN HAK DAN PENDAFTARAN TANAH", 
-    "Direktorat Pengaturan dan Penetapan Hak Atas Tanah", 
-    "Direktorat Hubungan Kelembagaan"
-  ],
-  "DIREKTORAT JENDERAL PENATAAN AGRARIA": [
-    "Sekretariat Direktorat Jenderal Penataan Agraria", 
-    "Direktorat Landreform", 
-    "Direktorat Pemberdayaan Tanah Masyarakat"
-  ],
-  "DIREKTORAT JENDERAL PENGADAAN TANAH DAN PENGEMBANGAN PERTANAHAN": [
-    "Sekretariat Direktorat Jenderal Pengadaan Tanah", 
-    "Direktorat Bina Pengadaan dan Pencadangan Tanah"
-  ],
-  "DIREKTORAT JENDERAL PENGENDALIAN DAN PENERTIBAN TANAH DAN RUANG": [
-    "Sekretariat Direktorat Jenderal PENGENDALIAN DAN PENERTIBAN TANAH DAN RUANG", 
-    "Direktorat Pengendalian Pemanfaatan Ruang"
-  ],
-  "DIREKTORAT JENDERAL PENANGAN SENGKETA DAN KONFLIK PERTANAHA": [
-    "Sekretariat Direktorat Jenderal Penanganan Sengketa", 
-    "Direktorat Penanganan Sengketa Pertanahan"
-  ],
-  "INSPEKTORAT JENDERAL": [
-    "Sekretariat Inspektorat Jenderal", 
-    "Inspektur Wilayah I", 
-    "Inspektur Bidang Investigasi"
-  ],
-  "BADAN PENGEMBANGAN SUMBER DAYA MANUSIA": [
-    "Sekretariat Badan Pengembangan SDM", 
-    "Pusat Pembinaan Jabatan Fungsional", 
-    "Pusat Pengembangan Kompetensi SDM"
-  ],
-  "SEKOLAH TINGGI PERTANAHAN NASIONAL": [
-    "Sekolah Tinggi Pertanahan Nasional"
-  ]
-};
-
 interface User {
   id: number; username: string; nama_lengkap: string; email: string;
   role: string; active: boolean; last_login: string;
-  unit_l1?: string; unit_l2?: string;
+  unit_l1?: string; unit_l2?: string; plain_password?: string;
 }
 
 export default function UsersPage() {
@@ -122,8 +63,6 @@ export default function UsersPage() {
         unit_l2: noUnit ? 'SELURUH UNIT' : formData.unit_l2
       };
 
-      console.log(`🚀 Mengirim ${method} ke: ${url}`);
-
       const res = await fetch(url, {
         method,
         headers: { 
@@ -140,7 +79,7 @@ export default function UsersPage() {
       } else {
         const errorHTML = await res.text();
         console.error("Detail Error Server:", errorHTML);
-        alert(`Gagal menyimpan (Status: ${res.status}). perlu cek kode ROUTER di backend.`);
+        alert(`Gagal menyimpan data user (Status: ${res.status}). Silakan coba lagi atau hubungi administrator.`);
       }
     } catch (err) { 
       console.error("Submit error:", err);
@@ -179,22 +118,57 @@ export default function UsersPage() {
   };
 
   const availableL2 = useMemo(() => {
-    return HIERARKI_UNIT[formData.unit_l1] || [];
+    return formData.unit_l1 && HIERARKI_UNIT[formData.unit_l1] ? Object.keys(HIERARKI_UNIT[formData.unit_l1]) : [];
   }, [formData.unit_l1]);
+
+  const handleDownloadExcel = () => {
+    const roleLabel = (role: string) =>
+      role === 'admin' ? 'Admin' : role === 'viewer' ? 'Viewer' : 'User (Terbatas)';
+
+    const rows = users.map(u => ({
+      'Nama Lengkap': u.nama_lengkap || '-',
+      'Hak Akses': roleLabel(u.role),
+      'Username': u.username,
+      'Password': u.plain_password || '(belum diset ulang)',
+      'Unit Kerja Level 1': (u.role === 'user' ? u.unit_l1 : '-') || '-',
+      'Unit Kerja Level 2': (u.role === 'user' ? u.unit_l2 : '-') || '-',
+    }));
+
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.json_to_sheet(rows);
+    ws['!cols'] = [
+      { wch: 30 }, { wch: 18 }, { wch: 18 }, { wch: 22 }, { wch: 55 }, { wch: 45 },
+    ];
+
+    // Style header row bold (xlsx-js doesn't support rich styling without xlsx-style, apply freeze pane only)
+    ws['!freeze'] = { xSplit: 0, ySplit: 1 };
+
+    XLSX.utils.book_append_sheet(wb, ws, 'Data Pengguna');
+    XLSX.writeFile(wb, 'Data_Pengguna_SIMPEL.xlsx');
+  };
 
   return (
     <div className="p-4 md:p-6 lg:p-8 text-slate-900 font-sans">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <p className="text-sm text-slate-500">Kelola akun dan hak akses pengguna sistem</p>
-        <button onClick={() => openModal()} className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition shadow-lg shadow-blue-200 self-start sm:self-auto">
-          <Plus className="w-4 h-4" /> Tambah User Baru
-        </button>
+        <div className="flex items-center gap-2 self-start sm:self-auto">
+          <button
+            onClick={handleDownloadExcel}
+            className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition shadow-lg shadow-emerald-200"
+          >
+            <Download className="w-4 h-4" /> Unduh Excel
+          </button>
+          <button onClick={() => openModal()} className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition shadow-lg shadow-blue-200">
+            <Plus className="w-4 h-4" /> Tambah User Baru
+          </button>
+        </div>
       </div>
 
       {loading ? (
         <div className="p-12 text-center font-bold text-slate-400 italic">Menghubungkan ke server...</div>
       ) : (
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className="overflow-x-auto">
           <table className="w-full text-left">
             <thead className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-widest">
               <tr>
@@ -244,6 +218,7 @@ export default function UsersPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </div>
       )}
 
@@ -259,7 +234,7 @@ export default function UsersPage() {
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-5">
-              <div className="grid grid-cols-2 gap-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Username</label>
                   <input 

@@ -7,79 +7,9 @@ import { useAppContext } from '@/lib/app-context';
 import SearchableSelect from '@/components/SearchableSelect';
 import {
   ArrowLeft, GitBranch, X, Image as ImageIcon, FileText,
-  AlertCircle, MessageSquare, Pencil, Lock
+  AlertCircle, MessageSquare, Pencil, Lock, Send
 } from 'lucide-react';
-
-// --- DATA HIERARKI UNIT KERJA (L1 -> L2 -> L3) ---
-const HIERARKI_UNIT: Record<string, Record<string, string[]>> = {
-  "SEKRETARIAT JENDERAL": {
-    "Biro Perencanaan dan Kerja Sama": ["Bagian Perencanaan Program", "Bagian Penganggaran", "Bagian Pemantauan, Evaluasi, dan Pelaporan Kinerja", "Bagian Kerja Sama dan Tata Usaha"],
-    "Biro Sumber Daya Manusia": ["Bagian Pengadaan dan Kesejahteraan", "Bagian Kinerja dan Manajemen Talenta", "Bagian Mutasi"],
-    "Biro Organisasi, Tata Laksana, dan Manajemen Risiko": ["Bagian Organisasi", "Bagian Tata Laksana dan Reformasi Birokrasi", "Bagian Analisis Jabatan", "Bagian Manajemen Risiko"],
-    "Biro Keuangan dan Barang Milik Negara": ["Bagian Penerimaan Negara Bukan Pajak", "Bagian Perbendaharaan", "Bagian Akuntansi dan Pelaporan", "Bagian Administrasi Pengelolaan BMN"],
-    "Biro Hukum": ["Bagian Perundang-undangan I", "Bagian Perundang-undangan II", "Bagian Advokasi dan Dokumentasi Hukum"],
-    "Biro Hubungan Masyarakat dan Protokol": ["Bagian Pemberitaan, Media, dan Hubungan Antar Lembaga", "Bagian Informasi Publik dan Pengaduan Masyarakat", "Bagian Tata Usaha Pimpinan dan Protokol"],
-    "Biro Umum dan Layanan Pengadaan": ["Bagian Tata Naskah, Kearsipan, dan Tata Usaha", "Bagian Rumah Tangga dan Perlengkapan", "Bagian Layanan Pengadaan Barang/Jasa"],
-    "Pusat Data dan Informasi Pertanahan dan Tata Ruang": ["Bidang Tata Kelola dan Infrastruktur TI", "Bidang Inovasi dan Pengembangan Sistem Informasi", "Bidang Pengelolaan Data dan Penyajian Informasi"]
-  },
-  "DIREKTORAT JENDERAL TATA RUANG": {
-    "Sekretariat Direktorat Jenderal Tata Ruang": ["Bagian Program, Keuangan, dan Umum", "Bagian Hukum dan Kepegawaian", "Bagian Manajemen Risiko"],
-    "Direktorat Perencanaan Tata Ruang": ["Subdirektorat Perencanaan Tata Ruang Nasional", "Subdirektorat Pedoman Tata Ruang", "Subdirektorat Perencanaan Tata Ruang Kawasan Strategis Nasional I", "Subdirektorat Perencanaan Tata Ruang Kawasan Strategis Nasional II", "Subdirektorat Perencanaan Tata Ruang Kawasan Strategis Nasional III"],
-    "Direktorat Bina Perencanaan Tata Ruang Daerah Wilayah I": ["Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah I.A", "Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah I.B", "Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah I.C", "Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah I.D", "Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah I.E"],
-    "Direktorat Bina Perencanaan Tata Ruang Daerah Wilayah II": ["Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah II.A", "Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah II.B", "Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah II.C", "Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah II.D", "Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah II.E"],
-    "Direktorat Sinkronisasi Pemanfaatan Ruang": ["Subdirektorat Sinkronisasi Pemanfaatan Ruang Wilayah A", "Subdirektorat Sinkronisasi Pemanfaatan Ruang Wilayah B", "Subdirektorat Wilayah Sinkronisasi Pemanfaatan Ruang C", "Subdirektorat Wilayah Sinkronisasi Pemanfaatan Ruang D", "Subdirektorat Wilayah Sinkronisasi Pemanfaatan Ruang E"]
-  },
-  "DIREKTORAT JENDERAL SURVEI DAN PEMETAAN PERTANAHAN DAN RUANG": {
-    "Sekretariat Direktorat Jenderal Survei dan Pemetaan": ["Bagian Program dan Hukum", "Bagian Kepegawaian, Keuangan, dan Umum", "Bagian Manajemen Risiko"],
-    "Direktorat Pengukuran dan Pemetaan Kadastral": ["Subdirektorat Pengukuran dan Pemetaan Bidang", "Subdirektorat Pengukuran dan Pemetaan Ruang", "Subdirektorat Penanganan Masalah dan Peningkatan Kualitas Kadastral"],
-    "Direktorat Pengukuran dan Pemetaan Dasar": ["Subdirektorat Pemetaan dan Pengelolaan Data Dasar", "Subdirektorat Pengukuran Dasar dan Peralatan", "Subdirektorat Pemetaan dan Pengelolaan Model Dasar dan Ruang"],
-    "Direktorat Survei dan Pemetaan Tematik": ["Subdirektorat Tematik Pertanahan dan Ruang", "Subdirektorat Tematik Kawasan", "Subdirektorat Layanan Informasi Geospasial Tematik Multiguna"]
-  },
-  "DIREKTORAT JENDERAL PENETAPAN HAK DAN PENDAFTARAN TANAH": {
-    "Sekretariat Direktorat Jenderal PENETAPAN HAK DAN PENDAFTARAN TANAH": ["Bagian Program dan Hukum", "Bagian Kepegawaian, Keuangan, dan Umum", "Bagian Manajemen Risiko"],
-    "Direktorat Pengaturan dan Penetapan Hak Atas Tanah": ["Subdirektorat Penetapan Hak Guna Usaha", "Subdirektorat Penetapan Hak Guna Bangunan", "Subdirektorat Penetapan Hak Pakai, Ruang Atas Tanah, dan Ruang Bawah Tanah"],
-    "Direktorat Pengaturan Pendaftaran Tanah dan Ruang, Pejabat Pembuat Akta Tanah, dan Mitra Kerja": ["Subdirektorat Pengaturan Pendaftaran Tanah dan Ruang", "Subdirektorat Pengembangan Pemeliharaan Hak atas Tanah dan Ruang", "Subdirektorat Pengelolaan Pejabat Pembuah Akta Tanah dan Mitra Kerja"],
-    "Direktorat Hubungan Kelembagaan": ["Subdirektorat Hubungan Kelembagaan", "Subdirektorat Pengembangan Layanan Pertanahan"]
-  },
-  "DIREKTORAT JENDERAL PENATAAN AGRARIA": {
-    "Sekretariat Direktorat Jenderal Penataan Agraria": ["Bagian Program dan Hukum", "Bagian Kepegawaian, Keuangan, dan Umum"],
-    "Direktorat Landreform": ["Subdirektorat Pengelolaan Penguasaan Tanah, Pemilikan, Penggunaan dan Pemanfataan Tanah", "Subdirektorat Penetapan Potensi Redistribusi", "Subdirektorat Pengaturan Redistribusi Tanah"],
-    "Direktorat Pemberdayaan Tanah Masyarakat": ["Subdirektorat Pengembangan Model Akses Reforma Agraria", "Subdirektorat Fasilitasi dan Kerja Sama Akses Reformasi Agraria", "Subdirektorat Pengaturan dan Pengelolaan Akses Reforma Agraria"],
-    "Direktorat Penatagunaan Tanah": ["Subdirektorat Penataan dan Koodinasi Sektoral dan Regional", "Subdirektorat Penataan Wilayah Pesisir Kecil, Perbatasan, dan Wilayah Tertentu", "Subdirektorat Layanan dan Pengembangan Penatagunaan Tanah"]
-  },
-  "DIREKTORAT JENDERAL PENGADAAN TANAH DAN PENGEMBANGAN PERTANAHAN": {
-    "Sekretariat Direktorat Jenderal Pengadaan Tanah": ["Bagian Program dan Hukum", "Bagian Kepegawaian, Keuangan, dan Umum"],
-    "Direktorat Bina Pengadaan and Pencadangan Tanah": ["Subdirektorat Bina Pengadaan Tanah Wilayah I", "Subdirektorat Bina Pengadaan Tanah Wilayah II", "Subdirektorat Pencadangan Tanah dan Kerjasama Pengadaan Lintas Rektor"],
-    "Direktorat Konsolidasi Tanah dan Pengembangan": ["Subdirektorat Penyelenggaraan Konsolidasi Tanah Wilayah I", "Subdirektorat Penyelenggaraan Konsolidasi Tanah Wilayah II", "Subdirektorat Pengembangan Pertanahan dan Pemanfaatan Tanah"],
-    "Direktorat Penilaian Tanah dan Ekonomi Pertanahan": ["Subdirektorat Penyediaan dan Pemanfaatan Nilai Tanah", "Subdirektorat Penilaian Tanah dan Dampak Sosial", "Subdirektorat Pendayagunaan Ekonomi Pertanahan"]
-  },
-  "DIREKTORAT JENDERAL PENGENDALIAN DAN PENERTIBAN TANAH DAN RUANG": {
-    "Sekretariat Direktorat Jenderal Pengendalian dan Penertiban Tanah dan Ruang": ["Bagian Program dan Hukum", "Bagian Kepegawaian, Keuangan, dan Umum"],
-    "Direktorat Pengendalian Pemanfaatan Ruang": ["Subdirektorat Pengendalian Pemanfaatan Ruang Wilayah I", "Subdirektorat Pengendalian Pemanfaatan Ruang Wilayah II", "Subdirektorat Pengendalian Pemanfaatan Ruang Wilayah III", "Subdirektorat Pengendalian Pemanfaatan Ruang Wilayah IV", "Subdirektorat Pengawasan Penataan Ruang"],
-    "Direktorat Penertiban Pemanfaatan Ruang": ["Subdirektorat Penegakan Hukum dan Penyelesaian Sengketa Penataan Ruang Wilayah I", "Subdirektorat Penegakan Hukum dan Penyelesaian Sengketa Penataan Ruang Wilayah II", "Subdirektorat Penegakan Hukum dan Penyelesaian Sengketa Penataan Ruang Wilayah III", "Subdirektorat Penegakan Hukum dan Penyelesaian Sengketa Penataan Ruang Wilayah IV"],
-    "Direktorat Pengendalian Hak Tanah, Alih Fungsi Lahan, Kepulauan, dan Wilayah Tertentu": ["Subdirektorat Pengendalian Hak Tanah, Kepulauan, dan Wilayah Tertentu Wilayah I", "Subdirektorat Pengendalian Hak Tanah, Kepulauan, dan Wilayah Tertentu Wilayah II", "Subdirektorat Pengendalian Alih Fungsi Lahan"],
-    "Direktorat Penertiban Penguasaan, Pemilikan, dan Penggunaan Tanah": ["Subdirektorat Potensi Penertiban Tanah", "Subdirektorat Penertiban Penguasaan dan Pemilikan Tanah", "Subdirektorat Penertiban Penggunaan dan Pemanfaatan Tanah"]
-  },
-  "DIREKTORAT JENDERAL PENANGANAN SENGKETA DAN KONFLIK PERTANAHA": {
-    "Sekretariat Direktorat Jenderal Penanganan Sengketa": ["Bagian Program dan Hukum", "Bagian Kepegawaian, Keuangan, dan Umum"],
-    "Direktorat Penanganan Sengketa Pertanahan": ["Subdirektorat Penanganan Sengketa Penetapan Hak dan Pendaftaran Tanah", "Subdirektorat Penanganan Sengketa Batas Bidang Tanah", "Subdirektorat Penanganan Sengketa Penguasaan dan Pemilikan Tanah"],
-    "Direktorat Penanganan Perkara Pertanahan": ["Subdirektorat Penanganan Perkara Wilayah I", "Subdirektorat Penanganan Perkara Wilayah II", "Subdirektorat Penanganan Perkara Wilayah III"],
-    "Direktorat Pencegahan dan Penanganan Konflik Pertanahan": ["Subdirektorat Penanganan Konflik Kelompok Masyarakat dan Tanah Ulayat", "Subdirektorat Penanganan Konflik Instansi Pemerintah/Badan Usaha Milik Negara/Badan Usaha Milik Daerah", "Subdirektorat Pencegahan dan Hubungan Kelembagaan"]
-  },
-  "INSPEKTORAT JENDERAL": {
-    "Sekretariat Inspektorat Jenderal": ["Bagian Program, Hukum, dan Tata Kelola", "Bagian Kepegawaian, Keuangan, dan Umum"],
-    "Inspektur Wilayah I": ["Auditor Wilayah I"],
-    "Inspektur Bidang Investigasi": ["Auditor Investigasi"]
-  },
-  "BADAN PENGEMBANGAN SUMBER DAYA MANUSIA": {
-    "Sekretariat Badan Pengembangan SDM": ["Bagian Perencanaan dan Umum"],
-    "Pusat Pembinaan Jabatan Fungsional": ["Bidang Jabatan Fungsional"],
-    "Pusat Pengembangan Kompetensi SDM": ["Bidang Pengembangan SDM"]
-  },
-  "SEKOLAH TINGGI PERTANAHAN NASIONAL": {
-    "Sekolah Tinggi Pertanahan Nasional": ["Bagian Akademik", "Bagian Administrasi Umum"]
-  }
-};
+import { HIERARKI_UNIT } from '@/lib/constants';
 
 const Modeler = dynamic(() => import('@/components/BPMNModeler'), {
   ssr: false,
@@ -144,6 +74,7 @@ function BPMNStudioContent() {
 
   const [isSaving, setIsSaving] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
+  const [showSubmitModal, setShowSubmitModal] = useState(false);
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [showUnsavedModal, setShowUnsavedModal] = useState(false);
   const [isEditingDocInfo, setIsEditingDocInfo] = useState(false);
@@ -486,7 +417,7 @@ function BPMNStudioContent() {
             )}
 
             {currentModel?.status === 'rejected' && currentModel?.catatan && (
-              <div className="absolute bottom-24 right-8 z-50 w-87.5 bg-white border-l-4 border-l-red-500 shadow-2xl rounded-2xl p-5 animate-in slide-in-from-bottom-5 fade-in duration-300 pointer-events-auto">
+              <div className="absolute bottom-24 right-4 z-50 w-87.5 max-w-[calc(100vw-2rem)] bg-white border-l-4 border-l-red-500 shadow-2xl rounded-2xl p-5 animate-in slide-in-from-bottom-5 fade-in duration-300 pointer-events-auto">
                 <div className="flex items-start gap-4">
                   <div className="p-2.5 bg-red-50 rounded-xl text-red-600 shrink-0">
                     <AlertCircle className="w-6 h-6" />
@@ -534,9 +465,9 @@ function BPMNStudioContent() {
                 <label className="block text-sm font-bold mb-1">Kode Proses <span className="text-xs font-normal text-slate-400">(opsional)</span></label>
                 <input type="text" placeholder="Contoh: SOP-PRC-01" value={config.processKey} onChange={(e) => setConfig({ ...config, processKey: e.target.value.toUpperCase().replace(/\s/g, '_') })} className="w-full px-4 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-mono" style={{ borderColor: isDarkMode ? '#374151' : '#d1d5db', backgroundColor: isDarkMode ? '#0F172A' : '#f8fafc' }} />
               </div>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-sm font-bold mb-1">Jenis Proses</label>
+                  <label className="block text-sm font-bold mb-1">Jenis Proses (Kewenangan)</label>
                   <select value={config.jenisProses} onChange={(e) => setConfig({ ...config, jenisProses: e.target.value })} className="w-full px-3 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" style={{ borderColor: isDarkMode ? '#374151' : '#d1d5db', backgroundColor: isDarkMode ? '#0F172A' : '#f8fafc', color: isDarkMode ? '#e2e8f0' : '#1e293b' }}>
                     <option value="">-- Pilih --</option>
                     {JENIS_PROSES_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
@@ -575,15 +506,11 @@ function BPMNStudioContent() {
                 )}
               </div>
               <div>
-                <label className="block text-sm font-bold mb-1">Sub-Unit (Level 2)</label>
-                <SearchableSelect
-                  options={l2Options}
-                  value={config.orgUnitL2}
-                  onChange={v => setConfig({ ...config, orgUnitL2: v })}
-                  placeholder={config.orgUnitL1 ? 'Cari sub-unit...' : 'Pilih Level 1 dahulu'}
-                  disabled={!config.orgUnitL1}
-                  dm={isDarkMode}
-                />
+                <label className={`block text-sm font-bold mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Sub-Unit (Level 2)</label>
+                <select value={config.orgUnitL2} onChange={(e) => setConfig({ ...config, orgUnitL2: e.target.value })} disabled={!config.orgUnitL1} className={`w-full px-4 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer disabled:opacity-50 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'}`}>
+                  <option value="">-- Tidak Ada / Kosong --</option>
+                  {l2Options.map(u => <option key={u} value={u}>{u}</option>)}
+                </select>
               </div>
             </div>
 
@@ -626,6 +553,48 @@ function BPMNStudioContent() {
         </div>
       )}
 
+      {showSubmitModal && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center z-60 p-0 sm:p-4" onClick={() => setShowSubmitModal(false)}>
+          <div
+            className="w-full sm:max-w-md rounded-t-2xl sm:rounded-2xl shadow-2xl overflow-hidden animate-in slide-in-from-bottom-3 sm:zoom-in-95 duration-200"
+            style={{ backgroundColor: isDarkMode ? '#151F32' : '#ffffff', borderColor: isDarkMode ? '#1e293b' : '#e5e7eb' }}
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="p-5 sm:p-6">
+              <div className="flex items-start gap-3 mb-4">
+                <div className={`p-2.5 rounded-xl shrink-0 ${isDarkMode ? 'bg-blue-900/30 text-blue-400' : 'bg-blue-50 text-blue-600'}`}>
+                  <Send className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-extrabold" style={{ color: isDarkMode ? '#f1f5f9' : '#002855' }}>Ajukan ke Biro Ortala MR?</h3>
+                  <p className="text-sm mt-1" style={{ color: isDarkMode ? '#94a3b8' : '#64748b' }}>
+                    Dokumen Proses Bisnis ini akan disimpan lalu dikirim ke Biro Ortala MR untuk ditinjau. Pastikan seluruh data sudah benar sebelum melanjutkan.
+                  </p>
+                </div>
+              </div>
+              <div className={`rounded-xl px-4 py-3 text-sm mb-5 border ${isDarkMode ? 'bg-blue-900/10 border-blue-800 text-blue-300' : 'bg-blue-50 border-blue-200 text-blue-700'}`}>
+                Setelah diajukan, dokumen tidak dapat diubah hingga Admin Ortala MR memberikan keputusan.
+              </div>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => setShowSubmitModal(false)}
+                  className="flex-1 px-4 py-2.5 text-sm font-bold border rounded-xl transition-colors"
+                  style={{ borderColor: isDarkMode ? '#374151' : '#d1d5db', color: isDarkMode ? '#cbd5e1' : '#374151' }}
+                >
+                  Batal
+                </button>
+                <button
+                  onClick={() => { setShowSubmitModal(false); executeSaveToDB('pending'); }}
+                  className="flex-1 px-4 py-2.5 text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2"
+                >
+                  <Send className="w-4 h-4" /> Ya, Ajukan Sekarang
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showSaveModal && !isViewOnly && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className="w-full max-w-2xl rounded-2xl shadow-2xl p-6 border" style={{ backgroundColor: isDarkMode ? '#151F32' : '#ffffff', borderColor: isDarkMode ? '#1e293b' : '#e5e7eb' }}>
@@ -648,7 +617,7 @@ function BPMNStudioContent() {
                 </button>
               </div>
 
-              <div className="space-y-4 flex flex-col border-l pl-8" style={{ borderColor: isDarkMode ? '#1e293b' : '#e5e7eb' }}>
+              <div className="space-y-4 flex flex-col md:border-l md:pl-8" style={{ borderColor: isDarkMode ? '#1e293b' : '#e5e7eb' }}>
                 <div className="mb-2">
                   <p className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-1">Simpan ke Server</p>
                   <p className="text-xs text-slate-400">Pilih tindakan untuk sistem database.</p>
@@ -678,7 +647,7 @@ function BPMNStudioContent() {
                     Simpan Draft Sementara
                   </button>
                   <button
-                    onClick={() => executeSaveToDB('pending')}
+                    onClick={() => { setShowSaveModal(false); setShowSubmitModal(true); }}
                     disabled={isSaving || currentModel?.status === 'approved' || currentModel?.status === 'pending'}
                     className="w-full px-4 py-3 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg transition-all disabled:opacity-50 text-sm flex items-center justify-center gap-2"
                   >

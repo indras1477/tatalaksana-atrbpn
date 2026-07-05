@@ -12,6 +12,8 @@ import * as XLSX from 'xlsx';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import SearchableSelect from '@/components/SearchableSelect';
+import DOMPurify from 'dompurify';
+import { HIERARKI_UNIT } from '@/lib/constants';
 
 interface UnitNode { id: string; nama: string; level: number; parent_id: string | null; children: UnitNode[]; }
 
@@ -36,106 +38,33 @@ function apiFetch(path: string, token: string, options?: RequestInit) {
   });
 }
 
-// --- DATA HIERARKI UNIT KERJA (L1 -> L2 -> L3) ---
-const HIERARKI_UNIT: Record<string, Record<string, string[]>> = {
-  "SEKRETARIAT JENDERAL": {
-    "Biro Perencanaan dan Kerja Sama": ["Bagian Perencanaan Program", "Bagian Penganggaran", "Bagian Pemantauan, Evaluasi, dan Pelaporan Kinerja", "Bagian Kerja Sama dan Tata Usaha"],
-    "Biro Sumber Daya Manusia": ["Bagian Pengadaan dan Kesejahteraan", "Bagian Kinerja dan Manajemen Talenta", "Bagian Mutasi"],
-    "Biro Organisasi, Tata Laksana, dan Manajemen Risiko": ["Bagian Organisasi", "Bagian Tata Laksana dan Reformasi Birokrasi", "Bagian Analisis Jabatan", "Bagian Manajemen Risiko"],
-    "Biro Keuangan dan Barang Milik Negara": ["Bagian Penerimaan Negara Bukan Pajak", "Bagian Perbendaharaan", "Bagian Akuntansi dan Pelaporan", "Bagian Administrasi Pengelolaan BMN"],
-    "Biro Hukum": ["Bagian Perundang-undangan I", "Bagian Perundang-undangan II", "Bagian Advokasi dan Dokumentasi Hukum"],
-    "Biro Hubungan Masyarakat dan Protokol": ["Bagian Pemberitaan, Media, dan Hubungan Antar Lembaga", "Bagian Informasi Publik dan Pengaduan Masyarakat", "Bagian Tata Usaha Pimpinan dan Protokol"],
-    "Biro Umum dan Layanan Pengadaan": ["Bagian Tata Naskah, Kearsipan, dan Tata Usaha", "Bagian Rumah Tangga dan Perlengkapan", "Bagian Layanan Pengadaan Barang/Jasa"],
-    "Pusat Data dan Informasi Pertanahan dan Tata Ruang": ["Bidang Tata Kelola dan Infrastruktur TI", "Bidang Inovasi dan Pengembangan Sistem Informasi", "Bidang Pengelolaan Data dan Penyajian Informasi"]
-  },
-  "DIREKTORAT JENDERAL TATA RUANG": {
-    "Sekretariat Direktorat Jenderal Tata Ruang": ["Bagian Program, Keuangan, dan Umum", "Bagian Hukum dan Kepegawaian", "Bagian Manajemen Risiko"],
-    "Direktorat Perencanaan Tata Ruang": ["Subdirektorat Perencanaan Tata Ruang Nasional", "Subdirektorat Pedoman Tata Ruang", "Subdirektorat Perencanaan Tata Ruang Kawasan Strategis Nasional I", "Subdirektorat Perencanaan Tata Ruang Kawasan Strategis Nasional II", "Subdirektorat Perencanaan Tata Ruang Kawasan Strategis Nasional III"],
-    "Direktorat Bina Perencanaan Tata Ruang Daerah Wilayah I": ["Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah I.A", "Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah I.B", "Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah I.C", "Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah I.D", "Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah I.E"],
-    "Direktorat Bina Perencanaan Tata Ruang Daerah Wilayah II": ["Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah II.A", "Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah II.B", "Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah II.C", "Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah II.D", "Subdirektorat Bina Perencanaan Tata Ruang Daerah Wilayah II.E"],
-    "Direktorat Sinkronisasi Pemanfaatan Ruang": ["Subdirektorat Sinkronisasi Pemanfaatan Ruang Wilayah A", "Subdirektorat Sinkronisasi Pemanfaatan Ruang Wilayah B", "Subdirektorat Wilayah Sinkronisasi Pemanfaatan Ruang C", "Subdirektorat Wilayah Sinkronisasi Pemanfaatan Ruang D", "Subdirektorat Wilayah Sinkronisasi Pemanfaatan Ruang E"]
-  },
-  "DIREKTORAT JENDERAL SURVEI DAN PEMETAAN PERTANAHAN DAN RUANG": {
-    "Sekretariat Direktorat Jenderal Survei dan Pemetaan": ["Bagian Program dan Hukum", "Bagian Kepegawaian, Keuangan, dan Umum", "Bagian Manajemen Risiko"],
-    "Direktorat Pengukuran dan Pemetaan Kadastral": ["Subdirektorat Pengukuran dan Pemetaan Bidang", "Subdirektorat Pengukuran dan Pemetaan Ruang", "Subdirektorat Penanganan Masalah dan Peningkatan Kualitas Kadastral"],
-    "Direktorat Pengukuran dan Pemetaan Dasar Pertanahan dan Ruang": ["Subdirektorat Pemetaan dan Pengelolaan Data Dasar", "Subdirektorat Pengukuran Dasar dan Peralatan", "Subdirektorat Pemetaan dan Pengelolaan Model Dasar dan Ruang"],
-    "Direktorat Survei dan Pemetaan Tematik": ["Subdirektorat Tematik Pertanahan dan Ruang", "Subdirektorat Tematik Kawasan", "Subdirektorat Layanan Informasi Geospasial Tematik Multiguna"]
-  },
-  "DIREKTORAT JENDERAL PENETAPAN HAK DAN PENDAFTARAN TANAH": {
-    "Sekretariat Direktorat Jenderal PENETAPAN HAK DAN PENDAFTARAN TANAH": ["Bagian Program dan Hukum", "Bagian Kepegawaian, Keuangan, dan Umum", "Bagian Manajemen Risiko"],
-    "Direktorat Pengaturan dan Penetapan Hak Atas Tanah": ["Subdirektorat Penetapan Hak Guna Usaha", "Subdirektorat Penetapan Hak Guna Bangunan", "Subdirektorat Penetapan Hak Pakai, Ruang Atas Tanah, dan Ruang Bawah Tanah"],
-    "Direktorat Pengaturan Pendaftaran Tanah dan Ruang, Pejabat Pembuat Akta Tanah, dan Mitra Kerja": ["Subdirektorat Pengaturan Pendaftaran Tanah dan Ruang", "Subdirektorat Pengembangan Pemeliharaan Hak atas Tanah dan Ruang", "Subdirektorat Pengelolaan Pejabat Pembuah Akta Tanah dan Mitra Kerja"],
-    "Direktorat Hubungan Kelembagaan": ["Subdirektorat Hubungan Kelembagaan", "Subdirektorat Pengembangan Layanan Pertanahan"]
-  },
-  "DIREKTORAT JENDERAL PENATAAN AGRARIA": {
-    "Sekretariat Direktorat Jenderal Penataan Agraria": ["Bagian Program dan Hukum", "Bagian Kepegawaian, Keuangan, dan Umum"],
-    "Direktorat Landreform": ["Subdirektorat Pengelolaan Penguasaan Tanah, Pemilikan, Penggunaan dan Pemanfataan Tanah", "Subdirektorat Penetapan Potensi Redistribusi", "Subdirektorat Pengaturan Redistribusi Tanah"],
-    "Direktorat Pemberdayaan Tanah Masyarakat": ["Subdirektorat Pengembangan Model Akses Reforma Agraria", "Subdirektorat Fasilitasi dan Kerja Sama Akses Reformasi Agraria", "Subdirektorat Pengaturan dan Pengelolaan Akses Reforma Agraria"],
-    "Direktorat Penatagunaan Tanah": ["Subdirektorat Penataan dan Koodinasi Sektoral dan Regional", "Subdirektorat Penataan Wilayah Pesisir Kecil, Perbatasan, dan Wilayah Tertentu", "Subdirektorat Layanan dan Pengembangan Penatagunaan Tanah"]
-  },
-  "DIREKTORAT JENDERAL PENGADAAN TANAH DAN PENGEMBANGAN PERTANAHAN": {
-    "Sekretariat Direktorat Jenderal Pengadaan Tanah": ["Bagian Program dan Hukum", "Bagian Kepegawaian, Keuangan, dan Umum"],
-    "Direktorat Bina Pengadaan dan Pencadangan Tanah": ["Subdirektorat Bina Pengadaan Tanah Wilayah I", "Subdirektorat Bina Pengadaan Tanah Wilayah II", "Subdirektorat Pencadangan Tanah dan Kerjasama Pengadaan Lintas Rektor"],
-    "Direktorat Konsolidasi Tanah dan Pengembangan Pertanahan": ["Subdirektorat Penyelenggaraan Konsolidasi Tanah Wilayah I", "Subdirektorat Penyelenggaraan Konsolidasi Tanah Wilayah II", "Subdirektorat Pengembangan Pertanahan dan Pemanfaatan Tanah"],
-    "Direktorat Penilaian Tanah dan Ekonomi Pertanahan": ["Subdirektorat Penyediaan dan Pemanfaatan Nilai Tanah", "Subdirektorat Penilaian Tanah dan Dampak Sosial", "Subdirektorat Pendayagunaan Ekonomi Pertanahan"]
-  },
-  "DIREKTORAT JENDERAL PENGENDALIAN DAN PENERTIBAN TANAH DAN RUANG": {
-    "Sekretariat Direktorat Jenderal Pengendalian dan Penertiban Tanah dan Ruang": ["Bagian Program dan Hukum", "Bagian Kepegawaian, Keuangan, dan Umum"],
-    "Direktorat Pengendalian Pemanfaatan Ruang": ["Subdirektorat Pengendalian Pemanfaatan Ruang Wilayah I", "Subdirektorat Pengendalian Pemanfaatan Ruang Wilayah II", "Subdirektorat Pengendalian Pemanfaatan Ruang Wilayah III", "Subdirektorat Pengendalian Pemanfaatan Ruang Wilayah IV", "Subdirektorat Pengawasan Penataan Ruang"],
-    "Direktorat Penertiban Pemanfaatan Ruang": ["Subdirektorat Penegakan Hukum dan Penyelesaian Sengketa Penataan Ruang Wilayah I", "Subdirektorat Penegakan Hukum dan Penyelesaian Sengketa Penataan Ruang Wilayah II", "Subdirektorat Penegakan Hukum dan Penyelesaian Sengketa Penataan Ruang Wilayah III", "Subdirektorat Penegakan Hukum dan Penyelesaian Sengketa Penataan Ruang Wilayah IV"],
-    "Direktorat Pengendalian Hak Tanah, Alih Fungsi Lahan, Kepulauan, dan Wilayah Tertentu": ["Subdirektorat Pengendalian Hak Tanah, Kepulauan, dan Wilayah Tertentu Wilayah I", "Subdirektorat Pengendalian Hak Tanah, Kepulauan, dan Wilayah Tertentu Wilayah II", "Subdirektorat Pengendalian Alih Fungsi Lahan"],
-    "Direktorat Penertiban Penguasaan, Pemilikan, dan Penggunaan Tanah": ["Subdirektorat Potensi Penertiban Tanah", "Subdirektorat Penertiban Penguasaan dan Pemilikan Tanah", "Subdirektorat Penertiban Penggunaan dan Pemanfaatan Tanah"]
-    
-  },
-  "DIREKTORAT JENDERAL PENANGANAN SENGKETA DAN KONFLIK PERTANAHAN": {
-    "Sekretariat Direktorat Jenderal Penanganan Sengketa": ["Bagian Program dan Hukum", "Bagian Kepegawaian, Keuangan, dan Umum"],
-    "Direktorat Penanganan Sengketa Pertanahan": ["Subdirektorat Penanganan Sengketa Penetapan Hak dan Pendaftaran Tanah", "Subdirektorat Penanganan Sengketa Batas Bidang Tanah", "Subdirektorat Penanganan Sengketa Penguasaan dan Pemilikan Tanah"],
-    "Direktorat Penanganan Perkara Pertanahan": ["Subdirektorat Penanganan Perkara Wilayah I", "Subdirektorat Penanganan Perkara Wilayah II", "Subdirektorat Penanganan Perkara Wilayah III"],
-    "Direktorat Pencegahan dan Penanganan Konflik Pertanahan": ["Subdirektorat Penanganan Konflik Kelompok Masyarakat dan Tanah Ulayat", "Subdirektorat Penanganan Konflik Instansi Pemerintah/Badan Usaha Milik Negara/Badan Usaha Milik Daerah", "Subdirektorat Pencegahan dan Hubungan Kelembagaan"]
-  
-  },
-  "INSPEKTORAT JENDERAL": {
-    "Sekretariat Inspektorat Jenderal": ["Bagian Program, Hukum, dan Tata Kelola", "Bagian Kepegawaian, Keuangan, dan Umum"],
-    "Inspektur Wilayah I": ["Auditor Wilayah I"],
-    "Inspektur Bidang Investigasi": ["Auditor Investigasi"]
-  },
-  "BADAN PENGEMBANGAN SUMBER DAYA MANUSIA": {
-    "Sekretariat Badan Pengembangan SDM": ["Bagian Perencanaan dan Umum"],
-    "Pusat Pembinaan Jabatan Fungsional": ["Bidang Jabatan Fungsional"],
-    "Pusat Pengembangan Kompetensi SDM": ["Bidang Pengembangan SDM"]
-  },
-  "SEKOLAH TINGGI PERTANAHAN NASIONAL": {
-    "Sekolah Tinggi Pertanahan Nasional": ["Bagian Akademik", "Bagian Administrasi Umum"]
-  }
-};
 
 const CHART_LABELS: Record<string, string> = {
-  "SEKRETARIAT JENDERAL": "SETJEN", 
-  "DIREKTORAT JENDERAL TATA RUANG": "TARU", 
-  "DIREKTORAT JENDERAL SURVEI DAN PEMETAAN PERTANAHAN DAN RUANG": "SPPR",
-  "DIREKTORAT JENDERAL PENETAPAN HAK DAN PENDAFTARAN TANAH": "PHPT", 
-  "DIREKTORAT JENDERAL PENATAAN AGRARIA": "PENTAG", 
-  "DIREKTORAT JENDERAL PENGADAAN TANAH DAN PENGEMBANGAN PERTANAHAN": "PENGADAAN",
-  "DIREKTORAT JENDERAL PENGENDALIAN DAN PENERTIBAN TANAH DAN RUANG": "PENGENDALIAN", 
-  "DIREKTORAT JENDERAL PENANGANAN SENGKETA DAN KONFLIK PERTANAHAN": "PSKP",
-  "INSPEKTORAT JENDERAL": "ITJEN", 
-  "BADAN PENGEMBANGAN SUMBER DAYA MANUSIA": "BPSDM", 
-  "SEKOLAH TINGGI PERTANAHAN NASIONAL": "STPN"
+  "Sekretariat Jenderal": "SETJEN",
+  "Direktorat Jenderal Tata Ruang": "TARU",
+  "Direktorat Jenderal Survei dan Pemetaan Pertanahan dan Ruang": "SPPR",
+  "Direktorat Jenderal Penetapan Hak dan Pendaftaran Tanah": "PHPT",
+  "Direktorat Jenderal Penataan Agraria": "PENTAG",
+  "Direktorat Jenderal Pengadaan Tanah dan Pengembangan Pertanahan": "PENGADAAN",
+  "Direktorat Jenderal Pengendalian dan Penertiban Tanah dan Ruang": "PENGENDALIAN",
+  "Direktorat Jenderal Penanganan Sengketa dan Konflik Pertanahan": "PSKP",
+  "Inspektorat Jenderal": "ITJEN",
+  "Badan Pengembangan Sumber Daya Manusia": "BPSDM",
 };
 
 const listL1 = Object.keys(HIERARKI_UNIT);
 const getListL2 = (l1: string) => l1 && HIERARKI_UNIT[l1] ? Object.keys(HIERARKI_UNIT[l1]) : [];
 
 const PROBIS_L1_MAP: Record<string, string> = {
-  '1. Sekretariat Jenderal': 'SEKRETARIAT JENDERAL',
-  '2. Inspektorat Jenderal': 'INSPEKTORAT JENDERAL',
-  '3. Direktorat Jenderal Tata Ruang': 'DIREKTORAT JENDERAL TATA RUANG',
-  '4. Direktorat Jenderal SPPR': 'DIREKTORAT JENDERAL SURVEI DAN PEMETAAN PERTANAHAN DAN RUANG',
-  '5. Direktorat Jenderal PHPT': 'DIREKTORAT JENDERAL PENETAPAN HAK DAN PENDAFTARAN TANAH',
-  '6. Direktorat Jenderal Penataan Agraria': 'DIREKTORAT JENDERAL PENATAAN AGRARIA',
-  '7. Direktorat Jenderal PTPP': 'DIREKTORAT JENDERAL PENGADAAN TANAH DAN PENGEMBANGAN PERTANAHAN',
-  '8. Direktorat Jenderal PPTR': 'DIREKTORAT JENDERAL PENGENDALIAN DAN PENERTIBAN TANAH DAN RUANG',
-  '9. Direktorat Jenderal PSKP': 'DIREKTORAT JENDERAL PENANGANAN SENGKETA DAN KONFLIK PERTANAHA',
+  '1. Sekretariat Jenderal': 'Sekretariat Jenderal',
+  '2. Inspektorat Jenderal': 'Inspektorat Jenderal',
+  '3. Direktorat Jenderal Tata Ruang': 'Direktorat Jenderal Tata Ruang',
+  '4. Direktorat Jenderal SPPR': 'Direktorat Jenderal Survei dan Pemetaan Pertanahan dan Ruang',
+  '5. Direktorat Jenderal PHPT': 'Direktorat Jenderal Penetapan Hak dan Pendaftaran Tanah',
+  '6. Direktorat Jenderal Penataan Agraria': 'Direktorat Jenderal Penataan Agraria',
+  '7. Direktorat Jenderal PTPP': 'Direktorat Jenderal Pengadaan Tanah dan Pengembangan Pertanahan',
+  '8. Direktorat Jenderal PPTR': 'Direktorat Jenderal Pengendalian dan Penertiban Tanah dan Ruang',
+  '9. Direktorat Jenderal PSKP': 'Direktorat Jenderal Penanganan Sengketa dan Konflik Pertanahan',
 };
 
 interface ImportRow {
@@ -404,7 +333,7 @@ function DashboardBPN() {
 
   const rekapL1 = useMemo(() => {
     return listL1.map(unitL1 => {
-      const docs = dokumenByTab.filter(d => d.unitL1 === unitL1);
+      const docs = dokumenByTab.filter(d => d.unitL1.toLowerCase() === unitL1.toLowerCase());
       return {
         nama: unitL1, 
         labelChart: CHART_LABELS[unitL1] || unitL1.substring(0, 5),
@@ -423,7 +352,7 @@ function DashboardBPN() {
   const rekapL2 = useMemo(() => {
     if (!selectedL1) return [];
     return getListL2(selectedL1).map(unitL2 => {
-      const docs = dokumenByTab.filter(d => d.unitL1 === selectedL1 && d.unitL2 === unitL2);
+      const docs = dokumenByTab.filter(d => d.unitL1.toLowerCase() === selectedL1.toLowerCase() && d.unitL2 === unitL2);
       return {
         nama: unitL2,
         probis: docs.filter(d => d.jenis === 'Proses Bisnis').length,
@@ -435,7 +364,7 @@ function DashboardBPN() {
 
   const dokumenFiltered = useMemo(() => {
     const filtered = dokumenByTab.filter(d => {
-      const matchUnit = d.unitL1 === selectedL1 && (!selectedL2 || d.unitL2 === selectedL2);
+      const matchUnit = d.unitL1.toLowerCase() === selectedL1.toLowerCase() && (!selectedL2 || d.unitL2 === selectedL2);
       const matchJenis = filterJenis === 'Semua' || d.jenis === filterJenis;
       const matchTahun = filterTahun === 'Semua' || d.tahun === filterTahun;
 
@@ -465,7 +394,7 @@ function DashboardBPN() {
   const currentItems = dokumenFiltered.slice(indexOfFirstItem, indexOfLastItem);
   const totalPages = Math.ceil(dokumenFiltered.length / itemsPerPage);
   const uniqueTahunList = Array.from(new Set(
-    dokumenByTab.filter(d => d.unitL1 === selectedL1 && (!selectedL2 || d.unitL2 === selectedL2)).map(d => d.tahun)
+    dokumenByTab.filter(d => d.unitL1.toLowerCase() === selectedL1.toLowerCase() && (!selectedL2 || d.unitL2 === selectedL2)).map(d => d.tahun)
   )).sort();
 
   const handleExportExcel = () => {
@@ -629,17 +558,16 @@ function DashboardBPN() {
 
     // Sheet 2: Daftar Unit Kerja L1 resmi (nama harus persis seperti ini)
     const unitL1Rows = [
-      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'SEKRETARIAT JENDERAL', 'Singkatan': 'SETJEN' },
-      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'DIREKTORAT JENDERAL TATA RUANG', 'Singkatan': 'TARU' },
-      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'DIREKTORAT JENDERAL SURVEI DAN PEMETAAN PERTANAHAN DAN RUANG', 'Singkatan': 'SPPR' },
-      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'DIREKTORAT JENDERAL PENETAPAN HAK DAN PENDAFTARAN TANAH', 'Singkatan': 'PHPT' },
-      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'DIREKTORAT JENDERAL PENATAAN AGRARIA', 'Singkatan': 'PENTAG' },
-      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'DIREKTORAT JENDERAL PENGADAAN TANAH DAN PENGEMBANGAN PERTANAHAN', 'Singkatan': 'PTPP' },
-      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'DIREKTORAT JENDERAL PENGENDALIAN DAN PENERTIBAN TANAH DAN RUANG', 'Singkatan': 'PPTR' },
-      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'DIREKTORAT JENDERAL PENANGANAN SENGKETA DAN KONFLIK PERTANAHAN', 'Singkatan': 'PSKP' },
-      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'INSPEKTORAT JENDERAL', 'Singkatan': 'ITJEN' },
-      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'BADAN PENGEMBANGAN SUMBER DAYA MANUSIA', 'Singkatan': 'BPSDM' },
-      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'SEKOLAH TINGGI PERTANAHAN NASIONAL', 'Singkatan': 'STPN' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'Sekretariat Jenderal', 'Singkatan': 'SETJEN' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'Direktorat Jenderal Tata Ruang', 'Singkatan': 'TARU' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'Direktorat Jenderal Survei dan Pemetaan Pertanahan dan Ruang', 'Singkatan': 'SPPR' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'Direktorat Jenderal Penetapan Hak dan Pendaftaran Tanah', 'Singkatan': 'PHPT' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'Direktorat Jenderal Penataan Agraria', 'Singkatan': 'PENTAG' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'Direktorat Jenderal Pengadaan Tanah dan Pengembangan Pertanahan', 'Singkatan': 'PTPP' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'Direktorat Jenderal Pengendalian dan Penertiban Tanah dan Ruang', 'Singkatan': 'PPTR' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'Direktorat Jenderal Penanganan Sengketa dan Konflik Pertanahan', 'Singkatan': 'PSKP' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'Inspektorat Jenderal', 'Singkatan': 'ITJEN' },
+      { 'Unit Kerja L1 (salin persis ke kolom Template)': 'Badan Pengembangan Sumber Daya Manusia', 'Singkatan': 'BPSDM' },
     ];
     const wsL1 = XLSX.utils.json_to_sheet(unitL1Rows);
     wsL1['!cols'] = [{ wch: 70 }, { wch: 12 }];
@@ -924,7 +852,7 @@ function DashboardBPN() {
             <div className={`flex-1 overflow-auto flex justify-center items-center relative ${isDarkMode ? 'bg-[#0B1121]' : 'bg-slate-200/50'}`}>
               {viewDoc?.jenis === 'Proses Bisnis' && viewDoc?.link.includes('id=') ? (
                 previewSvg ? (
-                  <div className="bg-white p-8 rounded-xl shadow-xl max-w-full max-h-full overflow-auto animate-in fade-in duration-500" dangerouslySetInnerHTML={{ __html: previewSvg }} />
+                  <div className="bg-white p-8 rounded-xl shadow-xl max-w-full max-h-full overflow-auto animate-in fade-in duration-500" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(previewSvg, { USE_PROFILES: { svg: true, svgFilters: true } }) }} />
                 ) : (
                   <div className="flex flex-col items-center gap-3 text-slate-500 font-bold">
                     <RefreshCw className="w-8 h-8 animate-spin text-blue-500"/>

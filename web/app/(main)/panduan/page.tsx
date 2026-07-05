@@ -6,6 +6,7 @@ import {
   Users, FilePlus, X, ChevronRight,
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
+import { SOPSymbolsSection, BPMNSymbolsSection } from '@/components/PanduanSymbols';
 
 /* ---------- SVG Infografis mini per menu ---------- */
 
@@ -178,6 +179,287 @@ function IllustUsers() {
   );
 }
 
+/* SOPSymbolsSection dan BPMNSymbolsSection diimpor dari @/components/PanduanSymbols */
+
+// SOPSymbolsSection dan BPMNSymbolsSection kini dari @/components/PanduanSymbols
+function _unused_placeholder({ isDarkMode }: { isDarkMode: boolean }) {
+  const baganAlir = [
+    {
+      key: 'terminator',
+      name: 'Terminator',
+      sublabel: 'Mulai / Selesai',
+      desc: 'Menandai titik awal (START) dan titik akhir (END) dari seluruh rangkaian proses kegiatan.',
+      fill: '#DCFCE7', stroke: '#16A34A', text: '#166534',
+    },
+    {
+      key: 'process',
+      name: 'Proses / Kegiatan',
+      sublabel: 'Aktivitas Utama',
+      desc: 'Sebuah langkah atau tindakan konkret yang dilakukan oleh pelaksana dalam proses.',
+      fill: '#DBEAFE', stroke: '#2563EB', text: '#1E40AF',
+    },
+    {
+      key: 'decision',
+      name: 'Keputusan',
+      sublabel: 'Gateway / Percabangan',
+      desc: 'Titik percabangan alur yang menghasilkan dua jalur berbeda berdasarkan kondisi Ya/Tidak.',
+      fill: '#FEF9C3', stroke: '#CA8A04', text: '#713F12',
+    },
+    {
+      key: 'arrow',
+      name: 'Tanda Panah',
+      sublabel: 'Alur / Koneksi',
+      desc: 'Menunjukkan arah dan urutan perpindahan dari satu kegiatan ke kegiatan berikutnya.',
+      fill: '#F1F5F9', stroke: '#475569', text: '#334155',
+    },
+  ];
+
+  const renderShape = (key: string, fill: string, stroke: string, text: string) => {
+    if (key === 'terminator') return (
+      <svg viewBox="0 0 80 38" fill="none" className="w-20 h-10">
+        <ellipse cx="40" cy="19" rx="36" ry="15" fill={fill} stroke={stroke} strokeWidth="2.5"/>
+        <text x="40" y="23" textAnchor="middle" fontSize="9" fill={text} fontWeight="700">MULAI</text>
+      </svg>
+    );
+    if (key === 'process') return (
+      <svg viewBox="0 0 80 38" fill="none" className="w-20 h-10">
+        <rect x="4" y="5" width="72" height="28" rx="4" fill={fill} stroke={stroke} strokeWidth="2.5"/>
+        <text x="40" y="23" textAnchor="middle" fontSize="9" fill={text} fontWeight="700">Proses</text>
+      </svg>
+    );
+    if (key === 'decision') return (
+      <svg viewBox="0 0 80 38" fill="none" className="w-20 h-10">
+        <polygon points="40,2 78,19 40,36 2,19" fill={fill} stroke={stroke} strokeWidth="2.5"/>
+        <text x="40" y="23" textAnchor="middle" fontSize="8" fill={text} fontWeight="700">Ya/Tidak</text>
+      </svg>
+    );
+    if (key === 'arrow') return (
+      <svg viewBox="0 0 80 22" fill="none" className="w-20 h-6">
+        <line x1="4" y1="11" x2="60" y2="11" stroke={stroke} strokeWidth="2.5"/>
+        <polygon points="57,5 76,11 57,17" fill={stroke}/>
+      </svg>
+    );
+    return null;
+  };
+
+  const tableItems = [
+    { col: 'No', desc: 'Nomor urut setiap langkah kegiatan dalam proses', color: '#334155', bg: '#F8FAFC' },
+    { col: 'Uraian Kegiatan', desc: 'Deskripsi lengkap dari setiap aktivitas atau langkah yang dilakukan', color: '#2563EB', bg: '#EFF6FF' },
+    { col: 'Pelaksana', desc: 'Jabatan atau pihak yang bertanggung jawab melaksanakan kegiatan tersebut', color: '#16A34A', bg: '#F0FDF4' },
+    { col: 'Persyaratan', desc: 'Dokumen, data, atau prasyarat yang diperlukan sebelum kegiatan dimulai', color: '#D97706', bg: '#FFFBEB' },
+    { col: 'Waktu', desc: 'Estimasi durasi yang diperlukan untuk menyelesaikan kegiatan (menit/jam/hari)', color: '#DC2626', bg: '#FEF2F2' },
+    { col: 'Output', desc: 'Hasil, produk, atau dokumen yang dihasilkan dari pelaksanaan kegiatan', color: '#7C3AED', bg: '#F5F3FF' },
+    { col: 'Keterangan', desc: 'Catatan tambahan atau penjelasan lebih lanjut mengenai kegiatan', color: '#0891B2', bg: '#ECFEFF' },
+  ];
+
+  const badgeItems = [
+    { label: 'Draft', desc: 'SOP masih dalam tahap penyusunan, belum diajukan ke Admin Ortala MR', color: '#475569', bg: '#F1F5F9', border: '#CBD5E1' },
+    { label: 'Pending', desc: 'SOP telah diajukan dan menunggu persetujuan dari Admin Ortala MR', color: '#1D4ED8', bg: '#DBEAFE', border: '#93C5FD' },
+    { label: 'Approved', desc: 'SOP telah disetujui oleh Admin Ortala MR dan dinyatakan berlaku resmi', color: '#166534', bg: '#DCFCE7', border: '#86EFAC' },
+    { label: 'Rejected', desc: 'SOP dikembalikan untuk direvisi sesuai catatan yang diberikan Admin Ortala MR', color: '#991B1B', bg: '#FEE2E2', border: '#FCA5A5' },
+  ];
+
+  return (
+    <div className="space-y-6">
+      {/* Bagan Alir Symbols */}
+      <div>
+        <p className={`text-[10px] font-extrabold uppercase tracking-widest mb-3 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+          Simbol Bagan Alir (Flowchart)
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+          {baganAlir.map(item => (
+            <div key={item.key} className={`flex items-start gap-3 p-3 rounded-xl border ${isDarkMode ? 'bg-[#0F172A] border-slate-800' : 'bg-slate-50 border-slate-100'}`}>
+              <div className="shrink-0 flex items-center justify-center w-20 h-10">
+                {renderShape(item.key, item.fill, item.stroke, item.text)}
+              </div>
+              <div className="min-w-0">
+                <p className={`text-xs font-extrabold leading-tight ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{item.name}</p>
+                <p className={`text-[10px] font-semibold mb-1 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{item.sublabel}</p>
+                <p className={`text-[11px] leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>{item.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Kolom Tabel Mutu Baku */}
+      <div>
+        <p className={`text-[10px] font-extrabold uppercase tracking-widest mb-3 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+          Kolom Tabel Mutu Baku SOP
+        </p>
+        <div className="space-y-2">
+          {tableItems.map(item => (
+            <div key={item.col} className={`flex items-start gap-3 p-2.5 rounded-xl border ${isDarkMode ? 'bg-[#0F172A] border-slate-800' : 'bg-white border-slate-100'}`}>
+              <div className="shrink-0 pt-0.5">
+                <span
+                  className="inline-flex items-center px-2.5 py-0.5 rounded-lg text-[10px] font-extrabold tracking-wide whitespace-nowrap"
+                  style={{ backgroundColor: item.bg, color: item.color, border: `1.5px solid ${item.color}40` }}
+                >
+                  {item.col}
+                </span>
+              </div>
+              <p className={`text-[11px] leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>{item.desc}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {/* Status Badge */}
+      <div>
+        <p className={`text-[10px] font-extrabold uppercase tracking-widest mb-3 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+          Status Dokumen SOP
+        </p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+          {badgeItems.map(item => (
+            <div key={item.label} className={`flex items-start gap-3 p-2.5 rounded-xl border ${isDarkMode ? 'bg-[#0F172A] border-slate-800' : 'bg-white border-slate-100'}`}>
+              <div className="shrink-0 pt-0.5">
+                <span
+                  className="inline-flex items-center px-2.5 py-0.5 rounded-full text-[10px] font-extrabold tracking-wide"
+                  style={{ backgroundColor: item.bg, color: item.color, border: `1.5px solid ${item.border}` }}
+                >
+                  {item.label}
+                </span>
+              </div>
+              <p className={`text-[11px] leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>{item.desc}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------- Legenda Elemen BPMN (moved to PanduanSymbols.tsx) ---------- */
+
+function _bpmn_placeholder({ isDarkMode }: { isDarkMode: boolean }) {
+  const elements = [
+    {
+      key: 'start',
+      name: 'Start Event',
+      sublabel: 'Kejadian Awal',
+      desc: 'Menandai titik di mana sebuah proses dimulai. Digambarkan sebagai lingkaran tipis berwarna hijau.',
+      fill: '#DCFCE7', stroke: '#16A34A', text: '#166534',
+    },
+    {
+      key: 'end',
+      name: 'End Event',
+      sublabel: 'Kejadian Akhir',
+      desc: 'Menandai titik berakhirnya sebuah proses. Digambarkan sebagai lingkaran dengan garis tebal berwarna merah.',
+      fill: '#FEE2E2', stroke: '#DC2626', text: '#991B1B',
+    },
+    {
+      key: 'task',
+      name: 'Task / Proses',
+      sublabel: 'Aktivitas',
+      desc: 'Sebuah pekerjaan atau aktivitas yang dilakukan dalam proses. Berbentuk persegi panjang dengan sudut membulat.',
+      fill: '#DBEAFE', stroke: '#2563EB', text: '#1E40AF',
+    },
+    {
+      key: 'subprocess',
+      name: 'Sub-Process',
+      sublabel: 'Proses Bersarang',
+      desc: 'Aktivitas yang di dalamnya memiliki proses lebih rinci. Ditandai dengan simbol [+] di bagian bawah tengah.',
+      fill: '#EDE9FE', stroke: '#7C3AED', text: '#4C1D95',
+    },
+    {
+      key: 'pool',
+      name: 'Pool',
+      sublabel: 'Peserta / Pelaksana',
+      desc: 'Wadah yang merepresentasikan satu peserta atau unit pelaksana utama. Dapat dibagi menjadi beberapa Lane.',
+      fill: '#E0F2FE', stroke: '#0284C7', text: '#0369A1',
+    },
+    {
+      key: 'gateway',
+      name: 'Gateway / Keputusan',
+      sublabel: 'Percabangan Alur',
+      desc: 'Titik percabangan atau penggabungan alur proses. Simbol X menandakan percabangan eksklusif (hanya satu jalur yang diambil).',
+      fill: '#FEF9C3', stroke: '#CA8A04', text: '#713F12',
+    },
+  ];
+
+  const renderShape = (key: string, fill: string, stroke: string, text: string) => {
+    if (key === 'start') return (
+      <svg viewBox="0 0 80 40" fill="none" className="w-20 h-10">
+        <circle cx="40" cy="20" r="16" fill={fill} stroke={stroke} strokeWidth="2.5"/>
+        <text x="40" y="24" textAnchor="middle" fontSize="7.5" fill={text} fontWeight="700">START</text>
+      </svg>
+    );
+    if (key === 'end') return (
+      <svg viewBox="0 0 80 40" fill="none" className="w-20 h-10">
+        <circle cx="40" cy="20" r="15" fill={fill} stroke={stroke} strokeWidth="5"/>
+        <text x="40" y="24" textAnchor="middle" fontSize="7.5" fill={text} fontWeight="700">END</text>
+      </svg>
+    );
+    if (key === 'task') return (
+      <svg viewBox="0 0 80 40" fill="none" className="w-20 h-10">
+        <rect x="4" y="4" width="72" height="32" rx="6" fill={fill} stroke={stroke} strokeWidth="2.5"/>
+        {/* Person icon top-left */}
+        <circle cx="14" cy="12" r="3" fill={stroke} opacity="0.6"/>
+        <path d="M10 21 Q14 17 18 21" stroke={stroke} strokeWidth="1.5" fill="none" opacity="0.6"/>
+        <text x="42" y="24" textAnchor="middle" fontSize="9" fill={text} fontWeight="700">Task</text>
+      </svg>
+    );
+    if (key === 'subprocess') return (
+      <svg viewBox="0 0 80 48" fill="none" className="w-20 h-12">
+        <rect x="4" y="2" width="72" height="38" rx="6" fill={fill} stroke={stroke} strokeWidth="2.5"/>
+        <text x="40" y="24" textAnchor="middle" fontSize="8" fill={text} fontWeight="700">Sub-Process</text>
+        {/* [+] marker */}
+        <rect x="33" y="30" width="14" height="12" rx="2" fill="white" stroke={stroke} strokeWidth="1.5"/>
+        <line x1="40" y1="32.5" x2="40" y2="39.5" stroke={stroke} strokeWidth="1.5"/>
+        <line x1="36.5" y1="36" x2="43.5" y2="36" stroke={stroke} strokeWidth="1.5"/>
+      </svg>
+    );
+    if (key === 'pool') return (
+      <svg viewBox="0 0 80 44" fill="none" className="w-20 h-11">
+        {/* Outer pool container */}
+        <rect x="4" y="4" width="72" height="36" rx="4" fill={fill} stroke={stroke} strokeWidth="2"/>
+        {/* Label strip */}
+        <rect x="4" y="4" width="17" height="36" rx="4" fill={stroke} opacity="0.25"/>
+        <line x1="21" y1="4" x2="21" y2="40" stroke={stroke} strokeWidth="1.5"/>
+        {/* Rotated label text */}
+        <text x="12.5" y="22" textAnchor="middle" fontSize="6.5" fill={text} fontWeight="800" transform="rotate(-90 12.5 22)">POOL</text>
+        {/* Lane divider hint */}
+        <line x1="21" y1="22" x2="76" y2="22" stroke={stroke} strokeWidth="1" strokeDasharray="3 2" opacity="0.4"/>
+        {/* Mini task hints */}
+        <rect x="26" y="8" width="20" height="10" rx="2" fill={stroke} opacity="0.2"/>
+        <rect x="52" y="8" width="20" height="10" rx="2" fill={stroke} opacity="0.2"/>
+        <rect x="26" y="26" width="20" height="10" rx="2" fill={stroke} opacity="0.2"/>
+      </svg>
+    );
+    if (key === 'gateway') return (
+      <svg viewBox="0 0 80 40" fill="none" className="w-20 h-10">
+        <polygon points="40,2 78,20 40,38 2,20" fill={fill} stroke={stroke} strokeWidth="2.5"/>
+        {/* X for exclusive gateway */}
+        <line x1="30" y1="12" x2="50" y2="28" stroke={stroke} strokeWidth="2.5"/>
+        <line x1="50" y1="12" x2="30" y2="28" stroke={stroke} strokeWidth="2.5"/>
+      </svg>
+    );
+    return null;
+  };
+
+  return (
+    <div className="space-y-2.5">
+      <p className={`text-[10px] leading-relaxed mb-3 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+        Berdasarkan standar <span className="font-bold">BPMN 2.0</span> — elemen-elemen di bawah tersedia di panel kiri kanvas editor.
+      </p>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+        {elements.map(item => (
+          <div key={item.key} className={`flex items-start gap-3 p-3 rounded-xl border ${isDarkMode ? 'bg-[#0F172A] border-slate-800' : 'bg-slate-50 border-slate-100'}`}>
+            <div className="shrink-0 flex items-center justify-center" style={{ width: 80, minWidth: 80 }}>
+              {renderShape(item.key, item.fill, item.stroke, item.text)}
+            </div>
+            <div className="min-w-0">
+              <p className={`text-xs font-extrabold leading-tight ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{item.name}</p>
+              <p className={`text-[10px] font-semibold mb-1 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{item.sublabel}</p>
+              <p className={`text-[11px] leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>{item.desc}</p>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* ---------- Data panduan ---------- */
 
 const PANDUAN_ITEMS = [
@@ -210,13 +492,13 @@ const PANDUAN_ITEMS = [
     judul: 'Dokumen SOP',
     ringkasan: 'Menyusun Standard Operating Procedure secara digital menggunakan Studio Editor interaktif.',
     Illust: IllustSOP,
-    deskripsi: 'Menu khusus untuk menyusun Standard Operating Procedure (SOP) secara digital menggunakan Studio Editor SOP interaktif. Hasil SOP dapat diajukan ke Ortala untuk mendapatkan persetujuan.',
+    deskripsi: 'Menu khusus untuk menyusun Standard Operating Procedure (SOP) secara digital menggunakan Studio Editor SOP interaktif. Hasil SOP dapat diajukan ke Ortala MR untuk mendapatkan persetujuan.',
     langkah: [
       'Buka menu "Dokumen SOP" di sidebar kiri',
       'Klik "Buat SOP Baru" dan isi informasi identitas SOP (Judul, Nomor, Unit Kerja)',
       'Lengkapi tabel mutu baku di Studio Editor: isi kolom aktivitas, pelaksana, mutu baku, dan keterangan',
-      'Simpan SOP dan ubah status menjadi "Pending" untuk mengajukan ke Ortala',
-      'Admin Ortala akan menyetujui atau memberikan catatan revisi',
+      'Simpan SOP dan ubah status menjadi "Pending" untuk mengajukan ke Ortala MR',
+      'Admin Ortala MR akan menyetujui atau memberikan catatan revisi',
     ],
   },
   {
@@ -235,7 +517,7 @@ const PANDUAN_ITEMS = [
       'Klik "Buat BPMN Baru" untuk membuka studio editor visual',
       'Gunakan panel elemen di sisi kiri untuk menarik elemen (Start Event, Task, Gateway, End Event) ke kanvas',
       'Hubungkan elemen dengan klik dan tarik dari tepi elemen sumber ke elemen tujuan',
-      'Simpan diagram dan ajukan untuk mendapatkan persetujuan Admin Ortala',
+      'Simpan diagram dan ajukan untuk mendapatkan persetujuan Admin Ortala MR',
     ],
   },
   {
@@ -253,7 +535,7 @@ const PANDUAN_ITEMS = [
       'Buka menu "Juknis / Juklak / SE" di sidebar kiri',
       'Gunakan filter jenis (Juknis/Juklak/SE) dan kolom pencarian untuk menemukan dokumen',
       'Klik "Buka" pada baris dokumen untuk mengakses file asli di sumber eksternal',
-      'Admin Ortala dapat menambahkan dokumen baru menggunakan tombol "Tambah Dokumen Referensi"',
+      'Admin Ortala MR dapat menambahkan dokumen baru menggunakan tombol "Tambah Dokumen Referensi"',
       'Isi form lengkap (judul, nomor, jenis, tahun, deskripsi, dan link dokumen) lalu simpan',
     ],
   },
@@ -284,11 +566,11 @@ const PANDUAN_ITEMS = [
     border: 'border-rose-100',
     borderDark: 'border-rose-800/30',
     judul: 'Manajemen Pengguna',
-    ringkasan: 'Kelola akun, hak akses, dan peran pengguna sistem (khusus Administrator Ortala).',
+    ringkasan: 'Kelola akun, hak akses, dan peran pengguna sistem (khusus Administrator Ortala MR).',
     Illust: IllustUsers,
     deskripsi: 'Menu khusus administrator untuk mengelola akun pengguna, mengatur hak akses berdasarkan unit kerja, dan menetapkan peran (role) masing-masing pengguna sistem SIMPEL.',
     langkah: [
-      'Menu ini hanya tersedia bagi pengguna dengan peran Administrator Ortala',
+      'Menu ini hanya tersedia bagi pengguna dengan peran Administrator Ortala MR',
       'Buka "Manajemen Pengguna" di sidebar kiri',
       'Klik "Tambah Pengguna" untuk mendaftarkan akun baru dengan username dan password',
       'Tetapkan peran (Admin/Viewer) dan unit kerja yang sesuai',
@@ -349,6 +631,26 @@ function PanduanModal({ item, onClose }: { item: typeof PANDUAN_ITEMS[0]; onClos
             </div>
           </div>
 
+          {/* Legenda Elemen khusus BPMN */}
+          {item.id === 'bpmn' && (
+            <div>
+              <p className={`text-[10px] font-extrabold uppercase tracking-widest mb-3 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                Panduan Elemen BPMN
+              </p>
+              <BPMNSymbolsSection isDarkMode={isDarkMode} />
+            </div>
+          )}
+
+          {/* Legenda Elemen khusus SOP */}
+          {item.id === 'sop' && (
+            <div>
+              <p className={`text-[10px] font-extrabold uppercase tracking-widest mb-3 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                Panduan Elemen &amp; Simbol SOP
+              </p>
+              <SOPSymbolsSection isDarkMode={isDarkMode} />
+            </div>
+          )}
+
           {/* Infografis SVG */}
           <div>
             <p className={`text-[10px] font-extrabold uppercase tracking-widest mb-3 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
@@ -406,7 +708,7 @@ export default function PanduanPage() {
           </div>
           <p className={`text-sm leading-relaxed ${isDarkMode ? 'text-blue-300/80' : 'text-blue-700/80'}`}>
             <span className="font-bold">SIMPEL</span> — Sistem Informasi Manajemen Peta Layanan Kementerian ATR/BPN.
-            Dikembangkan oleh Biro Ortala untuk membantu unit kerja mengelola dokumen ketatalaksanaan secara digital.
+            Dikembangkan oleh Biro Ortala MR untuk membantu unit kerja mengelola dokumen ketatalaksanaan secara digital.
           </p>
         </div>
 
@@ -457,7 +759,7 @@ export default function PanduanPage() {
             Butuh bantuan lebih lanjut?
           </p>
           <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-            Hubungi tim Biro Organisasi, Tata Laksana, dan Manajemen Risiko (Ortala) ATR/BPN
+            Hubungi tim Biro Organisasi, Tata Laksana, dan Manajemen Risiko (Ortala MR) ATR/BPN
           </p>
         </div>
       </div>

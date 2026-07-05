@@ -5,21 +5,44 @@ const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const puppeteer = require('puppeteer');
+const rateLimit = require('express-rate-limit');
 require('dotenv').config({ path: __dirname + '/.env' });
 
 const app = express();
 const PORT = process.env.PORT || 5001;
-const JWT_SECRET = process.env.JWT_SECRET || 'fallback-secret-change-me';
 
-app.use(cors());
+// Cloudflare Tunnel meneruskan request dari localhost — percayai 1 level proxy
+// agar req.ip berisi CF-Connecting-IP (IP asli pengguna), bukan 127.0.0.1
+app.set('trust proxy', 1);
+
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  console.error('FATAL: JWT_SECRET belum dikonfigurasi di .env — server tidak dapat dijalankan.');
+  process.exit(1);
+}
+
+const ALLOWED_ORIGIN = process.env.ALLOWED_ORIGIN || 'http://tlrb.ortalamr.id';
+app.use(cors({ origin: ALLOWED_ORIGIN, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 
 const pool = new Pool({
   host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 5432,
+  port: parseInt(process.env.DB_PORT) || 5432,
   user: process.env.DB_USERNAME || 'sop_atrbpn',
-  password: process.env.DB_PASSWORD || 'AtrBpn!2026',
+  password: process.env.DB_PASSWORD,
   database: process.env.DB_NAME || 'e_sop_db',
+  max: 20,
+  idleTimeoutMillis: 30000,
+  connectionTimeoutMillis: 5000,
+});
+
+// ============ RATE LIMITING ============
+const loginLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 10,
+  message: { error: 'Terlalu banyak percobaan login. Coba lagi dalam 15 menit.' },
+  standardHeaders: true,
+  legacyHeaders: false,
 });
 
 // ============ VALIDATION & SANITIZE ============
@@ -98,7 +121,7 @@ const initDatabase = async () => {
       
       CREATE TABLE IF NOT EXISTS dokumen (
         id SERIAL PRIMARY KEY,
-        nama VARCHAR(255) NOT NULL,
+        nama VARCHAR(500) NOT NULL,
         jenis VARCHAR(100),
         tahun VARCHAR(4),
         l1_id INTEGER REFERENCES unit_kerja_l1(id),
@@ -137,7 +160,7 @@ const initDatabase = async () => {
 
       CREATE TABLE IF NOT EXISTS bpmn_models (
         id SERIAL PRIMARY KEY,
-        process_title VARCHAR(255) NOT NULL,
+        process_title VARCHAR(500) NOT NULL,
         process_key VARCHAR(255) UNIQUE NOT NULL,
         l1_id INTEGER REFERENCES unit_kerja_l1(id),
         l2_id INTEGER REFERENCES unit_kerja_l2(id),
@@ -165,7 +188,7 @@ const initDatabase = async () => {
       /* ========================================= */
       CREATE TABLE IF NOT EXISTS sop_models (
         id SERIAL PRIMARY KEY,
-        process_title VARCHAR(255) NOT NULL,
+        process_title VARCHAR(500) NOT NULL,
         process_key VARCHAR(255) UNIQUE NOT NULL,
         l1_id INTEGER REFERENCES unit_kerja_l1(id),
         l2_id INTEGER REFERENCES unit_kerja_l2(id),
@@ -234,6 +257,18 @@ const initDatabase = async () => {
       END $$;
     `);
 
+    // MIGRASI: tambah UNIQUE constraint pada sessions.user_id agar ON CONFLICT (user_id) berfungsi
+    await client.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM pg_constraint WHERE conname = 'sessions_user_id_key'
+        ) THEN
+          ALTER TABLE sessions ADD CONSTRAINT sessions_user_id_key UNIQUE (user_id);
+        END IF;
+      END $$;
+    `);
+
     // MIGRASI KOLOM BARU KE SOP_MODELS (jenis_proses, klasifikasi_proses, process_key nullable)
     await client.query(`
       DO $$
@@ -249,6 +284,16 @@ const initDatabase = async () => {
       DO $$
       BEGIN
         BEGIN ALTER TABLE bpmn_models ALTER COLUMN process_key DROP NOT NULL; EXCEPTION WHEN others THEN NULL; END;
+      END $$;
+    `);
+
+    // MIGRASI: perpanjang kolom judul/nama (255 → 500) — judul proses ATR/BPN bisa sangat panjang
+    await client.query(`
+      DO $$
+      BEGIN
+        BEGIN ALTER TABLE dokumen ALTER COLUMN nama TYPE VARCHAR(500); EXCEPTION WHEN others THEN NULL; END;
+        BEGIN ALTER TABLE sop_models ALTER COLUMN process_title TYPE VARCHAR(500); EXCEPTION WHEN others THEN NULL; END;
+        BEGIN ALTER TABLE bpmn_models ALTER COLUMN process_title TYPE VARCHAR(500); EXCEPTION WHEN others THEN NULL; END;
       END $$;
     `);
 
@@ -322,8 +367,8 @@ const logAudit = async (userId, username, action, resource, resourceId, detail, 
 app.get('/api/users', authenticate, requireRole('admin'), async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT u.id, u.username, u.nama_lengkap, u.email, u.active, u.unit_l1, u.unit_l2, u.last_login, r.name as role 
-      FROM users u 
+      SELECT u.id, u.username, u.nama_lengkap, u.email, u.active, u.unit_l1, u.unit_l2, u.last_login, u.plain_password, r.name as role
+      FROM users u
       JOIN roles r ON u.role_id = r.id
       ORDER BY u.id ASC
     `);
@@ -336,12 +381,12 @@ app.post('/api/users', authenticate, requireRole('admin'), async (req, res) => {
   try {
     const hashedPassword = await bcrypt.hash(password, 10);
     const roleResult = await pool.query("SELECT id FROM roles WHERE name = $1", [role]);
-    const roleId = roleResult.rows[0]?.id || 2; 
+    const roleId = roleResult.rows[0]?.id || 2;
 
     const result = await pool.query(
-      `INSERT INTO users (username, password, nama_lengkap, email, role_id, unit_l1, unit_l2) 
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, username`,
-      [username, hashedPassword, nama_lengkap, email, roleId, unit_l1, unit_l2]
+      `INSERT INTO users (username, password, plain_password, nama_lengkap, email, role_id, unit_l1, unit_l2)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, username`,
+      [username, hashedPassword, password, nama_lengkap, email, roleId, unit_l1, unit_l2]
     );
     
     await logAudit(req.user.id, req.user.username, 'CREATE_USER', 'users', result.rows[0].id, `User ${username} created`, req.ip);
@@ -361,13 +406,13 @@ app.put('/api/users/:id', authenticate, requireRole('admin'), async (req, res) =
     if (password && password.trim() !== '') {
       const hashedPassword = await bcrypt.hash(password, 10);
       result = await pool.query(
-        `UPDATE users SET username=$1, password=$2, nama_lengkap=$3, email=$4, role_id=$5, unit_l1=$6, unit_l2=$7, active=$8 
-         WHERE id=$9 RETURNING id`,
-        [username, hashedPassword, nama_lengkap, email, roleId, unit_l1, unit_l2, active, id]
+        `UPDATE users SET username=$1, password=$2, plain_password=$3, nama_lengkap=$4, email=$5, role_id=$6, unit_l1=$7, unit_l2=$8, active=$9
+         WHERE id=$10 RETURNING id`,
+        [username, hashedPassword, password, nama_lengkap, email, roleId, unit_l1, unit_l2, active, id]
       );
     } else {
       result = await pool.query(
-        `UPDATE users SET username=$1, nama_lengkap=$2, email=$3, role_id=$4, unit_l1=$5, unit_l2=$6, active=$7 
+        `UPDATE users SET username=$1, nama_lengkap=$2, email=$3, role_id=$4, unit_l1=$5, unit_l2=$6, active=$7
          WHERE id=$8 RETURNING id`,
         [username, nama_lengkap, email, roleId, unit_l1, unit_l2, active, id]
       );
@@ -376,6 +421,36 @@ app.put('/api/users/:id', authenticate, requireRole('admin'), async (req, res) =
     if (result.rowCount === 0) return res.status(404).json({ error: 'User tidak ditemukan' });
     await logAudit(req.user.id, req.user.username, 'UPDATE_USER', 'users', id, `User ${username} updated`, req.ip);
     res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Self-service: any authenticated user can update their own profile (except role)
+app.put('/api/users/me', authenticate, async (req, res) => {
+  const { username, password, nama_lengkap, unit_l1, unit_l2 } = req.body;
+  const userId = req.user.id;
+  try {
+    let result;
+    if (password && password.trim() !== '') {
+      const hashedPassword = await bcrypt.hash(password, 10);
+      result = await pool.query(
+        `UPDATE users SET username=$1, password=$2, plain_password=$3, nama_lengkap=$4, unit_l1=$5, unit_l2=$6
+         WHERE id=$7 RETURNING id`,
+        [username, hashedPassword, password, nama_lengkap, unit_l1, unit_l2, userId]
+      );
+    } else {
+      result = await pool.query(
+        `UPDATE users SET username=$1, nama_lengkap=$2, unit_l1=$3, unit_l2=$4
+         WHERE id=$5 RETURNING id`,
+        [username, nama_lengkap, unit_l1, unit_l2, userId]
+      );
+    }
+    if (result.rowCount === 0) return res.status(404).json({ error: 'User tidak ditemukan' });
+    const updated = await pool.query(
+      `SELECT u.id, u.username, u.nama_lengkap, u.unit_l1, u.unit_l2, r.name as role
+       FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = $1`,
+      [userId]
+    );
+    res.json(updated.rows[0]);
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -390,7 +465,7 @@ app.delete('/api/users/:id', authenticate, requireRole('admin'), async (req, res
 });
 
 // ============ AUTH ROUTES ============
-app.post('/api/auth/login', async (req, res) => {
+app.post('/api/auth/login', loginLimiter, async (req, res) => {
   try {
     const { username, password, remember } = req.body;
     const errors = validateInput({ username, password }, {
@@ -422,9 +497,15 @@ app.post('/api/auth/login', async (req, res) => {
     
     const expiresAt = new Date(Date.now() + (remember ? 120 * 3600000 : 4 * 3600000));
     const sessionId = crypto.randomUUID();
-    
+
+    // Bersihkan sesi kedaluwarsa sebelum insert (#19)
+    await pool.query("DELETE FROM sessions WHERE expires_at < NOW()");
+
     await pool.query(
-      "INSERT INTO sessions (id, user_id, token, expires_at, ip_address, user_agent) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (user_id) DO UPDATE SET token = $3, expires_at = $4",
+      `INSERT INTO sessions (id, user_id, token, expires_at, ip_address, user_agent)
+       VALUES ($1, $2, $3, $4, $5, $6)
+       ON CONFLICT (user_id) DO UPDATE
+         SET id = $1, token = $3, expires_at = $4, ip_address = $5, user_agent = $6`,
       [sessionId, user.id, token, expiresAt, req.ip, req.headers['user-agent']]
     );
     
@@ -573,17 +654,21 @@ app.post('/api/dokumen', authenticate, requireRole('admin'), async (req, res) =>
 });
 
 app.put('/api/dokumen/:id', authenticate, requireRole('admin'), async (req, res) => {
-  const { nama, jenis, tahun, l1_id, l2_id, l3_id, link, sumber } = req.body;
-  await pool.query(
-    "UPDATE dokumen SET nama=$1, jenis=$2, tahun=$3, l1_id=$4, l2_id=$5, l3_id=$6, link=$7, sumber=$8, updated_at=NOW() WHERE id=$9",
-    [nama, jenis, tahun, l1_id, l2_id || null, l3_id || null, link, sumber, req.params.id]
-  );
-  res.json({ success: true });
+  try {
+    const { nama, jenis, tahun, l1_id, l2_id, l3_id, link, sumber } = req.body;
+    await pool.query(
+      "UPDATE dokumen SET nama=$1, jenis=$2, tahun=$3, l1_id=$4, l2_id=$5, l3_id=$6, link=$7, sumber=$8, updated_at=NOW() WHERE id=$9",
+      [nama, jenis, tahun, l1_id, l2_id || null, l3_id || null, link, sumber, req.params.id]
+    );
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.delete('/api/dokumen/:id', authenticate, requireRole('admin'), async (req, res) => {
-  await pool.query("DELETE FROM dokumen WHERE id = $1", [req.params.id]);
-  res.json({ success: true });
+  try {
+    await pool.query("DELETE FROM dokumen WHERE id = $1", [req.params.id]);
+    res.json({ success: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
 app.patch('/api/dokumen/:id/status', authenticate, requireRole('admin'), async (req, res) => {
@@ -624,7 +709,7 @@ app.get('/api/bpmn/models', authenticate, async (req, res) => {
         query += ` OR (u1.nama ILIKE $2`;
         params.push(unit_l1);
         if (unit_l2 && unit_l2 !== '' && unit_l2 !== 'SELURUH UNIT') {
-          query += ` AND (u2.nama ILIKE $3 OR u2.nama IS NULL)`;
+          query += ` AND (u2.nama ILIKE $3 OR u2.nama IS NULL))`;
           params.push(unit_l2);
         } else {
           query += `)`;
@@ -725,6 +810,63 @@ app.delete('/api/bpmn/models/:id', authenticate, async (req, res) => {
   } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
 });
 
+app.patch('/api/bpmn/models/status/:id', authenticate, requireRole('admin'), async (req, res) => {
+  const { id } = req.params;
+  const { status, catatan } = req.body;
+  if (!status) return res.status(400).json({ error: 'Status wajib diisi' });
+  try {
+    const result = await pool.query(
+      'UPDATE bpmn_models SET status = $1::varchar, catatan = $2, updated_at = NOW() WHERE id = $3 RETURNING *',
+      [status, catatan || null, id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'BPMN Model tidak ditemukan' });
+    res.json(result.rows[0]);
+  } catch (err) { console.error('Error update status BPMN:', err); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+app.patch('/api/bpmn/models/:id/meta', authenticate, async (req, res) => {
+  const { id } = req.params;
+  const { process_title, jenis_proses, klasifikasi_proses } = req.body;
+  if (!process_title || !process_title.trim()) return res.status(400).json({ error: 'Judul tidak boleh kosong' });
+  try {
+    const result = await pool.query(
+      `UPDATE bpmn_models SET process_title = $1, jenis_proses = $2, klasifikasi_proses = $3, updated_at = NOW()
+       WHERE id = $4 RETURNING id, process_title, jenis_proses, klasifikasi_proses, updated_at`,
+      [process_title.trim(), jenis_proses || null, klasifikasi_proses || null, id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Model tidak ditemukan' });
+    res.json(result.rows[0]);
+  } catch (err) { console.error('PATCH bpmn meta:', err); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+app.post('/api/bpmn/models/:id/copy', authenticate, async (req, res) => {
+  const { id } = req.params;
+  const { process_title, jenis_proses, klasifikasi_proses } = req.body;
+  try {
+    const src = await pool.query('SELECT * FROM bpmn_models WHERE id = $1', [id]);
+    if (src.rows.length === 0) return res.status(404).json({ error: 'Model tidak ditemukan' });
+    const s = src.rows[0];
+    const newTitle = (process_title && process_title.trim()) ? process_title.trim() : `Salinan - ${s.process_title}`;
+    const result = await pool.query(
+      `INSERT INTO bpmn_models (process_title, process_key, l1_id, l2_id, description, bpmn_xml, svg_xml, status, jenis_proses, klasifikasi_proses, created_by)
+       VALUES ($1, NULL, $2, $3, $4, $5, $6, 'draft', $7, $8, $9) RETURNING *`,
+      [newTitle, s.l1_id, s.l2_id, s.description, s.bpmn_xml, s.svg_xml,
+       (jenis_proses !== undefined ? jenis_proses : s.jenis_proses) || null,
+       (klasifikasi_proses !== undefined ? klasifikasi_proses : s.klasifikasi_proses) || null,
+       req.user.id]
+    );
+    const full = await pool.query(
+      `SELECT m.*, u1.nama as unit_l1, u2.nama as unit_l2
+       FROM bpmn_models m
+       LEFT JOIN unit_kerja_l1 u1 ON m.l1_id = u1.id
+       LEFT JOIN unit_kerja_l2 u2 ON m.l2_id = u2.id
+       WHERE m.id = $1`,
+      [result.rows[0].id]
+    );
+    res.json(full.rows[0]);
+  } catch (err) { console.error('POST bpmn copy:', err); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
 
 // ==========================================================
 // ============ SOP MODELS (STUDIO BARU ATR/BPN) ============ 
@@ -745,13 +887,13 @@ app.get('/api/sop/models', authenticate, async (req, res) => {
     if (role !== 'admin') {
       query += ` WHERE (s.created_by = $1`;
       params.push(id);
-      
+
       if (unit_l1 && unit_l1 !== '') {
         query += ` OR (u1.nama ILIKE $2`;
         params.push(unit_l1);
-        
+
         if (unit_l2 && unit_l2 !== '' && unit_l2 !== 'SELURUH UNIT') {
-          query += ` AND (u2.nama ILIKE $3 OR u2.nama IS NULL)`;
+          query += ` AND (u2.nama ILIKE $3 OR u2.nama IS NULL))`;
           params.push(unit_l2);
         } else {
           query += `)`;
@@ -960,6 +1102,49 @@ app.patch('/api/sop/models/status/:id', authenticate, requireRole('admin'), asyn
   }
 });
 
+app.patch('/api/sop/models/:id/meta', authenticate, async (req, res) => {
+  const { id } = req.params;
+  const { process_title, jenis_proses, klasifikasi_proses } = req.body;
+  if (!process_title || !process_title.trim()) return res.status(400).json({ error: 'Judul tidak boleh kosong' });
+  try {
+    const result = await pool.query(
+      `UPDATE sop_models SET process_title = $1, jenis_proses = $2, klasifikasi_proses = $3, updated_at = NOW()
+       WHERE id = $4 RETURNING id, process_title, jenis_proses, klasifikasi_proses, updated_at`,
+      [process_title.trim(), jenis_proses || null, klasifikasi_proses || null, id]
+    );
+    if (result.rowCount === 0) return res.status(404).json({ error: 'Model tidak ditemukan' });
+    res.json(result.rows[0]);
+  } catch (err) { console.error('PATCH sop meta:', err); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+app.post('/api/sop/models/:id/copy', authenticate, async (req, res) => {
+  const { id } = req.params;
+  const { process_title, jenis_proses, klasifikasi_proses } = req.body;
+  try {
+    const src = await pool.query('SELECT * FROM sop_models WHERE id = $1', [id]);
+    if (src.rows.length === 0) return res.status(404).json({ error: 'Model tidak ditemukan' });
+    const s = src.rows[0];
+    const newTitle = (process_title && process_title.trim()) ? process_title.trim() : `Salinan - ${s.process_title}`;
+    const result = await pool.query(
+      `INSERT INTO sop_models (process_title, process_key, l1_id, l2_id, sop_data, status, jenis_proses, klasifikasi_proses, created_by)
+       VALUES ($1, NULL, $2, $3, $4, 'draft', $5, $6, $7) RETURNING *`,
+      [newTitle, s.l1_id, s.l2_id, s.sop_data,
+       (jenis_proses !== undefined ? jenis_proses : s.jenis_proses) || null,
+       (klasifikasi_proses !== undefined ? klasifikasi_proses : s.klasifikasi_proses) || null,
+       req.user.id]
+    );
+    const full = await pool.query(
+      `SELECT s.*, u1.nama as unit_l1, u2.nama as unit_l2
+       FROM sop_models s
+       LEFT JOIN unit_kerja_l1 u1 ON s.l1_id = u1.id
+       LEFT JOIN unit_kerja_l2 u2 ON s.l2_id = u2.id
+       WHERE s.id = $1`,
+      [result.rows[0].id]
+    );
+    res.json(full.rows[0]);
+  } catch (err) { console.error('POST sop copy:', err); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
 // ============ PERATURAN / KEPUTUSAN MENTERI ============
 app.get('/api/peraturan/drive-files', authenticate, requireRole('admin'), async (req, res) => {
   const apiKey = process.env.GOOGLE_DRIVE_API_KEY;
@@ -1129,10 +1314,16 @@ app.put('/api/juknis/:id', authenticate, async (req, res) => {
   const safeJenis = validJenis.includes(jenis) ? jenis : 'Juknis';
   const safeTanggal = tanggal_terbit && /^\d{4}-\d{2}-\d{2}$/.test(tanggal_terbit) ? tanggal_terbit : null;
   try {
-    const existing = await pool.query('SELECT created_by FROM juknis_dokumen WHERE id=$1', [id]);
+    const existing = await pool.query('SELECT created_by, unit_l1 FROM juknis_dokumen WHERE id=$1', [id]);
     if (existing.rowCount === 0) return res.status(404).json({ error: 'Dokumen tidak ditemukan' });
-    if (req.user.role !== 'admin' && existing.rows[0].created_by !== req.user.id) {
-      return res.status(403).json({ error: 'Tidak diizinkan mengubah dokumen ini' });
+    if (req.user.role !== 'admin') {
+      const sameCreator = existing.rows[0].created_by === req.user.id;
+      const docUnit = (existing.rows[0].unit_l1 || '').toLowerCase().trim();
+      const userUnit = (req.user.unit_l1 || '').toLowerCase().trim();
+      const sameUnit = docUnit && userUnit && docUnit === userUnit;
+      if (!sameCreator && !sameUnit) {
+        return res.status(403).json({ error: 'Tidak diizinkan mengubah dokumen ini' });
+      }
     }
     const result = await pool.query(
       `UPDATE juknis_dokumen SET judul=$1, jenis=$2, nomor=$3, tahun=$4, tanggal_terbit=$5,
@@ -1157,10 +1348,16 @@ app.put('/api/juknis/:id', authenticate, async (req, res) => {
 app.delete('/api/juknis/:id', authenticate, async (req, res) => {
   const { id } = req.params;
   try {
-    const existing = await pool.query('SELECT created_by FROM juknis_dokumen WHERE id=$1', [id]);
+    const existing = await pool.query('SELECT created_by, unit_l1 FROM juknis_dokumen WHERE id=$1', [id]);
     if (existing.rowCount === 0) return res.status(404).json({ error: 'Dokumen tidak ditemukan' });
-    if (req.user.role !== 'admin' && existing.rows[0].created_by !== req.user.id) {
-      return res.status(403).json({ error: 'Tidak diizinkan menghapus dokumen ini' });
+    if (req.user.role !== 'admin') {
+      const sameCreator = existing.rows[0].created_by === req.user.id;
+      const docUnit = (existing.rows[0].unit_l1 || '').toLowerCase().trim();
+      const userUnit = (req.user.unit_l1 || '').toLowerCase().trim();
+      const sameUnit = docUnit && userUnit && docUnit === userUnit;
+      if (!sameCreator && !sameUnit) {
+        return res.status(403).json({ error: 'Tidak diizinkan menghapus dokumen ini' });
+      }
     }
     await pool.query('DELETE FROM juknis_dokumen WHERE id=$1', [id]);
     res.json({ success: true });
@@ -1326,10 +1523,14 @@ app.post('/api/dokumen/import', authenticate, requireRole('admin'), async (req, 
     const safeJenisList = ['Proses Bisnis', 'SOP', 'Standar Pelayanan'];
 
     for (const it of items) {
+      if (!it.nama?.trim()) { errs.push('Baris tanpa nama dilewati'); continue; }
       try {
-        if (!it.nama?.trim()) { errs.push('Baris tanpa nama dilewati'); continue; }
+        // SAVEPOINT per baris: bila 1 baris gagal, hanya baris itu yang di-rollback; baris lain
+        // tetap lanjut & tersimpan. Tanpa ini, 1 error mengaborsi seluruh transaksi ("current
+        // transaction is aborted") sehingga semua baris berikutnya ikut gagal.
+        await client.query('SAVEPOINT row_sp');
         const l1Id = await resolveL1(client, it.unitL1);
-        if (!l1Id) { errs.push(`"${it.nama.trim().slice(0,60)}": Unit L1 tidak ditemukan ("${it.unitL1 || 'kosong'}")`); continue; }
+        if (!l1Id) throw new Error(`Unit L1 tidak ditemukan ("${it.unitL1 || 'kosong'}")`);
         const l2Id = await resolveL2(client, it.unitL2, l1Id);
         let l3Id = null;
         if (it.unitL3 && l2Id) {
@@ -1338,7 +1539,7 @@ app.post('/api/dokumen/import', authenticate, requireRole('admin'), async (req, 
         }
         await client.query(
           `INSERT INTO dokumen (nama,jenis,tahun,l1_id,l2_id,l3_id,link,sumber,status,created_by)
-           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'approved',$9)`,
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,'draft',$9)`,
           [it.nama.trim().slice(0, 500),
            safeJenisList.includes(it.jenis) ? it.jenis : 'Proses Bisnis',
            String(it.tahun || '2023'), l1Id, l2Id, l3Id,
@@ -1346,8 +1547,12 @@ app.post('/api/dokumen/import', authenticate, requireRole('admin'), async (req, 
            String(it.sumber || '').slice(0, 1000),
            req.user.id]
         );
+        await client.query('RELEASE SAVEPOINT row_sp');
         ok++;
-      } catch (e) { errs.push(`"${it.nama || '?'}": ${e.message}`); }
+      } catch (e) {
+        try { await client.query('ROLLBACK TO SAVEPOINT row_sp'); await client.query('RELEASE SAVEPOINT row_sp'); } catch (_) { /* abaikan */ }
+        errs.push(`"${(it.nama || '?').trim().slice(0, 60)}": ${e.message}`);
+      }
     }
 
     await client.query('COMMIT');

@@ -15,6 +15,7 @@ interface AppContextType {
   isDarkMode: boolean;
   setIsDarkMode: (v: boolean) => void;
   currentUser: AppUser | null;
+  updateCurrentUser: (user: AppUser) => void;
   handleLogout: () => void;
 }
 
@@ -22,6 +23,7 @@ const AppContext = createContext<AppContextType>({
   isDarkMode: false,
   setIsDarkMode: () => {},
   currentUser: null,
+  updateCurrentUser: () => {},
   handleLogout: () => {},
 });
 
@@ -44,6 +46,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
     }
   }, []);
 
+  const updateCurrentUser = (user: AppUser) => {
+    setCurrentUser(user);
+    localStorage.setItem('user', JSON.stringify(user));
+  };
+
   const handleLogout = () => {
     localStorage.removeItem('token');
     localStorage.removeItem('user');
@@ -52,7 +59,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   };
 
   return (
-    <AppContext.Provider value={{ isDarkMode, setIsDarkMode, currentUser, handleLogout }}>
+    <AppContext.Provider value={{ isDarkMode, setIsDarkMode, currentUser, updateCurrentUser, handleLogout }}>
       {children}
     </AppContext.Provider>
   );
