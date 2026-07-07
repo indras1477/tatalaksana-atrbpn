@@ -13,6 +13,7 @@
     "express": "^4.21.0",
     "express-rate-limit": "^8.5.2",
     "jsonwebtoken": "^9.0.3",
+    "pdf-lib": "^1.17.1",
     "pg": "^8.13.0",
     "puppeteer": "^24.43.1"
   }

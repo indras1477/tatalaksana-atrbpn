@@ -23,8 +23,8 @@ const Viewer = dynamic(() => import('@/components/BPMNViewer'), {
 
 const API_BASE = '/e-sop-atrbpn/api';
 
-function apiFetch(path: string, token: string, options?: RequestInit) {
-  return fetch(`${API_BASE}${path}`, {
+async function apiFetch(path: string, token: string, options?: RequestInit) {
+  const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -32,6 +32,14 @@ function apiFetch(path: string, token: string, options?: RequestInit) {
       ...(options?.headers || {}),
     },
   });
+  if (res.status === 401) {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+    window.location.replace('/e-sop-atrbpn/login?expired=1');
+    throw new Error('Sesi berakhir, silakan login kembali');
+  }
+  return res;
 }
 
 interface BPMNModel {
@@ -58,7 +66,6 @@ function BPMNStudioContent() {
   const documentId = searchParams.get('id');
 
   const mode = searchParams.get('mode');
-  const isViewOnly = mode === 'view';
 
   const [token, setToken] = useState<string>('');
   const [currentUser, setCurrentUser] = useState<{id: number, username: string, role: string, unit_l1?: string, unit_l2?: string} | null>(null);
@@ -71,6 +78,8 @@ function BPMNStudioContent() {
 
   const [currentModel, setCurrentModel] = useState<BPMNModel | null>(null);
   const [isLoadingDocument, setIsLoadingDocument] = useState(true);
+  // Mode baca bila dibuka via ?mode=view ATAU dokumen sudah dalam penetapan/ditetapkan (terkunci).
+  const isViewOnly = mode === 'view' || ['penetapan', 'approved'].includes(currentModel?.status || '');
 
   const [isSaving, setIsSaving] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
@@ -360,9 +369,9 @@ function BPMNStudioContent() {
     <div className={`flex flex-col h-[calc(100vh-4rem)] font-sans overflow-hidden ${isDarkMode ? 'bg-[#0B1121] text-slate-200' : 'bg-[#f3f4f6] text-slate-800'}`}>
 
       {/* Studio toolbar */}
-      <div className="h-14 border-b flex items-center justify-between px-4 z-10 shrink-0" style={{ backgroundColor: isDarkMode ? '#151F32' : '#ffffff', borderColor: isDarkMode ? '#1e293b' : '#e5e7eb' }}>
-        <div className="flex items-center gap-3">
-          <button onClick={handleBack} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors flex items-center text-sm font-medium gap-2">
+      <div className="h-14 border-b flex items-center justify-between px-4 z-10 shrink-0 overflow-hidden" style={{ backgroundColor: isDarkMode ? '#151F32' : '#ffffff', borderColor: isDarkMode ? '#1e293b' : '#e5e7eb' }}>
+        <div className="flex items-center gap-3 min-w-0 overflow-hidden">
+          <button onClick={handleBack} className="py-2.5 px-3 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors flex items-center text-sm font-medium gap-2">
             <ArrowLeft className="w-4 h-4" /> Kembali
             {hasUnsavedChanges && <span className="w-2 h-2 rounded-full bg-orange-400" title="Ada perubahan belum disimpan" />}
           </button>
@@ -373,11 +382,11 @@ function BPMNStudioContent() {
             <GitBranch className="w-5 h-5 text-blue-600 shrink-0" />
             <h1 className="text-lg font-bold shrink-0">Studio Editor</h1>
             {config.processTitle && (
-              <span className={`ml-3 px-3 py-1 rounded-md text-sm font-extrabold shadow-sm flex items-center gap-2 max-w-xs truncate ${isDarkMode ? 'bg-slate-800 text-blue-300' : 'bg-blue-100 text-[#002855]'}`}>
+              <span className={`ml-1 sm:ml-3 px-3 py-1 rounded-md text-sm font-extrabold shadow-sm flex items-center gap-2 max-w-25 sm:max-w-xs truncate ${isDarkMode ? 'bg-slate-800 text-blue-300' : 'bg-blue-100 text-[#002855]'}`}>
                 <span className="truncate">{config.processTitle}</span>
                 {isViewOnly && <span className="text-red-500 font-bold ml-2 shrink-0">(Mode Baca)</span>}
                 {currentModel?.status && (
-                    <span className={`shrink-0 ml-2 px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide border ${
+                    <span className={`shrink-0 ml-2 px-1.5 py-0.5 rounded text-[11px] sm:text-xs uppercase tracking-wide border ${
                         currentModel.status === 'approved' ? 'bg-emerald-500 text-white border-emerald-600' :
                         currentModel.status === 'pending' ? 'bg-blue-500 text-white border-blue-600' :
                         currentModel.status === 'rejected' ? 'bg-red-500 text-white border-red-600' :
@@ -390,7 +399,7 @@ function BPMNStudioContent() {
               <button
                 onClick={() => { setIsEditingDocInfo(true); setShowConfigModal(true); }}
                 title="Edit Informasi Dokumen"
-                className={`shrink-0 p-1.5 rounded-lg transition-colors ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-500'}`}
+                className={`shrink-0 p-2.5 min-h-11 min-w-11 flex items-center justify-center rounded-lg transition-colors ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-500'}`}
               >
                 <Pencil className="w-3.5 h-3.5" />
               </button>
@@ -423,14 +432,14 @@ function BPMNStudioContent() {
                     <AlertCircle className="w-6 h-6" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h4 className="text-[11px] font-black text-red-600 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
+                    <h4 className="text-xs font-black text-red-600 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
                       <MessageSquare className="w-3 h-3" /> Catatan Revisi
                     </h4>
                     <p className="text-xs text-slate-700 font-medium leading-relaxed bg-red-50/50 p-3 rounded-lg border border-red-100 whitespace-pre-wrap wrap-break-word max-h-48 overflow-y-auto">
                       &quot;{currentModel.catatan}&quot;
                     </p>
                     {!isViewOnly && (
-                      <p className="text-[9px] text-slate-400 mt-2 italic font-medium leading-tight">
+                      <p className="text-[10px] sm:text-xs text-slate-400 mt-2 italic font-medium leading-tight">
                         *Catatan otomatis hilang jika Anda Save Draft.
                       </p>
                     )}
@@ -451,7 +460,7 @@ function BPMNStudioContent() {
                   <p className="text-xs text-slate-400 mt-1">ID #{currentModel.id} · Perubahan akan langsung disimpan</p>
                 )}
               </div>
-              <button onClick={() => { setShowConfigModal(false); setIsEditingDocInfo(false); if (!isEditingDocInfo) router.push('/bpmn'); }} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"><X className="w-5 h-5" /></button>
+              <button onClick={() => { setShowConfigModal(false); setIsEditingDocInfo(false); if (!isEditingDocInfo) router.push('/bpmn'); }} className="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"><X className="w-5 h-5" /></button>
             </div>
 
             {!isEditingDocInfo && <p className="text-sm text-slate-500 mb-6">Lengkapi data di bawah ini sebelum mulai mendesain diagram Proses Bisnis.</p>}
@@ -459,23 +468,23 @@ function BPMNStudioContent() {
             <div className="space-y-3 max-h-[60vh] overflow-y-auto pr-1">
               <div>
                 <label className="block text-sm font-bold mb-1">Judul Proses <span className="text-red-500">*</span></label>
-                <input type="text" placeholder="Contoh: Penyusunan Rencana Kerja" value={config.processTitle} onChange={(e) => setConfig({ ...config, processTitle: e.target.value })} className="w-full px-4 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" style={{ borderColor: isDarkMode ? '#374151' : '#d1d5db', backgroundColor: isDarkMode ? '#0F172A' : '#f8fafc' }} />
+                <input type="text" placeholder="Contoh: Penyusunan Rencana Kerja" value={config.processTitle} onChange={(e) => setConfig({ ...config, processTitle: e.target.value })} className="w-full px-4 py-3 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" style={{ borderColor: isDarkMode ? '#374151' : '#d1d5db', backgroundColor: isDarkMode ? '#0F172A' : '#f8fafc' }} />
               </div>
               <div>
                 <label className="block text-sm font-bold mb-1">Kode Proses <span className="text-xs font-normal text-slate-400">(opsional)</span></label>
-                <input type="text" placeholder="Contoh: SOP-PRC-01" value={config.processKey} onChange={(e) => setConfig({ ...config, processKey: e.target.value.toUpperCase().replace(/\s/g, '_') })} className="w-full px-4 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-mono" style={{ borderColor: isDarkMode ? '#374151' : '#d1d5db', backgroundColor: isDarkMode ? '#0F172A' : '#f8fafc' }} />
+                <input type="text" placeholder="Contoh: SOP-PRC-01" value={config.processKey} onChange={(e) => setConfig({ ...config, processKey: e.target.value.toUpperCase().replace(/\s/g, '_') })} className="w-full px-4 py-3 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 font-mono" style={{ borderColor: isDarkMode ? '#374151' : '#d1d5db', backgroundColor: isDarkMode ? '#0F172A' : '#f8fafc' }} />
               </div>
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-sm font-bold mb-1">Jenis Proses (Kewenangan)</label>
-                  <select value={config.jenisProses} onChange={(e) => setConfig({ ...config, jenisProses: e.target.value })} className="w-full px-3 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" style={{ borderColor: isDarkMode ? '#374151' : '#d1d5db', backgroundColor: isDarkMode ? '#0F172A' : '#f8fafc', color: isDarkMode ? '#e2e8f0' : '#1e293b' }}>
+                  <select value={config.jenisProses} onChange={(e) => setConfig({ ...config, jenisProses: e.target.value })} className="w-full px-3 py-3 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" style={{ borderColor: isDarkMode ? '#374151' : '#d1d5db', backgroundColor: isDarkMode ? '#0F172A' : '#f8fafc', color: isDarkMode ? '#e2e8f0' : '#1e293b' }}>
                     <option value="">-- Pilih --</option>
                     {JENIS_PROSES_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm font-bold mb-1">Klasifikasi Proses</label>
-                  <select value={config.klasifikasiProses} onChange={(e) => setConfig({ ...config, klasifikasiProses: e.target.value })} className="w-full px-3 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" style={{ borderColor: isDarkMode ? '#374151' : '#d1d5db', backgroundColor: isDarkMode ? '#0F172A' : '#f8fafc', color: isDarkMode ? '#e2e8f0' : '#1e293b' }}>
+                  <select value={config.klasifikasiProses} onChange={(e) => setConfig({ ...config, klasifikasiProses: e.target.value })} className="w-full px-3 py-3 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" style={{ borderColor: isDarkMode ? '#374151' : '#d1d5db', backgroundColor: isDarkMode ? '#0F172A' : '#f8fafc', color: isDarkMode ? '#e2e8f0' : '#1e293b' }}>
                     <option value="">-- Pilih --</option>
                     {KLASIFIKASI_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
                   </select>
@@ -507,27 +516,27 @@ function BPMNStudioContent() {
               </div>
               <div>
                 <label className={`block text-sm font-bold mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Sub-Unit (Level 2)</label>
-                <select value={config.orgUnitL2} onChange={(e) => setConfig({ ...config, orgUnitL2: e.target.value })} disabled={!config.orgUnitL1} className={`w-full px-4 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer disabled:opacity-50 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'}`}>
+                <select value={config.orgUnitL2} onChange={(e) => setConfig({ ...config, orgUnitL2: e.target.value })} disabled={!config.orgUnitL1} className={`w-full px-4 py-3 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer disabled:opacity-50 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'}`}>
                   <option value="">-- Tidak Ada / Kosong --</option>
                   {l2Options.map(u => <option key={u} value={u}>{u}</option>)}
                 </select>
               </div>
             </div>
 
-            <div className="flex justify-end gap-3 mt-6 pt-4 border-t" style={{ borderColor: isDarkMode ? '#1e293b' : '#e5e7eb' }}>
+            <div className="flex flex-col-reverse sm:flex-row justify-end gap-2 sm:gap-3 mt-6 pt-4 border-t" style={{ borderColor: isDarkMode ? '#1e293b' : '#e5e7eb' }}>
               <button
                 onClick={() => { setShowConfigModal(false); setIsEditingDocInfo(false); if (!isEditingDocInfo) router.push('/bpmn'); }}
-                className="px-5 py-2.5 text-sm font-bold border rounded-xl hover:bg-slate-50 transition-colors"
+                className="px-5 py-3 text-sm font-bold border rounded-xl hover:bg-slate-50 transition-colors"
                 style={{ borderColor: isDarkMode ? '#374151' : '#d1d5db' }}
               >
                 {isEditingDocInfo ? 'Tutup' : 'Batal'}
               </button>
               {isEditingDocInfo ? (
-                <button onClick={saveMetadataOnly} className="px-6 py-2.5 text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md transition-colors flex items-center gap-2">
+                <button onClick={saveMetadataOnly} className="px-6 py-3 text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md transition-colors flex items-center gap-2">
                   <Pencil className="w-4 h-4" /> Simpan Perubahan
                 </button>
               ) : (
-                <button onClick={handleStartModeling} className="px-6 py-2.5 text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md transition-colors flex items-center gap-2">
+                <button onClick={handleStartModeling} className="px-6 py-3 text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md transition-colors flex items-center gap-2">
                   Buka Kanvas <ArrowLeft className="w-4 h-4 rotate-180" />
                 </button>
               )}
@@ -541,11 +550,11 @@ function BPMNStudioContent() {
           <div className="w-full max-w-sm rounded-2xl shadow-2xl p-6 border" style={{ backgroundColor: isDarkMode ? '#151F32' : '#ffffff', borderColor: isDarkMode ? '#1e293b' : '#e5e7eb' }}>
             <h3 className="text-lg font-bold mb-2">Perubahan Belum Disimpan</h3>
             <p className="text-sm text-slate-500 mb-6">Diagram ini memiliki perubahan yang belum disimpan ke database. Apakah Anda yakin ingin meninggalkan halaman?</p>
-            <div className="flex gap-3">
-              <button onClick={() => setShowUnsavedModal(false)} className="flex-1 px-4 py-2.5 text-sm font-bold border rounded-xl hover:bg-slate-50 transition-colors" style={{ borderColor: isDarkMode ? '#374151' : '#d1d5db' }}>
+            <div className="flex flex-col-reverse sm:flex-row gap-2 sm:gap-3">
+              <button onClick={() => setShowUnsavedModal(false)} className="flex-1 px-4 py-3 text-sm font-bold border rounded-xl hover:bg-slate-50 transition-colors" style={{ borderColor: isDarkMode ? '#374151' : '#d1d5db' }}>
                 Batal
               </button>
-              <button onClick={() => { setShowUnsavedModal(false); router.push('/bpmn'); }} className="flex-1 px-4 py-2.5 text-sm font-bold bg-red-600 hover:bg-red-700 text-white rounded-xl transition-colors">
+              <button onClick={() => { setShowUnsavedModal(false); router.push('/bpmn'); }} className="flex-1 px-4 py-3 text-sm font-bold bg-red-600 hover:bg-red-700 text-white rounded-xl transition-colors">
                 Keluar Tanpa Simpan
               </button>
             </div>
@@ -578,14 +587,14 @@ function BPMNStudioContent() {
               <div className="flex gap-3">
                 <button
                   onClick={() => setShowSubmitModal(false)}
-                  className="flex-1 px-4 py-2.5 text-sm font-bold border rounded-xl transition-colors"
+                  className="flex-1 px-4 py-3 text-sm font-bold border rounded-xl transition-colors"
                   style={{ borderColor: isDarkMode ? '#374151' : '#d1d5db', color: isDarkMode ? '#cbd5e1' : '#374151' }}
                 >
                   Batal
                 </button>
                 <button
                   onClick={() => { setShowSubmitModal(false); executeSaveToDB('pending'); }}
-                  className="flex-1 px-4 py-2.5 text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2"
+                  className="flex-1 px-4 py-3 text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md transition-all active:scale-95 flex items-center justify-center gap-2"
                 >
                   <Send className="w-4 h-4" /> Ya, Ajukan Sekarang
                 </button>
@@ -596,11 +605,11 @@ function BPMNStudioContent() {
       )}
 
       {showSaveModal && !isViewOnly && (
-        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-start sm:items-center justify-center z-50 p-4 overflow-y-auto">
           <div className="w-full max-w-2xl rounded-2xl shadow-2xl p-6 border" style={{ backgroundColor: isDarkMode ? '#151F32' : '#ffffff', borderColor: isDarkMode ? '#1e293b' : '#e5e7eb' }}>
             <div className="flex justify-between items-center mb-6 border-b pb-4" style={{ borderColor: isDarkMode ? '#1e293b' : '#e5e7eb' }}>
               <h3 className="text-xl font-bold">Simpan Dokumen Proses Bisnis</h3>
-              <button onClick={() => setShowSaveModal(false)} className="p-2 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"><X className="w-5 h-5" /></button>
+              <button onClick={() => setShowSaveModal(false)} className="p-2.5 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg"><X className="w-5 h-5" /></button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-4">

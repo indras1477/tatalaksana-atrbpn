@@ -80,10 +80,23 @@ export function SOPSymbolsSection({ isDarkMode }: { isDarkMode: boolean }) {
   ];
 
   const badgeItems = [
-    { label: 'Draft', desc: 'SOP masih dalam tahap penyusunan, belum diajukan ke Admin Ortala MR', color: '#475569', bg: '#F1F5F9', border: '#CBD5E1' },
-    { label: 'Pending', desc: 'SOP telah diajukan dan menunggu persetujuan dari Admin Ortala MR', color: '#1D4ED8', bg: '#DBEAFE', border: '#93C5FD' },
-    { label: 'Approved', desc: 'SOP telah disetujui oleh Admin Ortala MR dan dinyatakan berlaku resmi', color: '#166534', bg: '#DCFCE7', border: '#86EFAC' },
-    { label: 'Rejected', desc: 'SOP dikembalikan untuk direvisi sesuai catatan yang diberikan Admin Ortala MR', color: '#991B1B', bg: '#FEE2E2', border: '#FCA5A5' },
+    { label: 'Draft', desc: 'SOP masih dalam tahap penyusunan, belum diajukan ke Biro Ortala MR.', color: '#475569', bg: '#F1F5F9', border: '#CBD5E1' },
+    { label: 'Menunggu', desc: 'SOP telah diajukan dan menunggu persetujuan Biro Ortala MR.', color: '#1D4ED8', bg: '#DBEAFE', border: '#93C5FD' },
+    { label: 'Perlu Revisi', desc: 'SOP dikembalikan untuk direvisi sesuai catatan Biro Ortala MR, lalu diajukan ulang.', color: '#991B1B', bg: '#FEE2E2', border: '#FCA5A5' },
+    { label: 'Menunggu Pengesahan Pimpinan', desc: 'SOP disetujui Biro Ortala MR. Cetak cover, mintakan tanda tangan pimpinan, lalu scan & unggah cover pada sistem.', color: '#B45309', bg: '#FEF3C7', border: '#FCD34D' },
+    { label: 'Menunggu Verifikasi Admin', desc: 'Cover bertanda tangan sudah diunggah. Admin memeriksa keabsahan tanda tangan & kelengkapan nomor SOP.', color: '#4338CA', bg: '#E0E7FF', border: '#A5B4FC' },
+    { label: 'Menunggu Proses Penetapan Menteri', desc: 'Cover sudah disetujui admin. SOP menunggu Peraturan/penetapan menteri diproses sebelum resmi terbit.', color: '#6D28D9', bg: '#EDE9FE', border: '#C4B5FD' },
+    { label: 'Terbit', desc: 'SOP sudah disahkan & ditetapkan. Resmi terbit, pindah ke Daftar SOP, masuk rekap Dashboard, dan kontennya terkunci.', color: '#166534', bg: '#DCFCE7', border: '#86EFAC' },
+  ];
+
+  const alurSOP = [
+    { n: 1, t: 'Susun & Simpan Draft', d: 'Buat SOP di studio, lengkapi bagan alir & tabel mutu baku, lalu Simpan (status Draft).' },
+    { n: 2, t: 'Kirim ke Biro Ortala MR', d: 'Ajukan dokumen. Status menjadi Menunggu persetujuan.' },
+    { n: 3, t: 'Persetujuan Biro Ortala MR', d: 'Bila disetujui → Menunggu Pengesahan Pimpinan. Bila ada kekurangan → Perlu Revisi (perbaiki sesuai catatan, ajukan ulang).' },
+    { n: 4, t: 'Pengesahan & Unggah Cover', d: 'Cetak cover, mintakan tanda tangan pimpinan, scan, lalu Unggah Cover TTD (PDF/JPG/PNG, maks 2 MB) — dapat dilakukan penyusun/unit atau admin. Status → Menunggu Verifikasi Admin.' },
+    { n: 5, t: 'Verifikasi Admin', d: 'Admin memeriksa tanda tangan & nomor SOP pada cover, lalu Setujui Cover. Bila kurang → Kembalikan + catatan → penyusun unggah ulang cover.' },
+    { n: 6, t: 'Menunggu Penetapan Menteri', d: 'SOP menunggu Peraturan/penetapan menteri diproses. Belum masuk Daftar SOP.' },
+    { n: 7, t: 'Ditetapkan & Terbit', d: 'Setelah Peraturan ditetapkan, admin menekan tombol Ditetapkan → SOP TERBIT: pindah ke Daftar SOP, cover tergabung dalam PDF, masuk rekap Dashboard, konten terkunci (revisi = buat Salinan baru).' },
   ];
 
   const dm = isDarkMode;
@@ -160,6 +173,30 @@ export function SOPSymbolsSection({ isDarkMode }: { isDarkMode: boolean }) {
               <p className={`text-[11px] leading-relaxed ${dm ? 'text-slate-400' : 'text-slate-600'}`}>{item.desc}</p>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Alur Penerbitan SOP */}
+      <div>
+        <p className={`text-[10px] font-extrabold uppercase tracking-widest mb-3 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>
+          Alur Penerbitan SOP
+        </p>
+        <div className="space-y-2">
+          {alurSOP.map(step => (
+            <div key={step.n} className={`flex items-start gap-3 p-3 rounded-xl border ${dm ? 'bg-[#0F172A] border-slate-800' : 'bg-slate-50 border-slate-100'}`}>
+              <div className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-extrabold ${dm ? 'bg-emerald-900/40 text-emerald-400' : 'bg-emerald-100 text-emerald-700'}`}>{step.n}</div>
+              <div className="min-w-0">
+                <p className={`text-xs font-extrabold leading-tight ${dm ? 'text-white' : 'text-slate-800'}`}>{step.t}</p>
+                <p className={`text-[11px] leading-relaxed mt-0.5 ${dm ? 'text-slate-400' : 'text-slate-600'}`}>{step.d}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className={`mt-3 rounded-xl p-3 border flex items-start gap-2 ${dm ? 'bg-amber-900/15 border-amber-800/40' : 'bg-amber-50 border-amber-100'}`}>
+          <Clock className={`w-4 h-4 shrink-0 mt-0.5 ${dm ? 'text-amber-400' : 'text-amber-500'}`} />
+          <p className={`text-[11px] leading-relaxed ${dm ? 'text-amber-200/90' : 'text-amber-800/80'}`}>
+            <span className="font-bold">Daftar Pengajuan vs Daftar SOP:</span> selama belum Terbit, SOP berada di tab <b>Daftar Pengajuan</b>. Setelah Terbit, otomatis pindah ke tab <b>Daftar SOP</b>. Unggah cover dapat dilakukan oleh <b>penyusun</b> atau <b>admin</b>.
+          </p>
         </div>
       </div>
     </div>
@@ -269,10 +306,16 @@ export function BPMNSymbolsSection({ isDarkMode }: { isDarkMode: boolean }) {
   };
 
   const bpmnBadgeItems = [
-    { label: 'DRAFT', desc: 'Diagram sedang dalam tahap penyusunan, belum diajukan ke Admin Ortala MR.', color: '#475569', bg: '#F1F5F9', border: '#CBD5E1' },
-    { label: 'PENDING', desc: 'Diagram telah diajukan dan sedang menunggu persetujuan dari Admin Ortala MR.', color: '#1D4ED8', bg: '#DBEAFE', border: '#93C5FD' },
-    { label: 'APPROVED', desc: 'Diagram telah disetujui oleh Admin Ortala MR dan dinyatakan resmi berlaku.', color: '#166534', bg: '#DCFCE7', border: '#86EFAC' },
-    { label: 'REJECTED', desc: 'Diagram dikembalikan untuk direvisi sesuai catatan yang diberikan Admin Ortala MR.', color: '#991B1B', bg: '#FEE2E2', border: '#FCA5A5' },
+    { label: 'DRAFT', desc: 'Diagram sedang dalam tahap penyusunan, belum diajukan ke Biro Ortala MR.', color: '#475569', bg: '#F1F5F9', border: '#CBD5E1' },
+    { label: 'MENUNGGU', desc: 'Diagram telah diajukan dan sedang menunggu persetujuan Biro Ortala MR.', color: '#1D4ED8', bg: '#DBEAFE', border: '#93C5FD' },
+    { label: 'PERLU REVISI', desc: 'Diagram dikembalikan untuk direvisi sesuai catatan Biro Ortala MR, lalu diajukan ulang.', color: '#991B1B', bg: '#FEE2E2', border: '#FCA5A5' },
+    { label: 'DISETUJUI', desc: 'Diagram disetujui Biro Ortala MR: resmi berlaku, pindah ke tab Daftar Proses Bisnis, dan masuk rekap Dashboard.', color: '#166534', bg: '#DCFCE7', border: '#86EFAC' },
+  ];
+
+  const alurBPMN = [
+    { n: 1, t: 'Susun & Simpan Draft', d: 'Buat diagram BPMN di studio (pool, lane, task, gateway, dsb.), lalu Simpan (status Draft).' },
+    { n: 2, t: 'Kirim ke Biro Ortala MR', d: 'Ajukan diagram. Status menjadi Menunggu persetujuan.' },
+    { n: 3, t: 'Persetujuan Biro Ortala MR', d: 'Bila disetujui → Disetujui: langsung pindah ke Daftar Proses Bisnis & masuk Dashboard. Bila ada kekurangan → Perlu Revisi (perbaiki sesuai catatan, ajukan ulang).' },
   ];
 
   const dm = isDarkMode;
@@ -318,6 +361,30 @@ export function BPMNSymbolsSection({ isDarkMode }: { isDarkMode: boolean }) {
               <p className={`text-[11px] leading-relaxed ${dm ? 'text-slate-400' : 'text-slate-600'}`}>{item.desc}</p>
             </div>
           ))}
+        </div>
+      </div>
+
+      {/* Alur Persetujuan BPMN */}
+      <div>
+        <p className={`text-[10px] font-extrabold uppercase tracking-widest mb-3 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>
+          Alur Persetujuan Proses Bisnis
+        </p>
+        <div className="space-y-2">
+          {alurBPMN.map(step => (
+            <div key={step.n} className={`flex items-start gap-3 p-3 rounded-xl border ${dm ? 'bg-[#0F172A] border-slate-800' : 'bg-slate-50 border-slate-100'}`}>
+              <div className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-extrabold ${dm ? 'bg-blue-900/40 text-blue-400' : 'bg-blue-100 text-blue-700'}`}>{step.n}</div>
+              <div className="min-w-0">
+                <p className={`text-xs font-extrabold leading-tight ${dm ? 'text-white' : 'text-slate-800'}`}>{step.t}</p>
+                <p className={`text-[11px] leading-relaxed mt-0.5 ${dm ? 'text-slate-400' : 'text-slate-600'}`}>{step.d}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+        <div className={`mt-3 rounded-xl p-3 border flex items-start gap-2 ${dm ? 'bg-blue-900/15 border-blue-800/40' : 'bg-blue-50 border-blue-100'}`}>
+          <Clock className={`w-4 h-4 shrink-0 mt-0.5 ${dm ? 'text-blue-400' : 'text-blue-500'}`} />
+          <p className={`text-[11px] leading-relaxed ${dm ? 'text-blue-200/90' : 'text-blue-800/80'}`}>
+            <span className="font-bold">Daftar Pengajuan vs Daftar Proses Bisnis:</span> sebelum disetujui, diagram ada di tab <b>Daftar Pengajuan</b>. Setelah <b>Disetujui</b>, otomatis pindah ke tab <b>Daftar Proses Bisnis</b>. Berbeda dengan SOP, Proses Bisnis tidak memerlukan unggah cover.
+          </p>
         </div>
       </div>
     </div>

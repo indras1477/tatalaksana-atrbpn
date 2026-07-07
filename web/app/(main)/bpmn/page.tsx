@@ -6,7 +6,7 @@ import {
   Plus, Edit, CheckCircle,
   Clock, XCircle, Search, X, FileEdit, FileStack, AlertCircle, Filter,
   Trash2, Calendar, GitCommit, HelpCircle, GitBranch, ChevronRight, Save,
-  ExternalLink, Building2, Copy
+  ExternalLink, Building2, Copy, Landmark, Lock
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
 import { BPMNSymbolsSection } from '@/components/PanduanSymbols';
@@ -40,6 +40,7 @@ interface BPMNModel {
   version: number; created_by: number; created_at: string; updated_at: string;
   unit_l1?: string; unit_l2?: string;
   jenis_proses?: string | null; klasifikasi_proses?: string | null;
+  penetapan_dasar?: string | null; penetapan_tanggal?: string | null;
 }
 
 interface AuthUser {
@@ -57,8 +58,12 @@ export default function BPMNDashboardPage() {
   const [searchQuery, setSearchQuery] = useState('');
   const [filterUnit, setFilterUnit] = useState('Semua');
   const [filterStatus, setFilterStatus] = useState('Semua');
+  // Tab: 'pengajuan' (draft/pending/rejected) vs 'terbit' (Daftar Proses Bisnis = approved)
+  const [listTab, setListTab] = useState<'pengajuan' | 'terbit'>('pengajuan');
 
   const [rejectModal, setRejectModal] = useState({ isOpen: false, modelId: 0, note: '' });
+  const [penetapanModal, setPenetapanModal] = useState<{ isOpen: boolean; model: BPMNModel | null; dasar: string; tanggal: string }>({ isOpen: false, model: null, dasar: '', tanggal: '' });
+  const [submittingPenetapan, setSubmittingPenetapan] = useState(false);
   const [showPanduan, setShowPanduan] = useState(false);
 
   const [previewModel, setPreviewModel] = useState<BPMNModel | null>(null);
@@ -133,6 +138,14 @@ export default function BPMNDashboardPage() {
     });
   }, [savedModels, searchQuery, filterUnit, filterStatus]);
 
+  // Proses Bisnis berpindah ke Daftar Proses Bisnis saat 'approved' (disetujui Biro Ortala MR).
+  const visibleModels = useMemo(
+    () => currentFilteredModels.filter(m => (m.status === 'approved') === (listTab === 'terbit')),
+    [currentFilteredModels, listTab]
+  );
+  const countPengajuan = useMemo(() => currentFilteredModels.filter(m => m.status !== 'approved').length, [currentFilteredModels]);
+  const countTerbit = useMemo(() => currentFilteredModels.filter(m => m.status === 'approved').length, [currentFilteredModels]);
+
   const listUnitL1 = useMemo(() => {
     const units = savedModels.map(m => m.unit_l1).filter(Boolean);
     return ['Semua', ...Array.from(new Set(units))];
@@ -155,20 +168,49 @@ export default function BPMNDashboardPage() {
     try {
       const res = await apiFetch(`/bpmn/models/status/${model.id}`, token, {
         method: 'PATCH',
-        body: JSON.stringify({ status: 'approved', catatan: '' })
+        body: JSON.stringify({ status: 'penetapan', catatan: '' })
       });
       if (res.ok) {
-        const docBody = {
-          nama: model.process_title, jenis: "Proses Bisnis",
-          tahun: new Date().getFullYear().toString(), l1_id: model.l1_id, l2_id: model.l2_id,
-          link: `/bpmn?id=${model.id}&mode=view`, status: 'approved'
-        };
-        await apiFetch('/dokumen', token, { method: 'POST', body: JSON.stringify(docBody) });
-        setSavedModels(prev => prev.map(m => m.id === model.id ? { ...m, status: 'approved', catatan: '' } : m));
-        if (previewModel?.id === model.id) setPreviewModel(prev => prev ? { ...prev, status: 'approved', catatan: '' } : null);
-        alert('Dokumen disetujui!');
+        // Belum masuk Daftar Proses Bisnis — menunggu proses penetapan menteri.
+        setSavedModels(prev => prev.map(m => m.id === model.id ? { ...m, status: 'penetapan', catatan: '' } : m));
+        if (previewModel?.id === model.id) setPreviewModel(prev => prev ? { ...prev, status: 'penetapan', catatan: '' } : null);
+        alert('Disetujui! Menunggu proses penetapan menteri.');
       }
     } catch (err) { console.error(err); }
+  };
+
+  // Admin menetapkan → buka modal isian dasar penetapan & tanggal.
+  const handleDitetapkan = (model: BPMNModel) => {
+    setPenetapanModal({
+      isOpen: true, model,
+      dasar: model.penetapan_dasar || '',
+      tanggal: model.penetapan_tanggal ? String(model.penetapan_tanggal).slice(0, 10) : new Date().toISOString().slice(0, 10),
+    });
+  };
+
+  const submitPenetapan = async () => {
+    const m = penetapanModal.model;
+    if (!m) return;
+    if (!penetapanModal.dasar.trim()) return alert('Isi dasar penetapan (mis. Kepmen/Permen ATR/BPN Nomor ... Tahun ...).');
+    if (!penetapanModal.tanggal) return alert('Isi tanggal ditetapkan.');
+    setSubmittingPenetapan(true);
+    try {
+      const res = await apiFetch(`/bpmn/models/status/${m.id}`, token, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'approved', catatan: '', penetapan_dasar: penetapanModal.dasar.trim(), penetapan_tanggal: penetapanModal.tanggal }),
+      });
+      if (res.ok) {
+        setSavedModels(prev => prev.map(x => x.id === m.id ? { ...x, status: 'approved', catatan: '', penetapan_dasar: penetapanModal.dasar.trim(), penetapan_tanggal: penetapanModal.tanggal } : x));
+        if (previewModel?.id === m.id) setPreviewModel(prev => prev ? { ...prev, status: 'approved', penetapan_dasar: penetapanModal.dasar.trim(), penetapan_tanggal: penetapanModal.tanggal } : null);
+        setPenetapanModal({ isOpen: false, model: null, dasar: '', tanggal: '' });
+        setListTab('terbit');
+        alert('✅ Proses Bisnis ditetapkan & masuk Daftar Proses Bisnis.');
+      } else {
+        const e = await res.json().catch(() => ({}));
+        alert(`❌ ${e.error || 'Gagal menetapkan.'}`);
+      }
+    } catch (e) { console.error(e); alert('❌ Gagal menetapkan.'); }
+    finally { setSubmittingPenetapan(false); }
   };
 
   const submitReject = async () => {
@@ -270,9 +312,17 @@ export default function BPMNDashboardPage() {
 
   const statusBadgeClass = (status: string) => {
     if (status === 'approved') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    if (status === 'penetapan') return 'bg-violet-50 text-violet-700 border-violet-200';
     if (status === 'pending') return 'bg-blue-50 text-blue-700 border-blue-200';
     if (status === 'rejected') return 'bg-red-50 text-red-700 border-red-200';
     return 'bg-slate-100 text-slate-600 border-slate-200';
+  };
+  const statusLabel = (status?: string) => {
+    if (status === 'approved') return 'DITETAPKAN';
+    if (status === 'penetapan') return 'MENUNGGU PROSES PENETAPAN MENTERI';
+    if (status === 'pending') return 'MENUNGGU';
+    if (status === 'rejected') return 'PERLU REVISI';
+    return 'DRAFT';
   };
 
   if (!currentUser) return null;
@@ -294,10 +344,10 @@ export default function BPMNDashboardPage() {
                 </div>
                 <div>
                   <h3 className={`text-lg font-extrabold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>Panduan Proses Bisnis (BPMN)</h3>
-                  <p className={`text-[11px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Elemen &amp; simbol standar BPMN 2.0</p>
+                  <p className={`text-[11px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Elemen &amp; simbol BPMN 2.0, status &amp; alur persetujuan</p>
                 </div>
               </div>
-              <button onClick={() => setShowPanduan(false)} className={`p-2 rounded-xl transition-colors ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-400'}`}>
+              <button onClick={() => setShowPanduan(false)} className={`p-2.5 rounded-xl transition-colors ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-400'}`}>
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -305,7 +355,7 @@ export default function BPMNDashboardPage() {
               <BPMNSymbolsSection isDarkMode={isDarkMode} />
             </div>
             <div className={`px-5 py-4 border-t shrink-0 flex justify-end ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-              <button onClick={() => setShowPanduan(false)} className={`px-6 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 transition-colors ${isDarkMode ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-[#002855] hover:bg-[#001b3a] text-white'}`}>
+              <button onClick={() => setShowPanduan(false)} className={`px-6 py-3 rounded-xl font-bold text-sm flex items-center gap-2 transition-colors ${isDarkMode ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-[#002855] hover:bg-[#001b3a] text-white'}`}>
                 Mengerti <ChevronRight className="w-4 h-4" />
               </button>
             </div>
@@ -319,7 +369,7 @@ export default function BPMNDashboardPage() {
           <div className={`rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden animate-in zoom-in-95 duration-200 ${isDarkMode ? 'bg-[#151F32] border border-slate-700' : 'bg-white border border-slate-200'}`}>
             <div className={`p-5 border-b flex justify-between items-center ${isDarkMode ? 'border-slate-700 bg-[#0F172A]/50' : 'border-slate-200 bg-slate-50'}`}>
               <h3 className="font-bold text-red-600 flex items-center gap-2"><XCircle className="w-5 h-5" /> Revisi Dokumen</h3>
-              <button onClick={() => setRejectModal({ isOpen: false, modelId: 0, note: '' })} className={`${isDarkMode ? 'text-slate-500 hover:text-slate-300' : 'text-slate-400 hover:text-slate-600'}`}><X className="w-5 h-5" /></button>
+              <button onClick={() => setRejectModal({ isOpen: false, modelId: 0, note: '' })} className={`p-3 rounded-xl transition-colors ${isDarkMode ? 'text-slate-500 hover:text-slate-300' : 'text-slate-400 hover:text-slate-600'}`}><X className="w-5 h-5" /></button>
             </div>
             <div className="p-6">
               <textarea
@@ -330,8 +380,8 @@ export default function BPMNDashboardPage() {
                 className={`w-full border rounded-xl p-4 text-sm font-medium outline-none focus:ring-2 focus:ring-red-500 shadow-inner ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white placeholder:text-slate-500' : 'bg-white border-slate-400 text-slate-900'}`}
               />
               <div className="flex justify-end gap-3 mt-6">
-                <button onClick={() => setRejectModal({ isOpen: false, modelId: 0, note: '' })} className={`px-5 py-2.5 text-sm font-bold ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>Batal</button>
-                <button onClick={submitReject} className="px-6 py-2.5 text-sm font-bold bg-red-600 text-white rounded-xl shadow-md">Kirim Catatan</button>
+                <button onClick={() => setRejectModal({ isOpen: false, modelId: 0, note: '' })} className={`px-5 py-3 text-sm font-bold ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>Batal</button>
+                <button onClick={submitReject} className="px-6 py-3 text-sm font-bold bg-red-600 text-white rounded-xl shadow-md">Kirim Catatan</button>
               </div>
             </div>
           </div>
@@ -356,7 +406,7 @@ export default function BPMNDashboardPage() {
                 </div>
               </div>
               {!copyingDoc && (
-                <button onClick={() => setCopyModal({ isOpen: false, source: null, form: { process_title: '', jenis_proses: '', klasifikasi_proses: '' } })} className={`p-2 rounded-xl transition-colors ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-400'}`}>
+                <button onClick={() => setCopyModal({ isOpen: false, source: null, form: { process_title: '', jenis_proses: '', klasifikasi_proses: '' } })} className={`p-2.5 rounded-xl transition-colors ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-400'}`}>
                   <X className="w-5 h-5" />
                 </button>
               )}
@@ -424,14 +474,14 @@ export default function BPMNDashboardPage() {
               <button
                 onClick={() => setCopyModal({ isOpen: false, source: null, form: { process_title: '', jenis_proses: '', klasifikasi_proses: '' } })}
                 disabled={copyingDoc}
-                className={`flex-1 px-4 py-2.5 text-sm font-bold rounded-xl border transition-colors disabled:opacity-50 ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                className={`flex-1 px-4 py-3 text-sm font-bold rounded-xl border transition-colors disabled:opacity-50 ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
               >
                 Batal
               </button>
               <button
                 onClick={submitCopy}
                 disabled={copyingDoc}
-                className="flex-1 px-5 py-2.5 text-sm font-bold bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-white rounded-xl shadow-sm flex items-center justify-center gap-2 transition-all active:scale-95"
+                className="flex-1 px-5 py-3 text-sm font-bold bg-amber-500 hover:bg-amber-600 disabled:opacity-60 text-white rounded-xl shadow-sm flex items-center justify-center gap-2 transition-all active:scale-95"
               >
                 <Copy className="w-4 h-4" />
                 {copyingDoc ? 'Menyalin...' : 'Salin Sekarang'}
@@ -459,7 +509,7 @@ export default function BPMNDashboardPage() {
                   <p className={`text-xs truncate max-w-55 sm:max-w-xs font-mono ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{previewModel.process_key || '—'}</p>
                 </div>
               </div>
-              <button onClick={() => setPreviewModel(null)} className={`p-2 rounded-xl transition-colors shrink-0 ml-2 ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-400'}`}>
+              <button onClick={() => setPreviewModel(null)} className={`p-2.5 rounded-xl transition-colors shrink-0 ml-2 ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-400'}`}>
                 <X className="w-5 h-5" />
               </button>
             </div>
@@ -471,10 +521,11 @@ export default function BPMNDashboardPage() {
               <div className="flex flex-wrap gap-2 items-center">
                 <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider border ${statusBadgeClass(previewModel.status)}`}>
                   {previewModel.status === 'approved' && <CheckCircle className="w-3 h-3" />}
+                  {previewModel.status === 'penetapan' && <Landmark className="w-3 h-3" />}
                   {previewModel.status === 'pending' && <Clock className="w-3 h-3" />}
                   {previewModel.status === 'rejected' && <XCircle className="w-3 h-3" />}
                   {(!previewModel.status || previewModel.status === 'draft') && <FileEdit className="w-3 h-3" />}
-                  {previewModel.status || 'DRAFT'}
+                  {statusLabel(previewModel.status)}
                 </span>
                 <span className={`inline-flex items-center gap-1 text-xs px-2 py-1 rounded-lg border font-medium ${isDarkMode ? 'text-slate-300 bg-slate-800 border-slate-700' : 'text-slate-600 bg-slate-50 border-slate-200'}`}>
                   <Building2 className="w-3 h-3" />
@@ -493,15 +544,44 @@ export default function BPMNDashboardPage() {
                 </div>
               )}
 
+              {/* Info penetapan (Proses Bisnis ditetapkan) */}
+              {(previewModel.status === 'penetapan' || previewModel.status === 'approved') && (previewModel.penetapan_dasar || previewModel.penetapan_tanggal) && (
+                <div className={`rounded-xl p-3 border ${isDarkMode ? 'bg-violet-900/20 border-violet-800' : 'bg-violet-50 border-violet-200'}`}>
+                  <div className="flex items-center gap-2 mb-2">
+                    <Landmark className={`w-4 h-4 ${isDarkMode ? 'text-violet-400' : 'text-violet-600'}`} />
+                    <span className={`text-[11px] font-extrabold uppercase tracking-wide ${isDarkMode ? 'text-violet-300' : 'text-violet-700'}`}>Penetapan</span>
+                  </div>
+                  <div className="space-y-1.5">
+                    <div className="flex flex-col sm:flex-row sm:gap-2">
+                      <span className={`text-[11px] font-bold shrink-0 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Ditetapkan tanggal:</span>
+                      <span className={`text-xs font-semibold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{previewModel.penetapan_tanggal ? new Date(previewModel.penetapan_tanggal).toLocaleDateString('id-ID', { day: '2-digit', month: 'long', year: 'numeric' }) : '—'}</span>
+                    </div>
+                    <div className="flex flex-col sm:flex-row sm:gap-2">
+                      <span className={`text-[11px] font-bold shrink-0 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Telah ditetapkan melalui:</span>
+                      <span className={`text-xs font-semibold ${isDarkMode ? 'text-white' : 'text-slate-800'}`}>{previewModel.penetapan_dasar || '—'}</span>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {(previewModel.status === 'penetapan' || previewModel.status === 'approved') && (
+                <div className={`flex items-start gap-2 text-xs font-semibold rounded-xl p-3 border ${isDarkMode ? 'bg-emerald-900/20 border-emerald-800 text-emerald-300' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
+                  <Lock className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span>Proses Bisnis sudah dalam <b>penetapan/ditetapkan</b> — judul &amp; informasi terkunci. Untuk merevisi, gunakan fitur <b>Salin</b>.</span>
+                </div>
+              )}
+
               {/* Edit fields */}
+              {(() => { const metaLocked = previewModel.status === 'penetapan' || previewModel.status === 'approved'; return (
               <div className="space-y-3">
                 <div>
                   <label className={`block text-xs font-bold mb-1.5 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Judul / Nama Proses <span className="text-red-500">*</span></label>
                   <input
                     type="text"
                     value={editMeta.process_title}
+                    disabled={metaLocked}
                     onChange={e => setEditMeta(prev => ({ ...prev, process_title: e.target.value }))}
-                    className={`w-full px-3 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}
+                    className={`w-full px-3 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-60 disabled:cursor-not-allowed ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}
                   />
                 </div>
 
@@ -510,8 +590,9 @@ export default function BPMNDashboardPage() {
                     <label className={`block text-xs font-bold mb-1.5 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Jenis Kewenangan</label>
                     <select
                       value={editMeta.jenis_proses}
+                      disabled={metaLocked}
                       onChange={e => setEditMeta(prev => ({ ...prev, jenis_proses: e.target.value }))}
-                      className={`w-full px-3 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}
+                      className={`w-full px-3 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}
                     >
                       <option value="">— Pilih —</option>
                       {JENIS_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
@@ -521,8 +602,9 @@ export default function BPMNDashboardPage() {
                     <label className={`block text-xs font-bold mb-1.5 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Klasifikasi</label>
                     <select
                       value={editMeta.klasifikasi_proses}
+                      disabled={metaLocked}
                       onChange={e => setEditMeta(prev => ({ ...prev, klasifikasi_proses: e.target.value }))}
-                      className={`w-full px-3 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}
+                      className={`w-full px-3 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}
                     >
                       <option value="">— Pilih —</option>
                       {KLASIFIKASI_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
@@ -530,6 +612,7 @@ export default function BPMNDashboardPage() {
                   </div>
                 </div>
               </div>
+              ); })()}
 
               {/* Tanggal update */}
               <p className={`text-[11px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
@@ -542,25 +625,27 @@ export default function BPMNDashboardPage() {
             <div className={`p-4 sm:p-5 border-t shrink-0 flex flex-col sm:flex-row gap-2 sm:gap-3 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
               <button
                 onClick={() => router.push(`/bpmn/studio?id=${previewModel.id}`)}
-                className={`flex-1 sm:flex-none px-4 py-2.5 text-sm font-bold rounded-xl border flex items-center justify-center gap-2 transition-colors ${isDarkMode ? 'border-blue-700 text-blue-400 hover:bg-blue-900/20' : 'border-blue-200 text-blue-600 hover:bg-blue-50'}`}
+                className={`flex-1 sm:flex-none px-4 py-3 text-sm font-bold rounded-xl border flex items-center justify-center gap-2 transition-colors ${isDarkMode ? 'border-blue-700 text-blue-400 hover:bg-blue-900/20' : 'border-blue-200 text-blue-600 hover:bg-blue-50'}`}
               >
                 <ExternalLink className="w-4 h-4" /> Buka di Studio
               </button>
               <div className="flex gap-2 flex-1 sm:flex-none sm:ml-auto">
                 <button
                   onClick={() => setPreviewModel(null)}
-                  className={`flex-1 px-4 py-2.5 text-sm font-bold rounded-xl border transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                  className={`flex-1 px-4 py-3 text-sm font-bold rounded-xl border transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
                 >
                   Tutup
                 </button>
-                <button
-                  onClick={saveMetaEdit}
-                  disabled={savingMeta}
-                  className="flex-1 sm:flex-none px-5 py-2.5 text-sm font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded-xl shadow-sm flex items-center justify-center gap-2 transition-all active:scale-95"
-                >
-                  <Save className="w-4 h-4" />
-                  {savingMeta ? 'Menyimpan...' : 'Simpan'}
-                </button>
+                {previewModel.status !== 'penetapan' && previewModel.status !== 'approved' && (
+                  <button
+                    onClick={saveMetaEdit}
+                    disabled={savingMeta}
+                    className="flex-1 sm:flex-none px-5 py-3 text-sm font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded-xl shadow-sm flex items-center justify-center gap-2 transition-all active:scale-95"
+                  >
+                    <Save className="w-4 h-4" />
+                    {savingMeta ? 'Menyimpan...' : 'Simpan'}
+                  </button>
+                )}
               </div>
             </div>
           </div>
@@ -573,10 +658,10 @@ export default function BPMNDashboardPage() {
             {currentUser.role === 'admin' ? 'Manajemen Pengajuan (Pusat)' : `${currentUser.unit_l1}${currentUser.unit_l2 ? ' › ' + currentUser.unit_l2 : ''}`}
           </p>
           <div className="flex items-center gap-2 self-start sm:self-auto">
-            <button onClick={() => setShowPanduan(true)} className={`px-4 py-2.5 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-blue-700 text-blue-400 hover:bg-blue-900/30' : 'border-blue-200 text-blue-600 hover:bg-blue-50'}`}>
+            <button onClick={() => setShowPanduan(true)} className={`px-4 py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-blue-700 text-blue-400 hover:bg-blue-900/30' : 'border-blue-200 text-blue-600 hover:bg-blue-50'}`}>
               <HelpCircle className="w-4 h-4" /> Panduan
             </button>
-            <button onClick={() => router.push(`/bpmn/studio?t=${Date.now()}`)} className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center gap-2 font-bold transition-all">
+            <button onClick={() => router.push(`/bpmn/studio?t=${Date.now()}`)} className="px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center gap-2 font-bold transition-all">
               <Plus className="w-4 h-4" /> Buat BPMN Baru
             </button>
           </div>
@@ -623,17 +708,34 @@ export default function BPMNDashboardPage() {
 
         {/* TABEL DATA */}
         <div className={`rounded-2xl border shadow-sm overflow-hidden ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
-          <div className={`p-4 sm:p-5 border-b flex flex-col xl:flex-row xl:items-center justify-between gap-4 ${isDarkMode ? 'border-slate-700 bg-[#0F172A]/50' : 'border-slate-200 bg-slate-50/50'}`}>
+          <div className={`p-4 sm:p-5 border-b flex flex-col lg:flex-row lg:items-center justify-between gap-4 ${isDarkMode ? 'border-slate-700 bg-[#0F172A]/50' : 'border-slate-200 bg-slate-50/50'}`}>
             <div>
-              <h2 className={`text-lg font-bold shrink-0 ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>Daftar Pengajuan Proses Bisnis</h2>
-              <p className={`text-xs mt-0.5 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Klik baris untuk melihat detail &amp; mengedit metadata</p>
+              <div className={`inline-flex p-1 rounded-xl gap-1 ${isDarkMode ? 'bg-[#0F172A] border border-slate-700' : 'bg-slate-100 border border-slate-200'}`}>
+                <button
+                  onClick={() => setListTab('pengajuan')}
+                  className={`px-3.5 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${listTab === 'pengajuan' ? (isDarkMode ? 'bg-[#151F32] text-white shadow' : 'bg-white text-[#002855] shadow-sm') : (isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-700')}`}
+                >
+                  <Filter className="w-4 h-4" /> Daftar Pengajuan
+                  <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full ${listTab === 'pengajuan' ? 'bg-blue-100 text-blue-700' : (isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-200 text-slate-600')}`}>{countPengajuan}</span>
+                </button>
+                <button
+                  onClick={() => setListTab('terbit')}
+                  className={`px-3.5 py-2 rounded-lg text-sm font-bold transition-all flex items-center gap-2 ${listTab === 'terbit' ? (isDarkMode ? 'bg-[#151F32] text-white shadow' : 'bg-white text-[#002855] shadow-sm') : (isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-700')}`}
+                >
+                  <CheckCircle className="w-4 h-4" /> Daftar Proses Bisnis
+                  <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full ${listTab === 'terbit' ? 'bg-emerald-100 text-emerald-700' : (isDarkMode ? 'bg-slate-700 text-slate-300' : 'bg-slate-200 text-slate-600')}`}>{countTerbit}</span>
+                </button>
+              </div>
+              <p className={`text-xs mt-1.5 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                {listTab === 'pengajuan' ? 'Draf, menunggu, perlu revisi, & menunggu penetapan menteri.' : 'Proses Bisnis yang sudah ditetapkan.'}
+              </p>
             </div>
 
             <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-2 sm:gap-3 w-full xl:w-auto xl:justify-end">
               {currentUser.role === 'admin' && (
                 <div className="relative w-full sm:w-56 xl:w-64">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Filter className={`h-4 w-4 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} /></div>
-                  <select value={filterUnit} onChange={(e) => setFilterUnit(e.target.value)} className={`w-full pl-10 pr-4 py-2 border rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}>
+                  <select value={filterUnit} onChange={(e) => setFilterUnit(e.target.value)} className={`w-full pl-10 pr-4 py-2.5 border rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}>
                     <option value="Semua">Unit Kerja: Semua</option>
                     {listUnitL1.filter(u => u !== 'Semua').map(unit => (<option key={unit as string} value={unit as string}>{unit as string}</option>))}
                   </select>
@@ -641,18 +743,19 @@ export default function BPMNDashboardPage() {
               )}
 
               <div className="relative w-full sm:w-40">
-                <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className={`w-full px-4 py-2 border rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}>
+                <select value={filterStatus} onChange={(e) => setFilterStatus(e.target.value)} className={`w-full px-4 py-2.5 border rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}>
                   <option value="Semua">Status: Semua</option>
                   <option value="draft">Status: Draft</option>
-                  <option value="pending">Status: Pending</option>
-                  <option value="approved">Status: Approved</option>
-                  <option value="rejected">Status: Rejected</option>
+                  <option value="pending">Status: Menunggu</option>
+                  <option value="rejected">Status: Perlu Revisi</option>
+                  <option value="penetapan">Status: Menunggu Penetapan</option>
+                  <option value="approved">Status: Ditetapkan</option>
                 </select>
               </div>
 
               <div className="relative w-full sm:w-64">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Search className={`h-4 w-4 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} /></div>
-                <input type="text" placeholder="Cari judul atau kode..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className={`w-full pl-10 pr-4 py-2 border rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white placeholder:text-slate-500' : 'bg-white border-slate-300 text-slate-900'}`} />
+                <input type="text" placeholder="Cari judul atau kode..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className={`w-full pl-10 pr-4 py-2.5 border rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white placeholder:text-slate-500' : 'bg-white border-slate-300 text-slate-900'}`} />
               </div>
             </div>
           </div>
@@ -671,17 +774,17 @@ export default function BPMNDashboardPage() {
               <tbody className={`divide-y ${isDarkMode ? 'divide-slate-800' : 'divide-slate-100'}`}>
                 {loading ? (
                   <tr><td colSpan={4} className={`px-6 py-12 text-center ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Memuat data...</td></tr>
-                ) : currentFilteredModels.length === 0 ? (
+                ) : visibleModels.length === 0 ? (
                   <tr>
                     <td colSpan={4} className="px-6 py-16 text-center">
                       <div className="flex flex-col items-center">
                         <Search className={`w-12 h-12 mb-3 ${isDarkMode ? 'text-slate-700' : 'text-slate-200'}`} />
-                        <p className={`font-medium text-base ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Tidak ada dokumen yang ditemukan.</p>
+                        <p className={`font-medium text-base ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{listTab === 'terbit' ? 'Belum ada Proses Bisnis yang disetujui.' : 'Tidak ada pengajuan Proses Bisnis.'}</p>
                       </div>
                     </td>
                   </tr>
                 ) : (
-                  currentFilteredModels.map((model) => (
+                  visibleModels.map((model) => (
                     <tr
                       key={model.id}
                       onClick={() => openPreview(model)}
@@ -728,17 +831,18 @@ export default function BPMNDashboardPage() {
                       <td className="px-6 py-4">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider border ${statusBadgeClass(model.status)}`}>
                           {model.status === 'approved' && <CheckCircle className="w-3 h-3" />}
+                          {model.status === 'penetapan' && <Landmark className="w-3 h-3" />}
                           {model.status === 'pending' && <Clock className="w-3 h-3" />}
                           {model.status === 'rejected' && <XCircle className="w-3 h-3" />}
                           {(!model.status || model.status === 'draft') && <FileEdit className="w-3 h-3" />}
-                          {model.status || 'DRAFT'}
+                          {statusLabel(model.status)}
                         </span>
                       </td>
                       <td className="px-6 py-4 text-center">
                         <div className="flex items-center justify-center gap-2">
                           <button
                             onClick={(e) => { e.stopPropagation(); router.push(`/bpmn/studio?id=${model.id}`); }}
-                            className="px-3 py-2 text-blue-600 hover:bg-blue-50 font-bold text-xs rounded-lg transition-colors flex items-center gap-1 border border-transparent hover:border-blue-200"
+                            className="px-3 py-2.5 text-blue-600 hover:bg-blue-50 font-bold text-xs rounded-lg transition-colors flex items-center gap-1 border border-transparent hover:border-blue-200"
                           >
                             <Edit className="w-4 h-4" /> Buka
                           </button>
@@ -746,24 +850,30 @@ export default function BPMNDashboardPage() {
                           {currentUser.role !== 'viewer' && (
                             <button
                               onClick={(e) => { e.stopPropagation(); openCopyModal(model); }}
-                              className={`p-2 rounded-lg transition-colors hover:text-amber-600 hover:bg-amber-50 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}
+                              className={`p-2.5 rounded-lg transition-colors hover:text-amber-600 hover:bg-amber-50 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}
                               title="Salin Dokumen"
                             >
                               <Copy className="w-4 h-4" />
                             </button>
                           )}
 
-                          {currentUser.role === 'admin' && model.status !== 'approved' && (
+                          {currentUser.role === 'admin' && model.status !== 'approved' && model.status !== 'penetapan' && (
                             <div className={`flex ml-2 border-l pl-2 gap-2 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
-                              <button onClick={(e) => { e.stopPropagation(); handleApprove(model); }} className="px-3 py-2 bg-emerald-100 hover:bg-emerald-500 hover:text-white text-emerald-700 text-[10px] font-extrabold rounded-lg uppercase transition-all shadow-sm">Setujui</button>
-                              <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '' }); }} className="px-3 py-2 bg-red-100 hover:bg-red-500 hover:text-white text-red-700 text-[10px] font-extrabold rounded-lg uppercase transition-all shadow-sm">Tolak</button>
+                              <button onClick={(e) => { e.stopPropagation(); handleApprove(model); }} className="px-3 py-2.5 bg-emerald-100 hover:bg-emerald-500 hover:text-white text-emerald-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm">Setujui</button>
+                              <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '' }); }} className="px-3 py-2.5 bg-red-100 hover:bg-red-500 hover:text-white text-red-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm">Tolak</button>
                             </div>
+                          )}
+                          {model.status === 'penetapan' && currentUser.role === 'admin' && (
+                            <button onClick={(e) => { e.stopPropagation(); handleDitetapkan(model); }} className="ml-2 px-3 py-2.5 bg-violet-100 hover:bg-violet-600 hover:text-white text-violet-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm flex items-center gap-1.5"><Landmark className="w-4 h-4" /> Ditetapkan</button>
+                          )}
+                          {model.status === 'penetapan' && currentUser.role !== 'admin' && (
+                            <span className="ml-2 px-2.5 py-1.5 text-[11px] font-bold text-violet-700 bg-violet-50 rounded-lg border border-violet-200">Menunggu penetapan menteri</span>
                           )}
 
                           {(currentUser.role === 'admin' || (model.created_by === currentUser.id && (model.status === 'draft' || model.status === 'rejected' || !model.status))) && (
                             <button
                               onClick={(e) => { e.stopPropagation(); deleteModel(model.id); }}
-                              className={`p-2 rounded-lg transition-colors hover:text-red-600 hover:bg-red-50 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}
+                              className={`p-2.5 rounded-lg transition-colors hover:text-red-600 hover:bg-red-50 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}
                               title="Hapus Dokumen"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -782,13 +892,13 @@ export default function BPMNDashboardPage() {
           <div className="md:hidden divide-y">
             {loading ? (
               <div className={`px-4 py-10 text-center text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Memuat data...</div>
-            ) : currentFilteredModels.length === 0 ? (
+            ) : visibleModels.length === 0 ? (
               <div className="px-4 py-12 text-center flex flex-col items-center">
                 <Search className={`w-10 h-10 mb-3 ${isDarkMode ? 'text-slate-700' : 'text-slate-200'}`} />
-                <p className={`text-sm font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Tidak ada dokumen ditemukan.</p>
+                <p className={`text-sm font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{listTab === 'terbit' ? 'Belum ada Proses Bisnis yang disetujui.' : 'Tidak ada pengajuan Proses Bisnis.'}</p>
               </div>
             ) : (
-              currentFilteredModels.map((model) => (
+              visibleModels.map((model) => (
                 <div
                   key={model.id}
                   onClick={() => openPreview(model)}
@@ -812,10 +922,11 @@ export default function BPMNDashboardPage() {
                     </div>
                     <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${statusBadgeClass(model.status)}`}>
                       {model.status === 'approved' && <CheckCircle className="w-3 h-3" />}
+                      {model.status === 'penetapan' && <Landmark className="w-3 h-3" />}
                       {model.status === 'pending' && <Clock className="w-3 h-3" />}
                       {model.status === 'rejected' && <XCircle className="w-3 h-3" />}
                       {(!model.status || model.status === 'draft') && <FileEdit className="w-3 h-3" />}
-                      {model.status || 'DRAFT'}
+                      {statusLabel(model.status)}
                     </span>
                   </div>
                   <div className="flex items-center justify-between mt-3">
@@ -824,12 +935,24 @@ export default function BPMNDashboardPage() {
                       {new Date(model.updated_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}
                     </span>
                     <div className="flex gap-1.5">
-                      <button onClick={(e) => { e.stopPropagation(); router.push(`/bpmn/studio?id=${model.id}`); }} className="px-2.5 py-1.5 text-blue-600 bg-blue-50 font-bold text-[11px] rounded-lg flex items-center gap-1"><Edit className="w-3 h-3" /> Buka</button>
+                      <button onClick={(e) => { e.stopPropagation(); router.push(`/bpmn/studio?id=${model.id}`); }} className="px-2.5 py-2.5 text-blue-600 bg-blue-50 font-bold text-xs rounded-lg flex items-center gap-1"><Edit className="w-3 h-3" /> Buka</button>
+                      {currentUser.role === 'admin' && model.status !== 'approved' && model.status !== 'penetapan' && (
+                        <>
+                          <button onClick={(e) => { e.stopPropagation(); handleApprove(model); }} className="px-2.5 py-2.5 bg-emerald-100 text-emerald-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Setujui"><CheckCircle className="w-3.5 h-3.5" /></button>
+                          <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '' }); }} className="px-2.5 py-2.5 bg-red-100 text-red-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Tolak"><XCircle className="w-3.5 h-3.5" /></button>
+                        </>
+                      )}
+                      {model.status === 'penetapan' && currentUser.role === 'admin' && (
+                        <button onClick={(e) => { e.stopPropagation(); handleDitetapkan(model); }} className="px-2.5 py-2.5 bg-violet-100 text-violet-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Ditetapkan"><Landmark className="w-3.5 h-3.5" /></button>
+                      )}
+                      {model.status === 'penetapan' && currentUser.role !== 'admin' && (
+                        <span className="px-2.5 py-2 text-[10px] font-bold text-violet-700 bg-violet-50 rounded-lg border border-violet-200 self-center">Penetapan</span>
+                      )}
                       {currentUser.role !== 'viewer' && (
-                        <button onClick={(e) => { e.stopPropagation(); openCopyModal(model); }} className={`p-1.5 rounded-lg hover:text-amber-600 hover:bg-amber-50 transition-colors ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} title="Salin"><Copy className="w-3.5 h-3.5" /></button>
+                        <button onClick={(e) => { e.stopPropagation(); openCopyModal(model); }} className={`p-2.5 rounded-lg hover:text-amber-600 hover:bg-amber-50 transition-colors ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} title="Salin"><Copy className="w-3.5 h-3.5" /></button>
                       )}
                       {(currentUser.role === 'admin' || (model.created_by === currentUser.id && (model.status === 'draft' || model.status === 'rejected' || !model.status))) && (
-                        <button onClick={(e) => { e.stopPropagation(); deleteModel(model.id); }} className={`p-1.5 rounded-lg hover:text-red-600 hover:bg-red-50 transition-colors ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}><Trash2 className="w-3.5 h-3.5" /></button>
+                        <button onClick={(e) => { e.stopPropagation(); deleteModel(model.id); }} className={`p-2.5 rounded-lg hover:text-red-600 hover:bg-red-50 transition-colors ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}><Trash2 className="w-3.5 h-3.5" /></button>
                       )}
                     </div>
                   </div>
@@ -839,6 +962,48 @@ export default function BPMNDashboardPage() {
           </div>
         </div>
       </div>
+
+      {/* MODAL PENETAPAN PROSES BISNIS */}
+      {penetapanModal.isOpen && penetapanModal.model && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => { if (!submittingPenetapan) setPenetapanModal({ isOpen: false, model: null, dasar: '', tanggal: '' }); }}>
+          <div className={`w-full max-w-md rounded-2xl shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col ${isDarkMode ? 'bg-[#151F32] border border-slate-700' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
+            <div className={`flex items-start gap-3 p-5 border-b ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+              <div className="w-10 h-10 rounded-xl bg-violet-100 text-violet-600 grid place-items-center shrink-0"><Landmark className="w-5 h-5" /></div>
+              <div className="flex-1 min-w-0">
+                <h3 className={`text-base font-bold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>Tetapkan Proses Bisnis</h3>
+                <p className={`text-xs mt-0.5 truncate ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{penetapanModal.model.process_title}</p>
+              </div>
+              <button onClick={() => { if (!submittingPenetapan) setPenetapanModal({ isOpen: false, model: null, dasar: '', tanggal: '' }); }} className={`${isDarkMode ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-700'}`}><X className="w-5 h-5" /></button>
+            </div>
+            <div className="p-5 space-y-4">
+              <p className={`text-xs leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Isi dasar penetapan Peraturan dan tanggalnya. Setelah ditetapkan, Proses Bisnis masuk <b className="text-emerald-600">Daftar Proses Bisnis</b>.</p>
+              <div>
+                <label className={`block text-xs font-bold mb-1.5 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Telah ditetapkan melalui <span className="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  value={penetapanModal.dasar}
+                  onChange={e => setPenetapanModal(prev => ({ ...prev, dasar: e.target.value }))}
+                  placeholder="Contoh: Kepmen/Permen ATR/BPN Nomor ... Tahun ..."
+                  className={`w-full px-3 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-violet-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white placeholder:text-slate-500' : 'bg-white border-slate-300 text-slate-900'}`}
+                />
+              </div>
+              <div>
+                <label className={`block text-xs font-bold mb-1.5 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Tanggal ditetapkan <span className="text-red-500">*</span></label>
+                <input
+                  type="date"
+                  value={penetapanModal.tanggal}
+                  onChange={e => setPenetapanModal(prev => ({ ...prev, tanggal: e.target.value }))}
+                  className={`w-full px-3 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-violet-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}
+                />
+              </div>
+            </div>
+            <div className={`flex justify-end gap-2 p-5 border-t ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+              <button onClick={() => setPenetapanModal({ isOpen: false, model: null, dasar: '', tanggal: '' })} disabled={submittingPenetapan} className={`px-4 py-2.5 text-sm font-bold rounded-xl border disabled:opacity-50 ${isDarkMode ? 'border-slate-600 text-slate-300' : 'border-slate-200 text-slate-600'}`}>Batal</button>
+              <button onClick={submitPenetapan} disabled={submittingPenetapan} className="px-5 py-2.5 text-sm font-bold bg-violet-600 hover:bg-violet-700 disabled:opacity-50 text-white rounded-xl flex items-center gap-2"><Landmark className="w-4 h-4" />{submittingPenetapan ? 'Menetapkan...' : 'Tetapkan'}</button>
+            </div>
+          </div>
+        </div>
+      )}
     </>
   );
 }

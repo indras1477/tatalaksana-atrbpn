@@ -306,12 +306,12 @@ export default function JuknisPage() {
         {/* ── Tab Switcher — hanya user (terbatas) ── */}
         {isUser && (
           <>
-            <div className={`inline-flex gap-1.5 p-1.5 rounded-2xl border ${dm ? 'bg-[#0B1121] border-slate-800' : 'bg-slate-100 border-slate-200/80'}`}>
+            <div className={`flex flex-col sm:flex-row w-full sm:w-auto gap-1.5 p-1.5 rounded-2xl border ${dm ? 'bg-[#0B1121] border-slate-800' : 'bg-slate-100 border-slate-200/80'}`}>
               {/* Tab: Unit Kerja Saya */}
               {/* Tab Unit Kerja — biru */}
               <button
                 onClick={() => switchTab('unit')}
-                className={`flex items-center gap-3 px-5 py-3 rounded-xl text-sm font-bold transition-all ${
+                className={`flex items-center gap-2 px-3 sm:px-5 py-3 rounded-xl text-sm font-bold transition-all w-full sm:w-auto justify-center sm:justify-start ${
                   activeTab === 'unit'
                     ? dm
                       ? 'bg-blue-600 text-white shadow-lg shadow-blue-900/40'
@@ -337,7 +337,7 @@ export default function JuknisPage() {
               {/* Tab Kementerian — amber */}
               <button
                 onClick={() => switchTab('kementerian')}
-                className={`flex items-center gap-3 px-5 py-3 rounded-xl text-sm font-bold transition-all ${
+                className={`flex items-center gap-2 px-3 sm:px-5 py-3 rounded-xl text-sm font-bold transition-all w-full sm:w-auto justify-center sm:justify-start ${
                   activeTab === 'kementerian'
                     ? dm
                       ? 'bg-amber-600 text-white shadow-lg shadow-amber-900/40'
@@ -546,15 +546,15 @@ export default function JuknisPage() {
                         <div className="flex items-center justify-center gap-2">
                           {doc.link && (
                             <a href={doc.link} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
-                              className={`inline-flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-bold transition-all ${dm ? 'bg-blue-900/40 text-blue-400 hover:bg-blue-600 hover:text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white'}`}>
+                              className={`inline-flex items-center gap-1 px-3 py-2.5 rounded-lg text-xs font-bold transition-all ${dm ? 'bg-blue-900/40 text-blue-400 hover:bg-blue-600 hover:text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white'}`}>
                               Buka <ExternalLink className="w-3 h-3" />
                             </a>
                           )}
                           {/* Edit/Hapus: admin selalu, user jika creator atau unit sama */}
                           {(isAdmin || (isUser && (doc.created_by === currentUser?.id || (userUnit && doc.unit_l1?.toLowerCase().trim() === userUnit)))) && (
                             <>
-                              <button onClick={e => { e.stopPropagation(); openEdit(doc); }} className={`text-xs font-bold transition-colors ${dm ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'}`}>Edit</button>
-                              <button onClick={e => { e.stopPropagation(); handleDelete(doc.id); }} className={`text-xs font-bold transition-colors ${dm ? 'text-red-400 hover:text-red-300' : 'text-red-500 hover:text-red-600'}`}>Hapus</button>
+                              <button onClick={e => { e.stopPropagation(); openEdit(doc); }} className={`px-2.5 py-2.5 inline-flex items-center min-h-11 text-xs font-bold transition-colors ${dm ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'}`}>Edit</button>
+                              <button onClick={e => { e.stopPropagation(); handleDelete(doc.id); }} className={`px-2.5 py-2.5 inline-flex items-center min-h-11 text-xs font-bold transition-colors ${dm ? 'text-red-400 hover:text-red-300' : 'text-red-500 hover:text-red-600'}`}>Hapus</button>
                             </>
                           )}
                         </div>
@@ -579,11 +579,11 @@ export default function JuknisPage() {
                 <span className={`text-xs ${dm ? 'text-slate-400' : 'text-slate-500'}`}>per halaman &mdash; menampilkan {(safePage - 1) * pageSize + 1}–{Math.min(safePage * pageSize, sorted.length)} dari <span className="font-bold">{sorted.length}</span></span>
               </div>
               <div className="flex items-center gap-1">
-                <button onClick={() => setPage(1)} disabled={safePage === 1} className={`px-2 py-1.5 rounded-lg text-xs font-bold transition-colors disabled:opacity-30 ${dm ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-100 text-slate-600'}`}>«</button>
-                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage === 1} className={`p-1.5 rounded-lg transition-colors disabled:opacity-30 ${dm ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-100 text-slate-600'}`}><ChevronLeft className="w-4 h-4" /></button>
+                <button onClick={() => setPage(1)} disabled={safePage === 1} className={`px-3 py-3 rounded-lg text-xs font-bold transition-colors disabled:opacity-30 ${dm ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-100 text-slate-600'}`}>«</button>
+                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage === 1} className={`p-3 rounded-lg transition-colors disabled:opacity-30 ${dm ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-100 text-slate-600'}`}><ChevronLeft className="w-4 h-4" /></button>
                 <span className={`px-3 py-1 text-xs font-bold ${dm ? 'text-white' : 'text-slate-700'}`}>{safePage} / {totalPages}</span>
-                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={safePage === totalPages} className={`p-1.5 rounded-lg transition-colors disabled:opacity-30 ${dm ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-100 text-slate-600'}`}><ChevronRight className="w-4 h-4" /></button>
-                <button onClick={() => setPage(totalPages)} disabled={safePage === totalPages} className={`px-2 py-1.5 rounded-lg text-xs font-bold transition-colors disabled:opacity-30 ${dm ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-100 text-slate-600'}`}>»</button>
+                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={safePage === totalPages} className={`p-3 rounded-lg transition-colors disabled:opacity-30 ${dm ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-100 text-slate-600'}`}><ChevronRight className="w-4 h-4" /></button>
+                <button onClick={() => setPage(totalPages)} disabled={safePage === totalPages} className={`px-3 py-3 rounded-lg text-xs font-bold transition-colors disabled:opacity-30 ${dm ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-100 text-slate-600'}`}>»</button>
               </div>
             </div>
           )}
@@ -614,7 +614,7 @@ export default function JuknisPage() {
                 </span>
                 <h3 className={`text-sm font-extrabold leading-snug line-clamp-2 ${dm ? 'text-white' : 'text-[#002855]'}`}>{previewDoc.judul}</h3>
               </div>
-              <button onClick={() => setPreviewDoc(null)} className={`p-1.5 rounded-lg shrink-0 transition-colors ${dm ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-200 text-slate-500'}`}>
+              <button onClick={() => setPreviewDoc(null)} className={`p-2.5 rounded-lg shrink-0 transition-colors ${dm ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-200 text-slate-500'}`}>
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -642,19 +642,19 @@ export default function JuknisPage() {
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
                 {previewDoc.unit_l1 && (
                   <div className={`col-span-2 p-2.5 rounded-lg ${dm ? 'bg-[#151F32] border border-slate-800' : 'bg-white border border-slate-100'}`}>
-                    <p className={`text-[9px] font-bold uppercase tracking-wider mb-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>Unit Kerja</p>
+                    <p className={`text-[10px] font-bold uppercase tracking-wider mb-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>Unit Kerja</p>
                     <p className={`text-[11px] font-semibold leading-snug ${dm ? 'text-slate-300' : 'text-slate-700'}`}>{previewDoc.unit_l1}</p>
                     {previewDoc.unit_l2 && <p className={`text-[10px] mt-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>{previewDoc.unit_l2}</p>}
                   </div>
                 )}
                 {previewDoc.nomor && (
                   <div className={`p-2.5 rounded-lg ${dm ? 'bg-[#151F32] border border-slate-800' : 'bg-white border border-slate-100'}`}>
-                    <p className={`text-[9px] font-bold uppercase tracking-wider mb-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>Nomor</p>
+                    <p className={`text-[10px] font-bold uppercase tracking-wider mb-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>Nomor</p>
                     <p className={`text-[11px] font-mono font-semibold break-all ${dm ? 'text-slate-300' : 'text-slate-700'}`}>{previewDoc.nomor}</p>
                   </div>
                 )}
                 <div className={`p-2.5 rounded-lg ${dm ? 'bg-[#151F32] border border-slate-800' : 'bg-white border border-slate-100'}`}>
-                  <p className={`text-[9px] font-bold uppercase tracking-wider mb-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>Tahun / Terbit</p>
+                  <p className={`text-[10px] font-bold uppercase tracking-wider mb-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>Tahun / Terbit</p>
                   <p className={`text-[11px] font-bold ${dm ? 'text-slate-300' : 'text-slate-700'}`}>{previewDoc.tahun || '—'}</p>
                   {previewDoc.tanggal_terbit && (
                     <p className={`text-[10px] mt-0.5 flex items-center gap-1 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>
@@ -711,7 +711,7 @@ export default function JuknisPage() {
               </div>
 
               {/* Jenis + Tahun */}
-              <div className="grid grid-cols-2 gap-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 <div>
                   <label className={`block text-sm font-extrabold mb-2 ${dm ? 'text-slate-300' : 'text-slate-700'}`}>Jenis Dokumen</label>
                   <select value={formData.jenis} onChange={e => setFormData({ ...formData, jenis: e.target.value as 'Juknis'|'Juklak'|'SE' })} className={`w-full px-4 py-3 border rounded-xl text-sm font-medium focus:ring-4 outline-none transition-all cursor-pointer ${dm ? 'bg-[#0F172A] border-slate-700 text-white focus:ring-blue-500/20' : 'bg-slate-50 border-slate-200 text-slate-800 focus:ring-blue-100'}`}>

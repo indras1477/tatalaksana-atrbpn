@@ -10,6 +10,14 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
+  const [sessionExpiredMsg, setSessionExpiredMsg] = useState('');
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('expired') === '1') {
+      setSessionExpiredMsg('Sesi Anda telah berakhir. Silakan login kembali.');
+    }
+  }, []);
 
   useEffect(() => {
     const checkSession = async () => {
@@ -89,7 +97,7 @@ export default function LoginPage() {
   return (
     <div className="min-h-screen bg-linear-to-br from-violet-50 via-white to-indigo-50 flex items-center justify-center p-4">
       <div className="w-full max-w-md">
-        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-8">
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-5 sm:p-8">
           {/* Logo & Title */}
           <div className="flex flex-col items-center mb-8">
             {/* eslint-disable-next-line @next/next/no-img-element */}
@@ -98,7 +106,7 @@ export default function LoginPage() {
               alt="Logo ATR/BPN"
               className="h-16 w-16 object-contain mb-4"
             />
-            <h1 className="text-2xl font-bold text-gray-900 text-center">
+            <h1 className="text-lg sm:text-2xl font-bold text-gray-900 text-center">
               Sistem Informasi Manajemen Prosedur dan Pelayanan (SIMPEL)
             </h1>
             <p className="text-base font-semibold text-gray-700 mt-1 text-center">
@@ -106,6 +114,12 @@ export default function LoginPage() {
             </p>
             <p className="text-sm text-gray-500 mt-1">Masuk ke akun Anda</p>
           </div>
+
+          {sessionExpiredMsg && (
+            <div className="mb-5 p-3 bg-amber-50 border border-amber-200 rounded-lg">
+              <p className="text-amber-700 text-sm text-center">{sessionExpiredMsg}</p>
+            </div>
+          )}
 
           {/* Form */}
           <form onSubmit={handleLogin} className="space-y-5">
@@ -118,7 +132,7 @@ export default function LoginPage() {
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}
                 placeholder="Masukkan username"
-                className="w-full px-4 py-2.5 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-violet-500 text-sm text-gray-800 placeholder:text-gray-400 bg-gray-50 focus:bg-white transition-colors"
+                className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-violet-500 text-sm text-gray-800 placeholder:text-gray-400 bg-gray-50 focus:bg-white transition-colors"
                 required
               />
             </div>
@@ -133,13 +147,13 @@ export default function LoginPage() {
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
-                  className="w-full px-4 py-2.5 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-violet-500 text-sm pr-10 text-gray-800 placeholder:text-gray-400 bg-gray-50 focus:bg-white transition-colors"
+                  className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-violet-500 text-sm pr-10 text-gray-800 placeholder:text-gray-400 bg-gray-50 focus:bg-white transition-colors"
                   required
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                  className="absolute right-1 top-1/2 -translate-y-1/2 p-3 text-gray-400 hover:text-gray-600"
                 >
                   {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                 </button>
@@ -168,7 +182,7 @@ export default function LoginPage() {
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-linear-to-r from-violet-600 to-indigo-600 text-white px-5 py-2.5 rounded-lg font-medium hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2"
+              className="w-full bg-linear-to-r from-violet-600 to-indigo-600 text-white px-5 py-3 rounded-lg font-medium hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2"
             >
               {loading && <Loader2 className="w-4 h-4 animate-spin" />}
               {loading ? 'Memproses...' : 'Masuk'}
@@ -176,7 +190,7 @@ export default function LoginPage() {
           </form>
         </div>
 
-        <p className="text-center text-xs text-gray-500 mt-6 leading-relaxed">
+        <p className="text-center text-sm text-gray-500 mt-6 leading-relaxed">
           Dibuat oleh{' '}
           <a
             href="https://www.instagram.com/ferdiansyah_nanda"

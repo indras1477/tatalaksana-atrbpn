@@ -1,10 +1,15 @@
 const express = require('express');
 const cors = require('cors');
-const { Pool } = require('pg');
+const pg = require('pg');
+const { Pool } = pg;
+// Kembalikan kolom DATE (OID 1082) apa adanya sebagai string 'YYYY-MM-DD' — cegah pergeseran
+// 1 hari akibat konversi zona waktu saat pg mem-parse DATE menjadi objek Date.
+pg.types.setTypeParser(1082, (v) => v);
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const puppeteer = require('puppeteer');
+const { PDFDocument } = require('pdf-lib');
 const rateLimit = require('express-rate-limit');
 require('dotenv').config({ path: __dirname + '/.env' });
 
@@ -287,6 +292,43 @@ const initDatabase = async () => {
       END $$;
     `);
 
+    // MIGRASI: tabel cover SOP bertanda tangan (dipisah dari sop_models agar list tetap ringan).
+    // Cover diunggah setelah SOP 'approved' (disetujui Biro Ortala MR); saat cover masuk,
+    // status SOP menjadi 'terbit' dan dokumen pindah ke Daftar SOP.
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS sop_covers (
+        sop_id INTEGER PRIMARY KEY REFERENCES sop_models(id) ON DELETE CASCADE,
+        data TEXT NOT NULL,
+        filename VARCHAR(255),
+        mime VARCHAR(100),
+        uploaded_by INTEGER REFERENCES users(id),
+        uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+    `);
+
+    // MIGRASI: tautkan entri registry `dokumen` ke model sumbernya (bpmn/sop) agar sinkronisasi
+    // idempoten (1 entri per model, tanpa duplikat saat approve berulang). Index unik parsial —
+    // baris impor lama (source_type NULL) tidak terpengaruh.
+    await client.query(`
+      DO $$
+      BEGIN
+        BEGIN ALTER TABLE dokumen ADD COLUMN source_type VARCHAR(20); EXCEPTION WHEN duplicate_column THEN NULL; END;
+        BEGIN ALTER TABLE dokumen ADD COLUMN source_id INTEGER; EXCEPTION WHEN duplicate_column THEN NULL; END;
+      END $$;
+    `);
+    await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS dokumen_source_uniq ON dokumen(source_type, source_id) WHERE source_type IS NOT NULL;`);
+
+    // MIGRASI: informasi penetapan SOP & BPMN (diisi admin saat menekan "Ditetapkan").
+    await client.query(`
+      DO $$
+      BEGIN
+        BEGIN ALTER TABLE sop_models ADD COLUMN penetapan_dasar VARCHAR(500); EXCEPTION WHEN duplicate_column THEN NULL; END;
+        BEGIN ALTER TABLE sop_models ADD COLUMN penetapan_tanggal DATE; EXCEPTION WHEN duplicate_column THEN NULL; END;
+        BEGIN ALTER TABLE bpmn_models ADD COLUMN penetapan_dasar VARCHAR(500); EXCEPTION WHEN duplicate_column THEN NULL; END;
+        BEGIN ALTER TABLE bpmn_models ADD COLUMN penetapan_tanggal DATE; EXCEPTION WHEN duplicate_column THEN NULL; END;
+      END $$;
+    `);
+
     // MIGRASI: perpanjang kolom judul/nama (255 → 500) — judul proses ATR/BPN bisa sangat panjang
     await client.query(`
       DO $$
@@ -341,6 +383,9 @@ const authenticate = async (req, res, next) => {
     req.user = decoded;
     next();
   } catch (err) {
+    if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Sesi berakhir, silakan login kembali' });
+    }
     res.status(401).json({ error: 'Invalid token' });
   }
 };
@@ -367,7 +412,7 @@ const logAudit = async (userId, username, action, resource, resourceId, detail, 
 app.get('/api/users', authenticate, requireRole('admin'), async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT u.id, u.username, u.nama_lengkap, u.email, u.active, u.unit_l1, u.unit_l2, u.last_login, u.plain_password, r.name as role
+      SELECT u.id, u.username, u.nama_lengkap, u.email, u.active, u.unit_l1, u.unit_l2, u.last_login, r.name as role
       FROM users u
       JOIN roles r ON u.role_id = r.id
       ORDER BY u.id ASC
@@ -384,9 +429,9 @@ app.post('/api/users', authenticate, requireRole('admin'), async (req, res) => {
     const roleId = roleResult.rows[0]?.id || 2;
 
     const result = await pool.query(
-      `INSERT INTO users (username, password, plain_password, nama_lengkap, email, role_id, unit_l1, unit_l2)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, username`,
-      [username, hashedPassword, password, nama_lengkap, email, roleId, unit_l1, unit_l2]
+      `INSERT INTO users (username, password, nama_lengkap, email, role_id, unit_l1, unit_l2)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, username`,
+      [username, hashedPassword, nama_lengkap, email, roleId, unit_l1, unit_l2]
     );
     
     await logAudit(req.user.id, req.user.username, 'CREATE_USER', 'users', result.rows[0].id, `User ${username} created`, req.ip);
@@ -406,9 +451,9 @@ app.put('/api/users/:id', authenticate, requireRole('admin'), async (req, res) =
     if (password && password.trim() !== '') {
       const hashedPassword = await bcrypt.hash(password, 10);
       result = await pool.query(
-        `UPDATE users SET username=$1, password=$2, plain_password=$3, nama_lengkap=$4, email=$5, role_id=$6, unit_l1=$7, unit_l2=$8, active=$9
-         WHERE id=$10 RETURNING id`,
-        [username, hashedPassword, password, nama_lengkap, email, roleId, unit_l1, unit_l2, active, id]
+        `UPDATE users SET username=$1, password=$2, nama_lengkap=$3, email=$4, role_id=$5, unit_l1=$6, unit_l2=$7, active=$8
+         WHERE id=$9 RETURNING id`,
+        [username, hashedPassword, nama_lengkap, email, roleId, unit_l1, unit_l2, active, id]
       );
     } else {
       result = await pool.query(
@@ -433,9 +478,9 @@ app.put('/api/users/me', authenticate, async (req, res) => {
     if (password && password.trim() !== '') {
       const hashedPassword = await bcrypt.hash(password, 10);
       result = await pool.query(
-        `UPDATE users SET username=$1, password=$2, plain_password=$3, nama_lengkap=$4, unit_l1=$5, unit_l2=$6
-         WHERE id=$7 RETURNING id`,
-        [username, hashedPassword, password, nama_lengkap, unit_l1, unit_l2, userId]
+        `UPDATE users SET username=$1, password=$2, nama_lengkap=$3, unit_l1=$4, unit_l2=$5
+         WHERE id=$6 RETURNING id`,
+        [username, hashedPassword, nama_lengkap, unit_l1, unit_l2, userId]
       );
     } else {
       result = await pool.query(
@@ -456,12 +501,20 @@ app.put('/api/users/me', authenticate, async (req, res) => {
 
 app.delete('/api/users/:id', authenticate, requireRole('admin'), async (req, res) => {
   const { id } = req.params;
+  const client = await pool.connect();
   try {
-    await pool.query("DELETE FROM sessions WHERE user_id = $1", [id]);
-    await pool.query("DELETE FROM users WHERE id = $1", [id]);
+    await client.query('BEGIN');
+    await client.query("DELETE FROM sessions WHERE user_id = $1", [id]);
+    await client.query("DELETE FROM users WHERE id = $1", [id]);
+    await client.query('COMMIT');
     await logAudit(req.user.id, req.user.username, 'DELETE_USER', 'users', id, null, req.ip);
     res.json({ success: true });
-  } catch (err) { res.status(500).json({ error: err.message }); }
+  } catch (err) {
+    await client.query('ROLLBACK');
+    res.status(500).json({ error: err.message });
+  } finally {
+    client.release();
+  }
 });
 
 // ============ AUTH ROUTES ============
@@ -492,24 +545,31 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
     const token = jwt.sign(
       { id: user.id, username: user.username, role: userRole, unit_l1: user.unit_l1, unit_l2: user.unit_l2 },
       JWT_SECRET,
-      { expiresIn: remember ? '120h' : '4h' }
+      { expiresIn: remember ? '120h' : '8h' }
     );
-    
-    const expiresAt = new Date(Date.now() + (remember ? 120 * 3600000 : 4 * 3600000));
+
+    const expiresAt = new Date(Date.now() + (remember ? 120 * 3600000 : 8 * 3600000));
     const sessionId = crypto.randomUUID();
 
-    // Bersihkan sesi kedaluwarsa sebelum insert (#19)
-    await pool.query("DELETE FROM sessions WHERE expires_at < NOW()");
-
-    await pool.query(
-      `INSERT INTO sessions (id, user_id, token, expires_at, ip_address, user_agent)
-       VALUES ($1, $2, $3, $4, $5, $6)
-       ON CONFLICT (user_id) DO UPDATE
-         SET id = $1, token = $3, expires_at = $4, ip_address = $5, user_agent = $6`,
-      [sessionId, user.id, token, expiresAt, req.ip, req.headers['user-agent']]
-    );
-    
-    await pool.query("UPDATE users SET last_login = NOW() WHERE id = $1", [user.id]);
+    const loginClient = await pool.connect();
+    try {
+      await loginClient.query('BEGIN');
+      await loginClient.query("DELETE FROM sessions WHERE expires_at < NOW()");
+      await loginClient.query(
+        `INSERT INTO sessions (id, user_id, token, expires_at, ip_address, user_agent)
+         VALUES ($1, $2, $3, $4, $5, $6)
+         ON CONFLICT (user_id) DO UPDATE
+           SET id = $1, token = $3, expires_at = $4, ip_address = $5, user_agent = $6`,
+        [sessionId, user.id, token, expiresAt, req.ip, req.headers['user-agent']]
+      );
+      await loginClient.query("UPDATE users SET last_login = NOW() WHERE id = $1", [user.id]);
+      await loginClient.query('COMMIT');
+    } catch (txErr) {
+      await loginClient.query('ROLLBACK');
+      throw txErr;
+    } finally {
+      loginClient.release();
+    }
     await logAudit(user.id, user.username, 'LOGIN', 'auth', null, null, req.ip);
     
     res.json({ 
@@ -549,33 +609,43 @@ app.get('/api/unit-kerja/l3', authenticate, async (req, res) => {
 
 // ============ UNIT KERJA TREE (proxy ke kehadiran.ortalamr.id) ============
 const _kehadiranCache = { token: null, tokenExpiry: 0, tree: null, treeExpiry: 0 };
+let _tokenPromise = null;
+let _treePromise = null;
 
 async function _getKehadiranToken() {
   if (_kehadiranCache.token && Date.now() < _kehadiranCache.tokenExpiry) return _kehadiranCache.token;
-  const r = await fetch('https://kehadiran.ortalamr.id/api/auth/token', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ client_id: 'simpel-esop', client_secret: '7ad55d9ae5633b9c4a589aef903417cc125796625a562ffe4df86dfb6ce4dafe' })
-  });
-  if (!r.ok) throw new Error('Gagal ambil token kehadiran');
-  const d = await r.json();
-  _kehadiranCache.token = d.access_token;
-  _kehadiranCache.tokenExpiry = Date.now() + ((d.expires_in ?? 3600) - 60) * 1000;
-  return _kehadiranCache.token;
+  if (_tokenPromise) return _tokenPromise;
+  _tokenPromise = (async () => {
+    const r = await fetch('https://kehadiran.ortalamr.id/api/auth/token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ client_id: 'simpel-esop', client_secret: '7ad55d9ae5633b9c4a589aef903417cc125796625a562ffe4df86dfb6ce4dafe' })
+    });
+    if (!r.ok) throw new Error('Gagal ambil token kehadiran');
+    const d = await r.json();
+    _kehadiranCache.token = d.access_token;
+    _kehadiranCache.tokenExpiry = Date.now() + ((d.expires_in ?? 3600) - 60) * 1000;
+    return _kehadiranCache.token;
+  })().finally(() => { _tokenPromise = null; });
+  return _tokenPromise;
 }
 
 app.get('/api/unit-kerja/tree', authenticate, async (req, res) => {
   try {
     if (_kehadiranCache.tree && Date.now() < _kehadiranCache.treeExpiry) return res.json(_kehadiranCache.tree);
-    const token = await _getKehadiranToken();
-    const r = await fetch('https://kehadiran.ortalamr.id/api/master-data/unit-kerja/external', {
-      headers: { Authorization: `Bearer ${token}` }
-    });
-    if (!r.ok) throw new Error('Gagal ambil data unit kerja dari kehadiran');
-    const data = await r.json();
-    _kehadiranCache.tree = data;
-    _kehadiranCache.treeExpiry = Date.now() + 3600000;
-    res.json(data);
+    if (_treePromise) return res.json(await _treePromise);
+    _treePromise = (async () => {
+      const token = await _getKehadiranToken();
+      const r = await fetch('https://kehadiran.ortalamr.id/api/master-data/unit-kerja/external', {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      if (!r.ok) throw new Error('Gagal ambil data unit kerja dari kehadiran');
+      const data = await r.json();
+      _kehadiranCache.tree = data;
+      _kehadiranCache.treeExpiry = Date.now() + 3600000;
+      return data;
+    })().finally(() => { _treePromise = null; });
+    res.json(await _treePromise);
   } catch (err) {
     res.status(502).json({ error: err.message });
   }
@@ -652,6 +722,45 @@ app.post('/api/dokumen', authenticate, requireRole('admin'), async (req, res) =>
   );
   res.json(result.rows[0]);
 });
+
+// Sinkronisasi entri registry `dokumen` dari model aplikasi (idempoten, 1 baris per model).
+// Dipanggil saat BPMN 'approved' & SOP 'terbit'. `row` = baris model (id, process_title, l1_id, l2_id, created_by).
+async function syncDokumenFromModel({ type, jenis, row, status }) {
+  // Pastikan unit tertaut agar masuk Rekapitulasi per Unit/Sub-Unit di Dashboard.
+  // Bila l1_id/l2_id model kosong (mis. lookup gagal karena beda kapitalisasi saat simpan),
+  // resolusi ulang dari nama unit di sop_data secara case-insensitive (ILIKE).
+  let l1 = row.l1_id, l2 = row.l2_id;
+  if (!l1 && type === 'sop' && row.sop_data) {
+    try {
+      const j = JSON.parse(row.sop_data);
+      if (j && j.unitKerja) {
+        const r1 = await pool.query('SELECT id FROM unit_kerja_l1 WHERE nama ILIKE $1 LIMIT 1', [String(j.unitKerja).trim()]);
+        if (r1.rows[0]) {
+          l1 = r1.rows[0].id;
+          if (j.subUnitKerja) {
+            const r2 = await pool.query('SELECT id FROM unit_kerja_l2 WHERE nama ILIKE $1 AND l1_id = $2 LIMIT 1', [String(j.subUnitKerja).trim(), l1]);
+            if (r2.rows[0]) l2 = r2.rows[0].id;
+          }
+        }
+      }
+    } catch (e) { /* abaikan parse error */ }
+  }
+  const link = type === 'bpmn'
+    ? `/bpmn?id=${row.id}&mode=view`
+    : `/e-sop-atrbpn/sop/studio?id=${row.id}&mode=view`;
+  const tahun = String(new Date().getFullYear());
+  await pool.query(`
+    INSERT INTO dokumen (nama, jenis, tahun, l1_id, l2_id, link, sumber, status, source_type, source_id, created_by)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)
+    ON CONFLICT (source_type, source_id) WHERE source_type IS NOT NULL DO UPDATE
+      SET nama = EXCLUDED.nama, jenis = EXCLUDED.jenis, tahun = EXCLUDED.tahun,
+          l1_id = EXCLUDED.l1_id, l2_id = EXCLUDED.l2_id, link = EXCLUDED.link,
+          status = EXCLUDED.status, updated_at = NOW()
+  `, [row.process_title, jenis, tahun, l1, l2, link, 'Aplikasi', status, type, row.id, row.created_by || null]);
+}
+async function removeDokumenForModel(type, id) {
+  await pool.query('DELETE FROM dokumen WHERE source_type = $1 AND source_id = $2', [type, id]);
+}
 
 app.put('/api/dokumen/:id', authenticate, requireRole('admin'), async (req, res) => {
   try {
@@ -760,6 +869,10 @@ app.post('/api/bpmn/models', authenticate, async (req, res) => {
 
 app.put('/api/bpmn/models/:id', authenticate, async (req, res) => {
   try {
+    const lockChk = await pool.query('SELECT status FROM bpmn_models WHERE id = $1', [req.params.id]);
+    if (lockChk.rows.length > 0 && ['penetapan', 'approved'].includes(lockChk.rows[0].status)) {
+      return res.status(403).json({ error: 'Proses Bisnis terkunci (penetapan/ditetapkan). Buat salinan untuk merevisi.' });
+    }
     const { process_title, process_key, l1_id, l2_id, description, bpmn_xml, svg_xml, status, jenis_proses, klasifikasi_proses } = req.body;
     const result = await pool.query(
       `UPDATE bpmn_models
@@ -789,6 +902,10 @@ app.put('/api/bpmn/models/:id', authenticate, async (req, res) => {
 
 app.put('/api/bpmn/models/:id/save', authenticate, async (req, res) => {
   try {
+    const lockChk = await pool.query('SELECT status FROM bpmn_models WHERE id = $1', [req.params.id]);
+    if (lockChk.rows.length > 0 && ['penetapan', 'approved'].includes(lockChk.rows[0].status)) {
+      return res.status(403).json({ error: 'Proses Bisnis terkunci (penetapan/ditetapkan). Buat salinan untuk merevisi.' });
+    }
     const { bpmn_xml, svg_xml, status } = req.body;
     const result = await pool.query(
       `UPDATE bpmn_models 
@@ -806,20 +923,29 @@ app.put('/api/bpmn/models/:id/save', authenticate, async (req, res) => {
 app.delete('/api/bpmn/models/:id', authenticate, async (req, res) => {
   try {
     await pool.query('DELETE FROM bpmn_models WHERE id = $1', [req.params.id]);
+    await removeDokumenForModel('bpmn', req.params.id);
     res.json({ success: true });
   } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
 });
 
 app.patch('/api/bpmn/models/status/:id', authenticate, requireRole('admin'), async (req, res) => {
   const { id } = req.params;
-  const { status, catatan } = req.body;
+  const { status, catatan, penetapan_dasar, penetapan_tanggal } = req.body;
   if (!status) return res.status(400).json({ error: 'Status wajib diisi' });
   try {
     const result = await pool.query(
-      'UPDATE bpmn_models SET status = $1::varchar, catatan = $2, updated_at = NOW() WHERE id = $3 RETURNING *',
-      [status, catatan || null, id]
+      `UPDATE bpmn_models SET status = $1::varchar, catatan = $2, updated_at = NOW(),
+         penetapan_dasar = COALESCE($4, penetapan_dasar),
+         penetapan_tanggal = COALESCE($5, penetapan_tanggal)
+       WHERE id = $3 RETURNING *`,
+      [status, catatan || null, id, penetapan_dasar || null, penetapan_tanggal || null]
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'BPMN Model tidak ditemukan' });
+    // Sinkronkan ke registry Dashboard: masuk saat approved, keluar bila tidak.
+    try {
+      if (status === 'approved') await syncDokumenFromModel({ type: 'bpmn', jenis: 'Proses Bisnis', row: result.rows[0], status: 'approved' });
+      else await removeDokumenForModel('bpmn', id);
+    } catch (e) { console.error('Sync dokumen BPMN gagal:', e.message); }
     res.json(result.rows[0]);
   } catch (err) { console.error('Error update status BPMN:', err); res.status(500).json({ error: 'Internal Server Error' }); }
 });
@@ -829,6 +955,11 @@ app.patch('/api/bpmn/models/:id/meta', authenticate, async (req, res) => {
   const { process_title, jenis_proses, klasifikasi_proses } = req.body;
   if (!process_title || !process_title.trim()) return res.status(400).json({ error: 'Judul tidak boleh kosong' });
   try {
+    // Terkunci setelah masuk penetapan/ditetapkan.
+    const cur = await pool.query('SELECT status FROM bpmn_models WHERE id = $1', [id]);
+    if (cur.rows.length > 0 && ['penetapan', 'approved'].includes(cur.rows[0].status)) {
+      return res.status(403).json({ error: 'Proses Bisnis sudah dalam penetapan/ditetapkan dan terkunci. Buat salinan untuk merevisi.' });
+    }
     const result = await pool.query(
       `UPDATE bpmn_models SET process_title = $1, jenis_proses = $2, klasifikasi_proses = $3, updated_at = NOW()
        WHERE id = $4 RETURNING id, process_title, jenis_proses, klasifikasi_proses, updated_at`,
@@ -876,7 +1007,8 @@ app.get('/api/sop/models', authenticate, async (req, res) => {
     const { id, role, unit_l1, unit_l2 } = req.user;
     
     let query = `
-      SELECT s.*, u1.nama as unit_l1, u2.nama as unit_l2
+      SELECT s.*, u1.nama as unit_l1, u2.nama as unit_l2,
+             EXISTS(SELECT 1 FROM sop_covers c WHERE c.sop_id = s.id) AS has_cover
       FROM sop_models s
       LEFT JOIN unit_kerja_l1 u1 ON s.l1_id = u1.id
       LEFT JOIN unit_kerja_l2 u2 ON s.l2_id = u2.id
@@ -930,17 +1062,45 @@ app.get('/api/sop/models/:id', authenticate, async (req, res) => {
 });
 
 // ====== EXPORT PDF VEKTOR (F4 330x215mm) via headless Chrome ======
+// Semaphore: batasi max 2 render Puppeteer berjalan bersamaan agar RAM tidak habis.
+const _pdfSemaphore = (() => {
+  let running = 0;
+  const MAX = 2;
+  const queue = [];
+  return {
+    acquire: () => new Promise((resolve) => {
+      if (running < MAX) { running++; resolve(); }
+      else queue.push(resolve);
+    }),
+    release: () => {
+      running--;
+      if (queue.length) { running++; queue.shift()(); }
+    }
+  };
+})();
+
+const pdfLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 5,
+  message: { error: 'Terlalu banyak permintaan PDF. Coba lagi dalam 1 menit.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // Merender halaman studio (mode view) memakai mesin cetak Chromium pada ukuran F4 persis,
 // menghasilkan PDF VEKTOR (teks bisa diseleksi) yang diunduh langsung — tanpa dialog cetak.
 const PDF_BASE_URL = process.env.PDF_BASE_URL || 'https://tlrb.ortalamr.id/e-sop-atrbpn';
-app.get('/api/sop/models/:id/pdf', authenticate, async (req, res) => {
+app.get('/api/sop/models/:id/pdf', pdfLimiter, authenticate, async (req, res) => {
   const { id } = req.params;
   const token = (req.headers.authorization || '').split(' ')[1];
   let browser;
+  let semaphoreAcquired = false;
   try {
     const chk = await pool.query('SELECT process_title FROM sop_models WHERE id = $1', [id]);
     if (chk.rows.length === 0) return res.status(404).json({ error: 'SOP tidak ditemukan' });
 
+    await _pdfSemaphore.acquire();
+    semaphoreAcquired = true;
     browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox', '--disable-setuid-sandbox'] });
     const page = await browser.newPage();
     // Sisipkan token sebelum skrip app jalan agar halaman studio bisa memuat data (baca localStorage).
@@ -982,21 +1142,64 @@ app.get('/api/sop/models/:id/pdf', authenticate, async (req, res) => {
     });
     await new Promise((r) => setTimeout(r, 300));
 
+    // Nama file = "SOP - {judul}". Garis miring (/ atau \) → "_", karakter ilegal lain dibuang.
+    const judul = String(chk.rows[0].process_title || 'Dokumen SOP')
+      .replace(/[\\/]+/g, '_')
+      .replace(/[:*?"<>|]+/g, '')
+      .replace(/\s+/g, ' ').trim() || 'Dokumen SOP';
+    const safe = `SOP - ${judul}`;
+
+    // Selaraskan judul dokumen (metadata /Title PDF) dengan nama file. Tanpa ini, viewer PDF
+    // browser memakai <title> aplikasi ("E-BISPRO ATR/BPN") sebagai nama simpan bawaan.
+    await page.evaluate((t) => { document.title = t; }, safe);
+
     const pdf = await page.pdf({
       width: '330mm', height: '215mm', printBackground: true,
       margin: { top: '0mm', right: '0mm', bottom: '0mm', left: '0mm' },
     });
 
-    // Nama file = nama SOP itu sendiri (spasi dipertahankan, karakter ilegal dibuang).
-    const safe = String(chk.rows[0].process_title || 'Dokumen SOP').replace(/[\\/:*?"<>|]+/g, '').replace(/\s+/g, ' ').trim() || 'Dokumen SOP';
+    // GABUNG COVER BERTANDA TANGAN (bila ada) di halaman paling depan → total = [cover TTD] + [alur SOP].
+    let finalPdf = Buffer.from(pdf);
+    try {
+      const coverRes = await pool.query('SELECT data, mime FROM sop_covers WHERE sop_id = $1', [req.params.id]);
+      if (coverRes.rowCount > 0) {
+        const { data, mime } = coverRes.rows[0];
+        const parsed = /^data:[^;]+;base64,(.+)$/s.exec(data);
+        const coverBuf = Buffer.from(parsed ? parsed[1] : data, 'base64');
+        const merged = await PDFDocument.create();
+        if ((mime || '').includes('pdf')) {
+          const coverDoc = await PDFDocument.load(coverBuf);
+          const cp = await merged.copyPages(coverDoc, coverDoc.getPageIndices());
+          cp.forEach(p => merged.addPage(p));
+        } else {
+          const img = (mime || '').includes('png') ? await merged.embedPng(coverBuf) : await merged.embedJpg(coverBuf);
+          const pw = 215 / 25.4 * 72, ph = 330 / 25.4 * 72; // F4 potret (points)
+          const pg = merged.addPage([pw, ph]);
+          const scale = Math.min(pw / img.width, ph / img.height);
+          const w = img.width * scale, h = img.height * scale;
+          pg.drawImage(img, { x: (pw - w) / 2, y: (ph - h) / 2, width: w, height: h });
+        }
+        const flowDoc = await PDFDocument.load(finalPdf);
+        const fp = await merged.copyPages(flowDoc, flowDoc.getPageIndices());
+        fp.forEach(p => merged.addPage(p));
+        finalPdf = Buffer.from(await merged.save());
+      }
+    } catch (mergeErr) {
+      console.error('Merge cover ke PDF gagal (pakai PDF tanpa cover):', mergeErr.message);
+    }
+
+    // HTTP header hanya boleh ASCII — gunakan filename* (RFC 6266) untuk nama Unicode + ASCII fallback.
+    const safeAscii = safe.replace(/[^\x20-\x7E]/g, '_');
+    const safeEncoded = encodeURIComponent(`${safe}.pdf`);
     res.setHeader('Content-Type', 'application/pdf');
-    res.setHeader('Content-Disposition', `attachment; filename="${safe}.pdf"`);
-    res.end(Buffer.from(pdf));
+    res.setHeader('Content-Disposition', `attachment; filename="${safeAscii}.pdf"; filename*=UTF-8''${safeEncoded}`);
+    res.end(finalPdf);
   } catch (err) {
     console.error('PDF gen error:', err);
     if (!res.headersSent) res.status(500).json({ error: 'Gagal membuat PDF: ' + err.message });
   } finally {
     if (browser) { try { await browser.close(); } catch (e) {} }
+    if (semaphoreAcquired) _pdfSemaphore.release();
   }
 });
 
@@ -1038,6 +1241,13 @@ app.put('/api/sop/models/:id', authenticate, async (req, res) => {
   try {
     const { process_title, process_key, unit_l1, unit_l2, sop_data, status, jenis_proses, klasifikasi_proses } = req.body;
 
+    // KUNCI KONTEN SETELAH TERBIT: SOP yang sudah 'terbit' (cover bertanda tangan sudah diunggah)
+    // tidak boleh diubah/disimpan lagi oleh siapa pun. Revisi = buat salinan/versi baru.
+    const cur = await pool.query('SELECT status FROM sop_models WHERE id = $1', [req.params.id]);
+    if (cur.rows.length > 0 && ['verifikasi', 'penetapan', 'terbit'].includes(cur.rows[0].status)) {
+      return res.status(403).json({ error: 'SOP terkunci (menunggu verifikasi/penetapan atau sudah terbit). Buat salinan untuk merevisi.' });
+    }
+
     let final_l1 = null;
     let final_l2 = null;
 
@@ -1077,6 +1287,7 @@ app.put('/api/sop/models/:id', authenticate, async (req, res) => {
 app.delete('/api/sop/models/:id', authenticate, async (req, res) => {
   try {
     await pool.query('DELETE FROM sop_models WHERE id = $1', [req.params.id]);
+    await removeDokumenForModel('sop', req.params.id);
     res.json({ success: true });
   } catch (err) {
     console.error(err);
@@ -1086,18 +1297,103 @@ app.delete('/api/sop/models/:id', authenticate, async (req, res) => {
 
 app.patch('/api/sop/models/status/:id', authenticate, requireRole('admin'), async (req, res) => {
   const { id } = req.params;
-  const { status, catatan } = req.body;
+  const { status, catatan, penetapan_dasar, penetapan_tanggal } = req.body;
   if (!status) return res.status(400).json({ error: 'Status wajib diisi' });
 
   try {
     const result = await pool.query(
-      'UPDATE sop_models SET status = $1, catatan = $2, updated_at = NOW() WHERE id = $3 RETURNING *',
-      [status, catatan || null, id]
+      `UPDATE sop_models SET status = $1, catatan = $2, updated_at = NOW(),
+         penetapan_dasar = COALESCE($4, penetapan_dasar),
+         penetapan_tanggal = COALESCE($5, penetapan_tanggal)
+       WHERE id = $3 RETURNING *`,
+      [status, catatan || null, id, penetapan_dasar || null, penetapan_tanggal || null]
     );
     if (result.rowCount === 0) return res.status(404).json({ error: 'SOP Model tidak ditemukan' });
+    // SOP masuk registry Dashboard hanya saat benar-benar TERBIT (setelah verifikasi admin).
+    try {
+      if (status === 'terbit') await syncDokumenFromModel({ type: 'sop', jenis: 'SOP', row: result.rows[0], status: 'terbit' });
+      else await removeDokumenForModel('sop', id);
+    } catch (e) { console.error('Sync dokumen SOP gagal:', e.message); }
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Error update status SOP:', err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// UNGGAH COVER SOP BERTANDA TANGAN → status menjadi 'verifikasi'.
+// Boleh: admin, penyusun (created_by), ATAU user pada unit kerja (Level 1) yang sama.
+// Hanya saat status 'approved' atau 'verifikasi' (unggah ulang). Batas 2 MB, PDF/JPG/PNG.
+app.post('/api/sop/models/:id/cover', authenticate, async (req, res) => {
+  const { id } = req.params;
+  const { cover, filename } = req.body;
+  if (!cover) return res.status(400).json({ error: 'File cover wajib diunggah' });
+  try {
+    const chk = await pool.query('SELECT id, created_by, status, sop_data, l1_id FROM sop_models WHERE id = $1', [id]);
+    if (chk.rowCount === 0) return res.status(404).json({ error: 'SOP tidak ditemukan' });
+    const row = chk.rows[0];
+    const isOwner = row.created_by === req.user.id;
+    // User (terbatas) boleh unggah cover bila SOP berada di unit kerja Level 1-nya.
+    let unitMatch = false;
+    if (req.user.role !== 'viewer' && req.user.unit_l1) {
+      let sopUnit = '';
+      try { sopUnit = (JSON.parse(row.sop_data || '{}').unitKerja) || ''; } catch (e) { /* abaikan */ }
+      if (!sopUnit && row.l1_id) {
+        const u = await pool.query('SELECT nama FROM unit_kerja_l1 WHERE id = $1', [row.l1_id]);
+        sopUnit = u.rows[0] ? u.rows[0].nama : '';
+      }
+      if (sopUnit && sopUnit.trim().toLowerCase() === String(req.user.unit_l1).trim().toLowerCase()) unitMatch = true;
+    }
+    if (req.user.role !== 'admin' && !isOwner && !unitMatch) {
+      return res.status(403).json({ error: 'Anda tidak berwenang mengunggah cover SOP ini' });
+    }
+    if (row.status !== 'approved' && row.status !== 'verifikasi') {
+      return res.status(400).json({ error: 'Cover hanya dapat diunggah setelah SOP disetujui Biro Ortala MR' });
+    }
+    const parsed = /^data:([^;]+);base64,(.+)$/s.exec(cover);
+    if (!parsed) return res.status(400).json({ error: 'Format file tidak valid (harus data URL base64)' });
+    const mime = parsed[1];
+    const b64 = parsed[2];
+    const allowed = ['application/pdf', 'image/jpeg', 'image/png'];
+    if (!allowed.includes(mime)) return res.status(400).json({ error: 'Format harus PDF, JPG, atau PNG' });
+    const bytes = Buffer.byteLength(b64, 'base64');
+    if (bytes > 2 * 1024 * 1024) return res.status(400).json({ error: 'Ukuran file melebihi 2 MB' });
+
+    await pool.query(`
+      INSERT INTO sop_covers (sop_id, data, filename, mime, uploaded_by, uploaded_at)
+      VALUES ($1, $2, $3, $4, $5, NOW())
+      ON CONFLICT (sop_id) DO UPDATE
+        SET data = EXCLUDED.data, filename = EXCLUDED.filename, mime = EXCLUDED.mime,
+            uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()
+    `, [id, cover, (filename || 'cover-sop.pdf').slice(0, 255), mime, req.user.id]);
+
+    // Cover masuk → status 'verifikasi' (menunggu admin memeriksa TTD & nomor SOP). Belum terbit,
+    // belum masuk registry Dashboard — itu terjadi saat admin menyetujui (status → 'terbit').
+    await pool.query("UPDATE sop_models SET status = 'verifikasi', updated_at = NOW() WHERE id = $1", [id]);
+    res.json({ ok: true, id: Number(id), status: 'verifikasi' });
+  } catch (err) {
+    console.error('Upload cover SOP:', err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// TAMPILKAN / UNDUH COVER SOP bertanda tangan.
+app.get('/api/sop/models/:id/cover', authenticate, async (req, res) => {
+  const { id } = req.params;
+  try {
+    const r = await pool.query('SELECT data, filename, mime FROM sop_covers WHERE sop_id = $1', [id]);
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Cover belum diunggah' });
+    const { data, filename, mime } = r.rows[0];
+    const parsed = /^data:([^;]+);base64,(.+)$/s.exec(data);
+    const buf = Buffer.from(parsed ? parsed[2] : data, 'base64');
+    // HTTP header hanya boleh ASCII — filename* (RFC 6266) untuk Unicode + fallback ASCII.
+    const fname = (filename || 'cover-sop').replace(/"/g, '');
+    const fnameAscii = fname.replace(/[^\x20-\x7E]/g, '_');
+    res.setHeader('Content-Type', mime || 'application/octet-stream');
+    res.setHeader('Content-Disposition', `inline; filename="${fnameAscii}"; filename*=UTF-8''${encodeURIComponent(fname)}`);
+    res.send(buf);
+  } catch (err) {
+    console.error('Get cover SOP:', err);
     res.status(500).json({ error: 'Internal Server Error' });
   }
 });
@@ -1107,6 +1403,11 @@ app.patch('/api/sop/models/:id/meta', authenticate, async (req, res) => {
   const { process_title, jenis_proses, klasifikasi_proses } = req.body;
   if (!process_title || !process_title.trim()) return res.status(400).json({ error: 'Judul tidak boleh kosong' });
   try {
+    // SOP terkunci sejak verifikasi/penetapan/terbit — judul/informasi tidak dapat diubah.
+    const cur = await pool.query('SELECT status FROM sop_models WHERE id = $1', [id]);
+    if (cur.rows.length > 0 && ['verifikasi', 'penetapan', 'terbit'].includes(cur.rows[0].status)) {
+      return res.status(403).json({ error: 'SOP terkunci (menunggu verifikasi/penetapan atau sudah terbit). Buat salinan untuk merevisi.' });
+    }
     const result = await pool.query(
       `UPDATE sop_models SET process_title = $1, jenis_proses = $2, klasifikasi_proses = $3, updated_at = NOW()
        WHERE id = $4 RETURNING id, process_title, jenis_proses, klasifikasi_proses, updated_at`,

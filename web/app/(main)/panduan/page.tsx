@@ -603,7 +603,7 @@ function PanduanModal({ item, onClose }: { item: typeof PANDUAN_ITEMS[0]; onClos
           </div>
           <button
             onClick={onClose}
-            className={`p-2 rounded-xl transition-colors ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-400'}`}
+            className={`p-2.5 rounded-xl transition-colors ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-400'}`}
           >
             <X className="w-5 h-5" />
           </button>
@@ -666,7 +666,7 @@ function PanduanModal({ item, onClose }: { item: typeof PANDUAN_ITEMS[0]; onClos
         <div className={`px-5 py-4 border-t flex justify-end ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
           <button
             onClick={onClose}
-            className={`px-6 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 transition-colors ${
+            className={`px-6 py-3 rounded-xl font-bold text-sm flex items-center gap-2 transition-colors ${
               isDarkMode ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-[#002855] hover:bg-[#001b3a] text-white'
             }`}
           >

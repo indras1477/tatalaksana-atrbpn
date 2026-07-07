@@ -6,18 +6,16 @@ import { AppProvider, useAppContext } from '@/lib/app-context';
 import AppSidebar from '@/components/layout/AppSidebar';
 import AppHeader from '@/components/layout/AppHeader';
 
-const MINI_SIDEBAR_ROUTES = ['/bpmn', '/sop', '/juknis'];
-
 function DashboardShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { isDarkMode } = useAppContext();
   const pathname = usePathname();
 
   useEffect(() => {
-    const isMini = MINI_SIDEBAR_ROUTES.some(r => pathname === r || pathname.startsWith(r + '/'));
-    if (window.innerWidth >= 1024) {
-      setSidebarOpen(!isMini);
-    } else {
+    // Di layar kecil, tutup overlay sidebar saat berpindah halaman.
+    // Di desktop, buka/tutup sidebar HANYA lewat tombol menu (hamburger) — pindah menu
+    // tidak lagi memaksa sidebar terbuka; cukup tetap ter-minimize.
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) {
       setSidebarOpen(false);
     }
   }, [pathname]);

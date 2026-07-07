@@ -330,8 +330,8 @@ export default function PeraturanPage() {
                         <div className="flex items-center justify-center gap-2">
                           {currentUser?.role === 'admin' && (
                             <>
-                              <button onClick={e => { e.stopPropagation(); openEdit(doc); }} className={`text-xs font-bold transition-colors ${dm ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'}`}>Edit</button>
-                              <button onClick={e => { e.stopPropagation(); handleDelete(doc.id); }} className={`text-xs font-bold transition-colors ${dm ? 'text-red-400 hover:text-red-300' : 'text-red-500 hover:text-red-600'}`}>Hapus</button>
+                              <button onClick={e => { e.stopPropagation(); openEdit(doc); }} className={`px-2.5 py-2.5 inline-flex items-center min-h-11 text-xs font-bold transition-colors ${dm ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'}`}>Edit</button>
+                              <button onClick={e => { e.stopPropagation(); handleDelete(doc.id); }} className={`px-2.5 py-2.5 inline-flex items-center min-h-11 text-xs font-bold transition-colors ${dm ? 'text-red-400 hover:text-red-300' : 'text-red-500 hover:text-red-600'}`}>Hapus</button>
                             </>
                           )}
                         </div>
@@ -356,11 +356,11 @@ export default function PeraturanPage() {
                 <span className={`text-xs ${dm ? 'text-slate-400' : 'text-slate-500'}`}>per halaman &mdash; {(safePage - 1) * pageSize + 1}–{Math.min(safePage * pageSize, filtered.length)} dari <span className="font-bold">{filtered.length}</span></span>
               </div>
               <div className="flex items-center gap-1">
-                <button onClick={() => setPage(1)} disabled={safePage === 1} className={`px-2 py-1.5 rounded-lg text-xs font-bold transition-colors disabled:opacity-30 ${dm ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-100 text-slate-600'}`}>«</button>
-                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage === 1} className={`p-1.5 rounded-lg transition-colors disabled:opacity-30 ${dm ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-100 text-slate-600'}`}><ChevronLeft className="w-4 h-4" /></button>
+                <button onClick={() => setPage(1)} disabled={safePage === 1} className={`px-3 py-3 rounded-lg text-xs font-bold transition-colors disabled:opacity-30 ${dm ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-100 text-slate-600'}`}>«</button>
+                <button onClick={() => setPage(p => Math.max(1, p - 1))} disabled={safePage === 1} className={`p-3 rounded-lg transition-colors disabled:opacity-30 ${dm ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-100 text-slate-600'}`}><ChevronLeft className="w-4 h-4" /></button>
                 <span className={`px-3 py-1 text-xs font-bold ${dm ? 'text-white' : 'text-slate-700'}`}>{safePage} / {totalPages}</span>
-                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={safePage === totalPages} className={`p-1.5 rounded-lg transition-colors disabled:opacity-30 ${dm ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-100 text-slate-600'}`}><ChevronRight className="w-4 h-4" /></button>
-                <button onClick={() => setPage(totalPages)} disabled={safePage === totalPages} className={`px-2 py-1.5 rounded-lg text-xs font-bold transition-colors disabled:opacity-30 ${dm ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-100 text-slate-600'}`}>»</button>
+                <button onClick={() => setPage(p => Math.min(totalPages, p + 1))} disabled={safePage === totalPages} className={`p-3 rounded-lg transition-colors disabled:opacity-30 ${dm ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-100 text-slate-600'}`}><ChevronRight className="w-4 h-4" /></button>
+                <button onClick={() => setPage(totalPages)} disabled={safePage === totalPages} className={`px-3 py-3 rounded-lg text-xs font-bold transition-colors disabled:opacity-30 ${dm ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-100 text-slate-600'}`}>»</button>
               </div>
             </div>
           )}
@@ -391,7 +391,7 @@ export default function PeraturanPage() {
                 </span>
                 <h3 className={`text-sm font-extrabold leading-snug line-clamp-2 ${dm ? 'text-white' : 'text-[#002855]'}`}>{viewDoc.nama}</h3>
               </div>
-              <button onClick={() => setViewDoc(null)} className={`p-1.5 rounded-lg shrink-0 transition-colors ${dm ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-200 text-slate-500'}`}>
+              <button onClick={() => setViewDoc(null)} className={`p-2.5 rounded-lg shrink-0 transition-colors ${dm ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-200 text-slate-500'}`}>
                 <X className="w-4 h-4" />
               </button>
             </div>
@@ -419,17 +419,17 @@ export default function PeraturanPage() {
               <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
                 {viewDoc.nomor && (
                   <div className={`p-2.5 rounded-lg ${dm ? 'bg-[#151F32] border border-slate-800' : 'bg-white border border-slate-100'}`}>
-                    <p className={`text-[9px] font-bold uppercase tracking-wider mb-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>Nomor</p>
+                    <p className={`text-[10px] font-bold uppercase tracking-wider mb-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>Nomor</p>
                     <p className={`text-[11px] font-mono font-semibold break-all ${dm ? 'text-slate-300' : 'text-slate-700'}`}>{viewDoc.nomor}</p>
                   </div>
                 )}
                 <div className={`p-2.5 rounded-lg ${dm ? 'bg-[#151F32] border border-slate-800' : 'bg-white border border-slate-100'}`}>
-                  <p className={`text-[9px] font-bold uppercase tracking-wider mb-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>Tahun</p>
+                  <p className={`text-[10px] font-bold uppercase tracking-wider mb-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>Tahun</p>
                   <p className={`text-[11px] font-bold ${dm ? 'text-slate-300' : 'text-slate-700'}`}>{viewDoc.tahun || '—'}</p>
                 </div>
                 {viewDoc.tanggal_ditetapkan && (
                   <div className={`p-2.5 rounded-lg ${dm ? 'bg-[#151F32] border border-slate-800' : 'bg-white border border-slate-100'}`}>
-                    <p className={`text-[9px] font-bold uppercase tracking-wider mb-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>Ditetapkan</p>
+                    <p className={`text-[10px] font-bold uppercase tracking-wider mb-0.5 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>Ditetapkan</p>
                     <p className={`text-[10px] font-semibold ${dm ? 'text-slate-300' : 'text-slate-700'}`}>{formatTanggal(viewDoc.tanggal_ditetapkan)}</p>
                   </div>
                 )}

@@ -35,7 +35,9 @@ export default function AppSidebar({ isOpen, onClose }: Props) {
 
   const navigate = (href: string) => {
     router.push(href);
-    onClose();
+    // Hanya tutup di layar kecil (sidebar = overlay). Di desktop, biarkan state sidebar apa adanya —
+    // buka/tutup cukup lewat tombol menu (hamburger).
+    if (typeof window !== 'undefined' && window.innerWidth < 1024) onClose();
   };
 
   const allNavItems = isViewer

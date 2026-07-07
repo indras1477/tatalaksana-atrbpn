@@ -95,6 +95,9 @@ export interface SOPBuilderProps {
   onSubmitTrigger?: (data: string) => void;
   onBackTrigger?: () => void;
   onDownloadPdf?: (data: string) => Promise<void> | void;
+  signedCoverUrl?: string | null;
+  signedCoverMime?: string;
+  hasSignedCover?: boolean;
 }
 
 // --- KOMPONEN LABEL TEKS BISA DIGESER & DIEDIT ---
@@ -113,7 +116,7 @@ const DraggableLabel = ({
 
   const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (isViewOnly) return;
-    if ((e.target as HTMLElement).tagName === 'INPUT') return; 
+    if ((e.target as HTMLElement).tagName === 'INPUT' || (e.target as HTMLElement).tagName === 'TEXTAREA') return;
     setIsDragging(true);
     startPos.current = { x: e.clientX - currentPos.x, y: e.clientY - currentPos.y };
     setDragPos(currentPos);
@@ -136,9 +139,13 @@ const DraggableLabel = ({
   };
 
   const displayVal = value !== undefined ? value : defaultValue;
+  // Dukung multi-baris (tekan Enter) agar teks panjang bisa dipatah manual. Ukuran textarea
+  // menyesuaikan: lebar = baris terpanjang, tinggi = jumlah baris.
+  const lines = displayVal.split('\n');
+  const maxLineLen = lines.reduce((mx, l) => Math.max(mx, l.length), 0);
 
   return (
-    <div 
+    <div
       className={`absolute z-50 bg-white/90 px-1 py-0.5 rounded border pointer-events-auto flex items-center justify-center transition-colors ${isViewOnly ? 'border-transparent' : 'border-slate-300 hover:border-blue-400 cursor-move'}`}
       style={{ ...baseStyle, transform: `translate(calc(-50% + ${currentPos.x}px), calc(-50% + ${currentPos.y}px))`, touchAction: 'none' }}
       onPointerDown={handlePointerDown}
@@ -146,16 +153,17 @@ const DraggableLabel = ({
       onPointerUp={handlePointerUp}
     >
       {!isViewOnly && (
-        <div className="w-1.5 h-3 border-l-2 border-dotted border-slate-400 mr-0.5 opacity-50 hover:opacity-100 cursor-move" title="Tahan dan geser teks" />
+        <div className="w-1.5 h-3 border-l-2 border-dotted border-slate-400 mr-0.5 opacity-50 hover:opacity-100 cursor-move shrink-0" title="Tahan dan geser teks" />
       )}
-      <input 
-        type="text" 
-        value={displayVal} 
+      <textarea
+        value={displayVal}
         onChange={e => onTextChange(e.target.value)}
         disabled={isViewOnly}
         placeholder={defaultValue}
-        className="bg-transparent text-[9px] font-bold text-black font-bookman text-center outline-none pointer-events-auto"
-        style={{ width: `${Math.max(2, displayVal.length + 1)}ch` }}
+        rows={lines.length}
+        wrap="off"
+        className="bg-transparent text-[9px] font-bold text-black font-bookman text-center outline-none pointer-events-auto resize-none overflow-hidden leading-tight block p-0 m-0 border-0"
+        style={{ width: `${Math.max(2, maxLineLen + 1)}ch`, height: `${lines.length * 1.15 + 0.1}em` }}
       />
     </div>
   );
@@ -375,28 +383,44 @@ const IncomingArrowLocal = ({
 };
 
 // --- KOMPONEN EDITABLE CELL ---
-const EditableCell = ({ value, onChange, className, placeholder, center = false }: { value: string, onChange: (val: string) => void, className?: string, placeholder?: string, center?: boolean }) => {
+const EditableCell = ({ value, onChange, className, placeholder, center = false, justify = false }: { value: string, onChange: (val: string) => void, className?: string, placeholder?: string, center?: boolean, justify?: boolean }) => {
   const divRef = useRef<HTMLDivElement>(null);
 
   const formatContent = (val: string) => {
     if (!divRef.current) return;
     if (!val) { divRef.current.innerHTML = ''; return; }
     const lines = val.split('\n');
-    const hasList = lines.some(line => line.match(/^[0-9a-zA-Z]+\.\s|^-\s/));
+    const listPrefixRe = /^([0-9a-zA-Z]+\.\s+|-\s+)/;
+    const hasList = lines.some(line => listPrefixRe.test(line));
     if (hasList) {
+      // Samakan jarak indentasi semua butir bernomor: gunakan lebar prefix terpanjang
+      // (mis. "10. ") dalam satuan 'ch' agar baris lanjutan & butir yang wrap tersusun rapi sejajar.
+      const maxPrefix = lines.reduce((mx, line) => {
+        const m = line.match(listPrefixRe);
+        return m ? Math.max(mx, m[1].length) : mx;
+      }, 0);
+      // Lebar kolom nomor = panjang prefix terpanjang (satuan 'ch'). Karena '.' & spasi
+      // lebih sempit dari '0', ini sudah menyisakan jeda ~1ch antara nomor dan teks.
+      const indent = `${maxPrefix}ch`;
       let inList = false;
       const escapeHtml = (text: string) => {
         const map: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
         return text.replace(/[&<>"']/g, (m) => map[m] || m);
       };
       const formattedHTML = lines.map(line => {
-        const safeLine = escapeHtml(line);
-        if (line.match(/^[0-9a-zA-Z]+\.\s|^-\s/)) {
-          inList = true; return `<div style="padding-left: 14px; text-indent: -14px;">${safeLine}</div>`;
+        const m = line.match(listPrefixRe);
+        if (m) {
+          inList = true;
+          const pfx = escapeHtml(m[1]);
+          const rest = escapeHtml(line.slice(m[1].length));
+          // Nomor ditaruh di marker inline-block lebar-tetap (kolom nomor) + margin negatif:
+          // semua butir mulai teksnya di kolom yang sama, dan spasi setelah nomor TIDAK ikut
+          // diregang oleh justify (mirip penomoran Word).
+          return `<div style="padding-left: ${indent};"><span style="display: inline-block; width: ${indent}; margin-left: -${indent}; white-space: pre;">${pfx}</span>${rest}</div>`;
         } else if (line.trim() === '') {
           inList = false; return `<div><br></div>`;
         } else {
-          return `<div style="${inList ? 'padding-left: 14px;' : ''}">${safeLine}</div>`;
+          return `<div style="${inList ? `padding-left: ${indent};` : ''}">${escapeHtml(line)}</div>`;
         }
       }).join('');
       divRef.current.innerHTML = formattedHTML;
@@ -407,15 +431,75 @@ const EditableCell = ({ value, onChange, className, placeholder, center = false 
   const handleInput = (e: React.FormEvent<HTMLDivElement>) => onChange(e.currentTarget.innerText);
   const handleBlur = () => formatContent(value);
 
+  // Ambil teks baris tempat kursor berada + isi setelah prefix (untuk auto-numbering).
+  const getCurrentLine = (root: HTMLDivElement) => {
+    const sel = window.getSelection();
+    if (!sel || !sel.rangeCount) return null;
+    const range = sel.getRangeAt(0);
+    if (!range.collapsed) return null;
+    let lineEl: Node = range.startContainer;
+    if (lineEl !== root) {
+      while (lineEl.parentNode && lineEl.parentNode !== root) lineEl = lineEl.parentNode;
+    }
+    return { lineEl, lineText: lineEl.textContent || '' };
+  };
+
+  // Auto-numbering ala editor: Enter pada baris berdaftar → lanjut nomor/huruf/bullet berikutnya.
+  // Enter pada butir kosong → hentikan daftar (bersihkan prefix baris ini).
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== 'Enter' || e.shiftKey || (e.nativeEvent as { isComposing?: boolean }).isComposing) return;
+    if (!divRef.current) return;
+    const info = getCurrentLine(divRef.current);
+    if (!info) return;
+    const { lineText } = info;
+
+    let prefix: string | null = null;
+    let contentAfterLen = 0;
+    const numMatch = lineText.match(/^(\s*)(\d+)\.\s/);
+    const alphaMatch = lineText.match(/^(\s*)([a-zA-Z])\.\s/);
+    const dashMatch = lineText.match(/^(\s*)-\s/);
+    if (numMatch) {
+      prefix = `${numMatch[1]}${parseInt(numMatch[2], 10) + 1}. `;
+      contentAfterLen = lineText.slice(numMatch[0].length).trim().length;
+    } else if (alphaMatch) {
+      const c = alphaMatch[2];
+      const next = c === 'z' ? 'aa' : c === 'Z' ? 'AA' : String.fromCharCode(c.charCodeAt(0) + 1);
+      prefix = `${alphaMatch[1]}${next}. `;
+      contentAfterLen = lineText.slice(alphaMatch[0].length).trim().length;
+    } else if (dashMatch) {
+      prefix = `${dashMatch[1]}- `;
+      contentAfterLen = lineText.slice(dashMatch[0].length).trim().length;
+    }
+    if (!prefix) return; // bukan baris daftar → Enter biasa
+
+    e.preventDefault();
+    if (contentAfterLen === 0) {
+      // Butir kosong → keluar dari daftar: kosongkan prefix pada baris ini.
+      const sel = window.getSelection();
+      if (sel) {
+        const lineRange = document.createRange();
+        lineRange.selectNodeContents(info.lineEl);
+        sel.removeAllRanges();
+        sel.addRange(lineRange);
+        document.execCommand('delete');
+      }
+    } else {
+      document.execCommand('insertParagraph');
+      document.execCommand('insertText', false, prefix);
+    }
+    onChange(divRef.current.innerText);
+  };
+
   return (
-    <div ref={divRef} contentEditable suppressContentEditableWarning onInput={handleInput} onBlur={handleBlur} className={`outline-none bg-transparent w-full min-h-6 empty:before:content-[attr(data-placeholder)] empty:before:text-slate-400 wrap-break-word whitespace-pre-wrap ${center ? 'text-center' : 'text-left'} ${className || ''}`} data-placeholder={placeholder} />
+    <div ref={divRef} contentEditable suppressContentEditableWarning onInput={handleInput} onKeyDown={handleKeyDown} onBlur={handleBlur} className={`outline-none bg-transparent w-full min-h-6 empty:before:content-[attr(data-placeholder)] empty:before:text-slate-400 wrap-break-word whitespace-pre-wrap ${center ? 'text-center' : justify ? 'text-justify' : 'text-left'} ${className || ''}`} data-placeholder={placeholder} />
   );
 };
 
 // --- KOMPONEN UTAMA (SOP BUILDER) ---
 const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   initialData, initialTitle, initialKey, initialL1, initialL2, initialJenis, initialKlasifikasi,
-  isViewOnly = false, onSaveTrigger, onSubmitTrigger, onBackTrigger, onDownloadPdf
+  isViewOnly = false, onSaveTrigger, onSubmitTrigger, onBackTrigger, onDownloadPdf,
+  signedCoverUrl = null, signedCoverMime = '', hasSignedCover = false
 }, ref) => {
   const searchParams = useSearchParams();
 
@@ -469,7 +553,54 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   const [isPaletteOpen, setIsPaletteOpen] = useState<boolean>(true);
   const [openShapeMenu, setOpenShapeMenu] = useState<{ row: number, col: number } | null>(null);
 
+  // Posisi vertikal palet "Bentuk Ekstra" menyesuaikan tinggi toolbar (yang membungkus di
+  // layar kecil) agar tidak pernah menabrak tombol toolbar di atasnya.
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const [paletteTopPx, setPaletteTopPx] = useState<number>(112);
+  useEffect(() => {
+    const el = toolbarRef.current;
+    if (!el) return;
+    const measure = () => setPaletteTopPx(Math.round(el.getBoundingClientRect().bottom) + 12);
+    measure();
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    window.addEventListener('resize', measure);
+    window.addEventListener('scroll', measure, true);
+    return () => { ro.disconnect(); window.removeEventListener('resize', measure); window.removeEventListener('scroll', measure, true); };
+  }, []);
+
   const effectiveIsViewOnly = isViewOnly || isPrinting;
+
+  // AUTO-FLOW COVER: bila sebuah halaman cover melebihi tinggi kertas F4 (215mm, sudah termasuk
+  // margin bawah 6mm), pindahkan baris terakhirnya ke halaman berikutnya secara otomatis. Hanya
+  // MENAMBAH pemisah (tak pernah menghapus) → pasti konvergen. Debounce 500ms agar tak memindah
+  // halaman saat pengguna masih mengetik.
+  useEffect(() => {
+    if (activeTab !== 'cover' || effectiveIsViewOnly) return;
+    const F4_PX = 813; // 215mm @ 96dpi (border-box: sudah termasuk padding/margin 6mm)
+    const t = setTimeout(() => {
+      // Susun ulang urutan potongan (chunk) id baris cover dari coverBreaks (id baris: 1,2,3).
+      const idChunks: number[][] = [];
+      let cur: number[] = [];
+      [1, 2, 3].forEach(id => { cur.push(id); if (coverBreaks[id]) { idChunks.push(cur); cur = []; } });
+      if (cur.length) idChunks.push(cur);
+
+      const containers = Array.from(document.querySelectorAll<HTMLElement>('.cover-page-container'));
+      for (let i = 0; i < containers.length; i++) {
+        if (containers[i].offsetHeight > F4_PX + 6) {
+          const chunk = idChunks[i];
+          if (chunk && chunk.length > 1) {
+            const secondLast = chunk[chunk.length - 2];
+            if (!coverBreaks[secondLast]) {
+              setCoverBreaks(prev => ({ ...prev, [secondLast]: true }));
+              return; // satu pemisah per siklus; effect jalan lagi setelah state berubah
+            }
+          }
+        }
+      }
+    }, 500);
+    return () => clearTimeout(t);
+  }, [activeTab, effectiveIsViewOnly, coverBreaks, dasarHukum, kualifikasi, keterkaitan, peralatan, peringatan, pencatatan, colCount]);
 
   const displayNumbers = useMemo(() => {
     let counter = 1;
@@ -806,12 +937,13 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     const currentSymbol = isMainShape ? step.symbol : extraShapeObj?.symbol;
     const isDiamond = currentSymbol === 'decision';
     
-    // Konektor (pentagon) selalu 32px (tepi atas 16px dari pusat) → butuh offset >16 agar kepala
-    // panah masuk tidak menimpa bentuknya.
+    // offsetH = jarak dari pusat sel ke tepi ATAS/BAWAH bentuk (tempat ujung panah menempel).
+    // Nilainya ≈ setengah tinggi bentuk, dikurangi ~1px agar ujung panah sedikit menempel
+    // (bukan menggantung). Konektor (pentagon) tepi atasnya rata di setengah tinggi kotaknya.
     const isConnector = currentSymbol === 'connector';
-    let shapeClass = "w-14 h-8"; let diamondClass = "w-8 h-8"; let offsetH = isDiamond ? 24 : (isConnector ? 20 : 16);
-    if (colCount > 7) { shapeClass = "w-8 h-6"; diamondClass = "w-6 h-6"; offsetH = isDiamond ? 16 : (isConnector ? 20 : 12); }
-    else if (colCount > 5) { shapeClass = "w-10 h-6"; diamondClass = "w-7 h-7"; offsetH = isDiamond ? 20 : (isConnector ? 20 : 12); }
+    let shapeClass = "w-14 h-8"; let diamondClass = "w-8 h-8"; let offsetH = isDiamond ? 22 : (isConnector ? 15 : 15);
+    if (colCount > 7) { shapeClass = "w-8 h-6"; diamondClass = "w-6 h-6"; offsetH = isDiamond ? 15 : (isConnector ? 11 : 11); }
+    else if (colCount > 5) { shapeClass = "w-10 h-6"; diamondClass = "w-7 h-7"; offsetH = isDiamond ? 18 : (isConnector ? 13 : 11); }
 
     const isHighlight = connectingFrom !== null || activeTool !== null;
     const cellOverlayClass = `absolute inset-0 z-20 transition-all ${isHighlight ? 'cursor-crosshair hover:bg-emerald-100/50 hover:border-2 hover:border-dashed hover:border-emerald-400' : 'cursor-pointer hover:bg-slate-50/50'}`;
@@ -1080,33 +1212,35 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
 
       {/* PALET SHAPE KANAN (BISA DI-HIDE) */}
       {!effectiveIsViewOnly && connectingFrom === null && (
-        <div className={`fixed top-1/2 -translate-y-1/2 transition-all duration-300 z-40 flex items-center no-print font-sans ${isPaletteOpen ? 'right-6' : '-right-24'}`}>
-          <div className="bg-white/90 backdrop-blur-md px-3 py-6 rounded-2xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.3)] border border-slate-200 flex flex-col items-center gap-6 relative w-20">
-             
-             <button onClick={() => setIsPaletteOpen(!isPaletteOpen)} className="absolute -left-8 top-1/2 -translate-y-1/2 bg-white hover:bg-slate-50 border border-slate-200 border-r-0 rounded-l-xl p-1 shadow-md text-slate-400 hover:text-emerald-600 transition-colors">
+        <div style={{ top: paletteTopPx, bottom: 16 }} className={`fixed transition-[right] duration-300 z-40 flex no-print font-sans ${isPaletteOpen ? 'right-2 sm:right-6' : '-right-24'}`}>
+          <div className="relative h-full flex items-center">
+             {/* Tombol minimize berada DI LUAR kotak ber-scroll agar tidak ikut terpotong overflow. */}
+             <button onClick={() => setIsPaletteOpen(!isPaletteOpen)} className="absolute -left-8 top-1/2 -translate-y-1/2 z-10 bg-white hover:bg-slate-50 border border-slate-200 border-r-0 rounded-l-xl p-1 shadow-md text-slate-400 hover:text-emerald-600 transition-colors">
                {isPaletteOpen ? <ChevronRight size={22} /> : <ChevronLeft size={22} />}
              </button>
 
-             <div className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest text-center border-b border-slate-200 pb-2 w-full leading-tight">Bentuk<br/>Ekstra</div>
-             
-             <div draggable onDragStart={(e) => e.dataTransfer.setData('symbol', 'start')} onClick={() => setActiveTool(activeTool === 'start' ? null : 'start')} className={`cursor-grab active:cursor-grabbing p-2 rounded-xl flex flex-col items-center gap-1.5 transition-all hover:scale-110 ${activeTool === 'start' ? 'bg-emerald-100 ring-2 ring-emerald-500 shadow-md' : 'hover:bg-slate-100'}`}>
-               <div className="w-8 h-4 border-2 border-slate-800 rounded-full bg-white" />
-               <span className={`text-[9px] font-bold ${activeTool === 'start' ? 'text-emerald-700' : 'text-slate-600'}`}>Mulai</span>
-             </div>
-             
-             <div draggable onDragStart={(e) => e.dataTransfer.setData('symbol', 'process')} onClick={() => setActiveTool(activeTool === 'process' ? null : 'process')} className={`cursor-grab active:cursor-grabbing p-2 rounded-xl flex flex-col items-center gap-1.5 transition-all hover:scale-110 ${activeTool === 'process' ? 'bg-emerald-100 ring-2 ring-emerald-500 shadow-md' : 'hover:bg-slate-100'}`}>
-               <div className="w-8 h-5 border-2 border-slate-800 bg-white" />
-               <span className={`text-[9px] font-bold ${activeTool === 'process' ? 'text-emerald-700' : 'text-slate-600'}`}>Proses</span>
-             </div>
-             
-             <div draggable onDragStart={(e) => e.dataTransfer.setData('symbol', 'decision')} onClick={() => setActiveTool(activeTool === 'decision' ? null : 'decision')} className={`cursor-grab active:cursor-grabbing p-2 rounded-xl flex flex-col items-center gap-1.5 transition-all hover:scale-110 ${activeTool === 'decision' ? 'bg-emerald-100 ring-2 ring-emerald-500 shadow-md' : 'hover:bg-slate-100'}`}>
-               <div className="w-5 h-5 border-2 border-slate-800 rotate-45 bg-white" />
-               <span className={`text-[9px] font-bold ${activeTool === 'decision' ? 'text-emerald-700' : 'text-slate-600'}`}>Kondisi</span>
-             </div>
-             
-             <div draggable onDragStart={(e) => e.dataTransfer.setData('symbol', 'connector')} onClick={() => setActiveTool(activeTool === 'connector' ? null : 'connector')} className={`cursor-grab active:cursor-grabbing p-2 rounded-xl flex flex-col items-center gap-1.5 transition-all hover:scale-110 ${activeTool === 'connector' ? 'bg-emerald-100 ring-2 ring-emerald-500 shadow-md' : 'hover:bg-slate-100'}`}>
-               <div className="w-5 h-5 relative flex items-center justify-center bg-white"><svg viewBox="0 0 100 100" className="w-full h-full"><polygon points="0,0 100,0 100,65 50,100 0,65" fill="white" stroke="black" strokeWidth="10" /></svg></div>
-               <span className={`text-[9px] font-bold ${activeTool === 'connector' ? 'text-emerald-700' : 'text-slate-600'}`}>Konektor</span>
+             <div className="bg-white/90 backdrop-blur-md px-2 sm:px-3 py-3 sm:py-5 rounded-2xl shadow-[0_10px_40px_-10px_rgba(0,0,0,0.3)] border border-slate-200 flex flex-col items-center gap-3 sm:gap-5 w-16 sm:w-20 max-h-full overflow-y-auto">
+               <div className="text-[9px] font-extrabold text-slate-400 uppercase tracking-widest text-center border-b border-slate-200 pb-2 w-full leading-tight shrink-0">Bentuk<br/>Ekstra</div>
+
+               <div draggable onDragStart={(e) => e.dataTransfer.setData('symbol', 'start')} onClick={() => setActiveTool(activeTool === 'start' ? null : 'start')} className={`shrink-0 cursor-grab active:cursor-grabbing p-2 rounded-xl flex flex-col items-center gap-1.5 transition-all hover:scale-110 ${activeTool === 'start' ? 'bg-emerald-100 ring-2 ring-emerald-500 shadow-md' : 'hover:bg-slate-100'}`}>
+                 <div className="w-8 h-4 border-2 border-slate-800 rounded-full bg-white" />
+                 <span className={`text-[9px] font-bold ${activeTool === 'start' ? 'text-emerald-700' : 'text-slate-600'}`}>Mulai</span>
+               </div>
+
+               <div draggable onDragStart={(e) => e.dataTransfer.setData('symbol', 'process')} onClick={() => setActiveTool(activeTool === 'process' ? null : 'process')} className={`shrink-0 cursor-grab active:cursor-grabbing p-2 rounded-xl flex flex-col items-center gap-1.5 transition-all hover:scale-110 ${activeTool === 'process' ? 'bg-emerald-100 ring-2 ring-emerald-500 shadow-md' : 'hover:bg-slate-100'}`}>
+                 <div className="w-8 h-5 border-2 border-slate-800 bg-white" />
+                 <span className={`text-[9px] font-bold ${activeTool === 'process' ? 'text-emerald-700' : 'text-slate-600'}`}>Proses</span>
+               </div>
+
+               <div draggable onDragStart={(e) => e.dataTransfer.setData('symbol', 'decision')} onClick={() => setActiveTool(activeTool === 'decision' ? null : 'decision')} className={`shrink-0 cursor-grab active:cursor-grabbing p-2 rounded-xl flex flex-col items-center gap-1.5 transition-all hover:scale-110 ${activeTool === 'decision' ? 'bg-emerald-100 ring-2 ring-emerald-500 shadow-md' : 'hover:bg-slate-100'}`}>
+                 <div className="w-5 h-5 border-2 border-slate-800 rotate-45 bg-white" />
+                 <span className={`text-[9px] font-bold ${activeTool === 'decision' ? 'text-emerald-700' : 'text-slate-600'}`}>Kondisi</span>
+               </div>
+
+               <div draggable onDragStart={(e) => e.dataTransfer.setData('symbol', 'connector')} onClick={() => setActiveTool(activeTool === 'connector' ? null : 'connector')} className={`shrink-0 cursor-grab active:cursor-grabbing p-2 rounded-xl flex flex-col items-center gap-1.5 transition-all hover:scale-110 ${activeTool === 'connector' ? 'bg-emerald-100 ring-2 ring-emerald-500 shadow-md' : 'hover:bg-slate-100'}`}>
+                 <div className="w-5 h-5 relative flex items-center justify-center bg-white"><svg viewBox="0 0 100 100" className="w-full h-full"><polygon points="0,0 100,0 100,65 50,100 0,65" fill="white" stroke="black" strokeWidth="10" /></svg></div>
+                 <span className={`text-[9px] font-bold ${activeTool === 'connector' ? 'text-emerald-700' : 'text-slate-600'}`}>Konektor</span>
+               </div>
              </div>
           </div>
         </div>
@@ -1114,7 +1248,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
 
       {/* MODAL EDIT INFO SOP */}
       {showInfoModal && (
-        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4 no-print font-sans">
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-60 p-4 no-print font-sans">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in zoom-in-95 duration-200">
             <div className="flex justify-between items-center p-5 border-b border-slate-100">
               <h3 className="text-lg font-bold text-[#002855] flex items-center gap-2">
@@ -1185,7 +1319,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
       )}
 
       {isSaveModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4 no-print font-sans">
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4 no-print font-sans">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden">
             <div className="p-6 border-b border-slate-100">
               <h3 className="text-lg font-black text-slate-800">Simpan Dokumen SOP</h3>
@@ -1208,7 +1342,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
 
       {/* KONFIRMASI KIRIM KE BIRO ORTALA MR */}
       {showSubmitConfirm && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4 no-print font-sans">
+        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 backdrop-blur-sm px-4 no-print font-sans">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
             <div className="p-6 border-b border-slate-100 flex items-start gap-3">
               <div className="shrink-0 w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center">
@@ -1230,7 +1364,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
       )}
 
       {/* TOOLBAR ATAS */}
-      <div className="w-full max-w-[330mm] mb-4 bg-white p-3 rounded-2xl shadow-sm border flex flex-col justify-between items-center gap-4 no-print sticky top-0 z-40 font-sans">
+      <div ref={toolbarRef} className="w-full max-w-[330mm] mb-4 bg-white p-3 rounded-2xl shadow-sm border flex flex-col justify-between items-center gap-4 no-print sticky top-0 z-45 font-sans">
         <div className="flex flex-wrap items-center justify-between w-full gap-2 border-b pb-2">
           <div className="flex gap-2">
             <button onClick={handleGoBack} className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95 border border-slate-200"><ArrowLeft size={16} /> Kembali</button>
@@ -1283,8 +1417,25 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         </div>
       )}
 
-      {/* COVER UTAMA */}
-      {coverChunks.map((chunk, chunkIdx) => (
+      {/* COVER BERTANDA TANGAN (hasil scan) — MENGGANTIKAN cover generate untuk SOP terbit.
+          Hanya di layar (no-print); pada PDF cover digabung di sisi server (agar cover PDF asli
+          ikut sebagai halaman, bukan tangkapan layar). */}
+      {signedCoverUrl && activeTab === 'cover' && (
+        <div className="paper-f4-landscape-auto shadow-2xl border border-slate-300 text-black flex-col flex mb-8 no-print relative bg-white items-center justify-center p-[6mm]">
+          <div className="absolute top-2 left-2 bg-emerald-600 text-white text-[10px] font-bold px-2 py-1 rounded font-sans z-10">COVER BERTANDA TANGAN (hasil scan)</div>
+          {signedCoverMime.includes('pdf') ? (
+            <iframe src={`${signedCoverUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`} title="Cover bertanda tangan" className="w-full h-[195mm] border-0" />
+          ) : (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img src={signedCoverUrl} alt="Cover bertanda tangan" className="max-w-full max-h-[195mm] object-contain" />
+          )}
+        </div>
+      )}
+
+      {/* COVER UTAMA (generate). TIDAK dirender sama sekali bila SOP terbit (sudah ada cover TTD) —
+          diganti scan di layar & hasil merge di PDF, supaya cover tidak dobel. Tidak cukup pakai
+          class `hidden`, karena @media print `.cover-page-container{display:flex!important}` menimpanya. */}
+      {!hasSignedCover && coverChunks.map((chunk, chunkIdx) => (
         <React.Fragment key={`cover-chunk-${chunkIdx}`}>
           <div className={`print-page-target paper-f4-landscape-auto shadow-2xl p-[6mm] border border-slate-300 text-black cover-page-container flex-col ${activeTab === 'cover' || isPrinting ? 'flex mb-8 print:mb-0' : 'hidden print:flex'}`}>
             <table className="w-full border-collapse border-2 border-black table-fixed cover-table mb-auto">
@@ -1328,16 +1479,16 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                   <tr key={`cover-row-${row.id}`}>
                     <td colSpan={5} className="border-2 border-black align-top p-0 relative">
                        <div className="p-1.5 bg-slate-100 font-bold uppercase text-[12px] border-b-2 border-black">{row.leftTitle}</div>
-                       <div className={`p-2 text-[12px] ${row.minH}`}><EditableCell value={row.leftVal} onChange={row.leftSetter} /></div>
+                       <div className={`p-2 text-[12px] ${row.minH}`}><EditableCell value={row.leftVal} onChange={row.leftSetter} justify={true} /></div>
                        {!effectiveIsViewOnly && !coverBreaks[row.id] && row.id !== 3 && (
-                         <div className="absolute bottom-0 right-0 translate-x-1/2 translate-y-1/2 z-50 no-print font-sans pointer-events-auto">
+                         <div className="absolute bottom-0 right-0 translate-x-1/2 translate-y-1/2 z-30 no-print font-sans pointer-events-auto">
                            <button onClick={() => setCoverBreaks({...coverBreaks, [row.id]: true})} className="px-3 py-1 bg-white hover:bg-slate-100 text-slate-600 text-[10px] font-bold rounded-full border border-slate-300 shadow-md transition-all active:scale-95 whitespace-nowrap">✂️ Pisah ke Halaman Baru</button>
                          </div>
                        )}
                     </td>
                     <td colSpan={5} className="border-2 border-black align-top p-0">
                        <div className="p-1.5 bg-slate-100 font-bold uppercase text-[12px] border-b-2 border-black">{row.rightTitle}</div>
-                       <div className={`p-2 text-[12px] ${row.minH}`}><EditableCell value={row.rightVal} onChange={row.rightSetter} /></div>
+                       <div className={`p-2 text-[12px] ${row.minH}`}><EditableCell value={row.rightVal} onChange={row.rightSetter} justify={true} /></div>
                     </td>
                   </tr>
                 ))}
@@ -1364,7 +1515,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
           <div key={chunkIdx} className={`print-page-target paper-f4-landscape shadow-2xl p-[6mm] border border-slate-300 text-black flex-col page-container ${isLastChunk ? 'last-print-page' : ''} ${activeTab === chunkIdx || isPrinting ? 'flex' : 'hidden print:flex'} font-bookman`}>
             <div className="flex justify-between items-end mb-3 border-b-4 border-black pb-1 shrink-0">
               <div>
-                <h2 className="text-xl font-black uppercase">{judul || 'JUDUL SOP'}</h2>
+                <h2 className="text-[15px] font-black uppercase leading-tight">{judul || 'JUDUL SOP'}</h2>
                 {(jenisSOP || klasifikasiSOP) && (
                   <div className="flex gap-2 mt-1 no-print font-sans">
                     {jenisSOP && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">{jenisSOP}</span>}
@@ -1395,7 +1546,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                     {currentHeaders.map((h, i) => (
                       <th key={i} className={`border-b-2 border-r-2 border-black p-1 relative group/h ${i === colCount - 1 ? '' : 'border-r-2 border-black'}`}>
                         <EditableCell value={h} onChange={(val) => handleHeaderChange(chunkIdx, i, val)} center={true} placeholder={`P${i+1}`} className="font-black text-center wrap-break-word" />
-                        {!effectiveIsViewOnly && <button onClick={() => removeColumn(i)} title="Hapus kolom pelaksana ini" className="absolute -top-1 -right-1 text-red-600 no-print opacity-40 group-hover/h:opacity-100 active:scale-125 bg-white rounded-full z-50"><UserMinus size={10}/></button>}
+                        {!effectiveIsViewOnly && <button onClick={() => removeColumn(i)} title="Hapus kolom pelaksana ini" className="absolute -top-1 -right-1 text-red-600 no-print opacity-40 group-hover/h:opacity-100 active:scale-125 bg-white rounded-full z-30"><UserMinus size={10}/></button>}
                       </th>
                     ))}
                     <th className={`border-b-2 border-r-2 border-black p-1 ${getWaktuFontClass()}`}>Kelengkapan</th>
@@ -1412,7 +1563,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                           <EditableCell value={displayNumbers[absIdx]} onChange={(val) => updateStep(absIdx, { nomorOverride: val.trim().toLowerCase() === 'auto' ? undefined : val })} center={true} className="text-[13px] h-full" />
                         </td>
                         <td className="border-r-2 border-black p-2 px-1.5 font-normal leading-snug relative overflow-visible align-top h-px">
-                          <EditableCell value={step.kegiatan} onChange={(val) => updateStep(absIdx, { kegiatan: val })} placeholder="..." className="text-[13px] h-full text-justify!" />
+                          <EditableCell value={step.kegiatan} onChange={(val) => updateStep(absIdx, { kegiatan: val })} placeholder="..." justify={true} className="text-[13px] h-full" />
                         </td>
                         
                         {Array(colCount).fill(0).map((_, i) => (
@@ -1424,10 +1575,10 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                         <td className="border-r-2 border-black p-2 px-1.5 font-normal leading-tight relative align-top h-px"><EditableCell value={step.syarat} onChange={(val) => updateStep(absIdx, { syarat: val })} className={`${getWaktuFontClass()} h-full`} /></td>
                         <td className={`border-r-2 border-black py-2 px-0.5 text-center font-normal leading-tight relative align-top h-px ${getWaktuFontClass()}`}><EditableCell value={step.waktu} onChange={(val) => updateStep(absIdx, { waktu: val })} center={true} className={`min-h-0! ${getWaktuFontClass()} h-full`} /></td>
                         <td className="border-r-2 border-black p-2 px-1.5 font-normal leading-tight relative align-top italic h-px"><EditableCell value={step.output} onChange={(val) => updateStep(absIdx, { output: val })} className={`${getWaktuFontClass()} italic h-full`} /></td>
-                        <td className="border-r-2 border-black p-2 px-1.5 font-normal leading-tight relative align-top h-px"><EditableCell value={step.ket} onChange={(val) => updateStep(absIdx, { ket: val })} placeholder="..." className={`${getWaktuFontClass()} h-full`} /></td>
+                        <td className="border-r-2 border-black p-2 px-1.5 font-normal leading-tight relative align-top h-px"><EditableCell value={step.ket} onChange={(val) => updateStep(absIdx, { ket: val })} placeholder="..." justify={true} className={`${getWaktuFontClass()} h-full`} /></td>
                         
                         {!effectiveIsViewOnly && (
-                          <td className="p-1 text-center no-print align-middle relative z-50 h-px">
+                          <td className="p-1 text-center no-print align-middle relative z-30 h-px">
                             <div className="flex flex-col items-center justify-center gap-1.5 h-full">
                               <button onClick={() => updateStep(absIdx, { isPageBreak: !step.isPageBreak })} className={`p-1 rounded w-full border ${step.isPageBreak ? 'bg-amber-100 text-amber-700 border-amber-300' : 'bg-slate-50 text-slate-500 border-slate-200 hover:bg-slate-200'}`}><span className="text-[8px] font-black leading-tight block">BATAS<br/>HAL</span></button>
                               <button onClick={() => setSteps(steps.filter((_, idx) => idx !== absIdx))} className="text-red-500 hover:text-white border border-red-200 hover:bg-red-500 p-1 rounded transition-colors w-full flex justify-center"><Trash2 size={14}/></button>
