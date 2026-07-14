@@ -165,6 +165,8 @@ function DashboardBPN() {
         }
 
         const user = JSON.parse(userStr);
+        // Superadmin = superset admin: berlaku seperti admin di Dashboard (lihat/edit semua dokumen).
+        if (user.role === 'superadmin') user.role = 'admin';
         setCurrentUser(user);
         setToken(tok);
         setIsAuthChecking(false); 
@@ -266,10 +268,11 @@ function DashboardBPN() {
   useEffect(() => { fetchDokumen(); }, [fetchDokumen]);
 
   useEffect(() => {
-    if (searchParams.get('mode') === 'tambah') {
+    if (searchParams.get('mode') === 'tambah' && currentUser?.role === 'admin') {
       resetFormTambah();
     }
-  }, [searchParams]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [searchParams, currentUser]);
 
   const getEmbedUrl = (url: string) => {
     if (!url) return '';
@@ -1480,7 +1483,7 @@ function DashboardBPN() {
                     {level === 3 && currentItems.map((doc, idx) => (
                       <tr key={doc.id} className={`border-b transition-colors ${isDarkMode ? 'border-slate-800 hover:bg-blue-900/20' : 'border-slate-50 hover:bg-blue-50/30'}`}>
                         <td className="px-6 py-4 text-center text-slate-400 font-medium">{indexOfFirstItem + idx + 1}</td>
-                        <td className={`px-6 py-4 font-bold ${isDarkMode ? 'text-blue-100' : 'text-[#002855]'}`}><button onClick={async () => { setViewDoc(doc); setPreviewSvg(""); if (doc.jenis === 'Proses Bisnis' && doc.link.includes('id=')) { try { const bpmnId = doc.link.split('id=')[1].split('&')[0]; const res = await apiFetch(`/bpmn/models/${bpmnId}`, token); if (!res.ok) throw new Error("Gagal"); const data = await res.json(); if (data && data.svg_xml) setPreviewSvg(data.svg_xml); else setPreviewSvg(`<div class="p-6 text-center text-red-500 font-bold border border-red-200 bg-red-50 rounded-xl m-4">Diagram kosong.</div>`); } catch { setPreviewSvg(`<div class="p-6 text-center text-amber-600 font-bold border border-amber-200 bg-amber-50 rounded-xl m-4">Gagal memuat diagram secara otomatis. Silakan klik "Buka di Tab Baru".</div>`); } } }} className={`hover:underline text-left line-clamp-2 ${isDarkMode ? 'hover:text-blue-400' : 'hover:text-blue-600'}`}>{doc.nama}</button></td>
+                        <td className={`px-6 py-4 font-bold ${isDarkMode ? 'text-blue-100' : 'text-[#002855]'}`}><button onClick={async () => { const _lnk = doc.link || ''; if (doc.jenis === 'SOP' && _lnk.includes('/sop/studio')) { router.push(_lnk.replace(/^\/e-sop-atrbpn/, '')); return; } setViewDoc(doc); setPreviewSvg(""); if (doc.jenis === 'Proses Bisnis' && doc.link.includes('id=')) { try { const bpmnId = doc.link.split('id=')[1].split('&')[0]; const res = await apiFetch(`/bpmn/models/${bpmnId}`, token); if (!res.ok) throw new Error("Gagal"); const data = await res.json(); if (data && data.svg_xml) setPreviewSvg(data.svg_xml); else setPreviewSvg(`<div class="p-6 text-center text-red-500 font-bold border border-red-200 bg-red-50 rounded-xl m-4">Diagram kosong.</div>`); } catch { setPreviewSvg(`<div class="p-6 text-center text-amber-600 font-bold border border-amber-200 bg-amber-50 rounded-xl m-4">Gagal memuat diagram secara otomatis. Silakan klik "Buka di Tab Baru".</div>`); } } }} className={`hover:underline text-left line-clamp-2 ${isDarkMode ? 'hover:text-blue-400' : 'hover:text-blue-600'}`}>{doc.nama}</button></td>
                         <td className="px-6 py-4 text-slate-500">{doc.unitL2 || '-'}</td>
                         <td className="px-6 py-4 text-slate-500">{doc.unitL3 || '-'}</td>
                         <td className="px-6 py-4"><span className={`px-3 py-1 rounded-full text-[11px] font-extrabold uppercase tracking-wider ${doc.jenis === 'Proses Bisnis' ? (isDarkMode ? 'bg-blue-900/50 text-blue-300' : 'bg-blue-100 text-blue-700') : doc.jenis === 'SOP' ? (isDarkMode ? 'bg-amber-900/40 text-amber-400' : 'bg-amber-100 text-amber-700') : (isDarkMode ? 'bg-emerald-900/40 text-emerald-400' : 'bg-emerald-100 text-emerald-700')}`}>{doc.jenis}</span></td>
@@ -1522,7 +1525,7 @@ function DashboardBPN() {
         )}
 
         {/* FORM TAMBAH/EDIT */}
-        {activeMenu === 'tambah' && currentUser && (
+        {activeMenu === 'tambah' && currentUser?.role === 'admin' && (
           <div className={`max-w-4xl mx-auto p-4 sm:p-6 md:p-10 rounded-2xl border shadow-lg animate-in fade-in zoom-in-95 duration-300 ${isDarkMode ? 'bg-[#151F32] border-slate-800' : 'bg-white border-slate-100'}`}>
             <h2 className={`text-3xl font-extrabold mb-2 ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{editingId ? 'Edit Data Dokumen' : 'Form Tambah Dokumen Baru'}</h2>
             <p className={`font-medium mb-10 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{editingId ? 'Perbarui informasi dokumen secara akurat.' : 'Silakan lengkapi form di bawah ini. Pastikan unit kerja dipilih secara berjenjang.'}</p>

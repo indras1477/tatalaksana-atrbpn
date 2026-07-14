@@ -8,20 +8,10 @@ import {
   FileSpreadsheet, ArrowDownToLine, Send, ArrowLeft, Info, MousePointer2, X, ChevronLeft, ChevronRight,
   Edit2, FileDown, Loader2
 } from 'lucide-react';
+import { HIERARKI_UNIT } from '@/lib/constants';
 
-const L1_OPTIONS = [
-  "SEKRETARIAT JENDERAL",
-  "DIREKTORAT JENDERAL TATA RUANG",
-  "DIREKTORAT JENDERAL SURVEI DAN PEMETAAN PERTANAHAN DAN RUANG",
-  "DIREKTORAT JENDERAL PENETAPAN HAK DAN PENDAFTARAN TANAH",
-  "DIREKTORAT JENDERAL PENATAAN AGRARIA",
-  "DIREKTORAT JENDERAL PENGADAAN TANAH DAN PENGEMBANGAN PERTANAHAN",
-  "DIREKTORAT JENDERAL PENGENDALIAN DAN PENERTIBAN TANAH DAN RUANG",
-  "DIREKTORAT JENDERAL PENANGAN SENGKETA DAN KONFLIK PERTANAHA",
-  "INSPEKTORAT JENDERAL",
-  "BADAN PENGEMBANGAN SUMBER DAYA MANUSIA",
-  "SEKOLAH TINGGI PERTANAHAN NASIONAL",
-];
+// Sumber tunggal (Titlecase) dari master unit; konsisten dengan modal konfigurasi SOP.
+const L1_OPTIONS = Object.keys(HIERARKI_UNIT);
 
 const JENIS_SOP_OPTIONS = ["Pusat", "Kantor Wilayah", "Kantor Pertanahan"];
 const KLASIFIKASI_SOP_OPTIONS = [
@@ -1177,7 +1167,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
 
   const coverRows = [
     { id: 1, minH: "min-h-12", leftTitle: "Dasar Hukum:", leftVal: dasarHukum, leftSetter: setDasarHukum, rightTitle: "Kualifikasi Pelaksana:", rightVal: kualifikasi, rightSetter: setKualifikasi },
-    { id: 2, minH: "min-h-12", leftTitle: "Keterkaitan:", leftVal: keterkaitan, leftSetter: setKeterkaitan, rightTitle: "Peralatan / Perlengkapan:", rightVal: peralatan, rightSetter: setPeralatan },
+    { id: 2, minH: "min-h-12", leftTitle: "Keterkaitan:", leftVal: keterkaitan, leftSetter: setKeterkaitan, rightTitle: "Peralatan/Perlengkapan:", rightVal: peralatan, rightSetter: setPeralatan },
     { id: 3, minH: "min-h-12", leftTitle: "Peringatan:", leftVal: peringatan, leftSetter: setPeringatan, rightTitle: "Pencatatan dan Pendataan:", rightVal: pencatatan, rightSetter: setPencatatan }
   ];
 
@@ -1287,12 +1277,19 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                 <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Unit Kerja Utama (L1) <span className="text-red-500">*</span></label>
                 <select value={infoForm.unitKerja} onChange={e => setInfoForm({ ...infoForm, unitKerja: e.target.value, subUnitKerja: '' })} className="w-full px-4 py-2.5 text-sm border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50 text-slate-900 cursor-pointer">
                   <option value="">-- Pilih Unit Utama --</option>
-                  {L1_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                  {(infoForm.unitKerja && !L1_OPTIONS.includes(infoForm.unitKerja) ? [infoForm.unitKerja, ...L1_OPTIONS] : L1_OPTIONS).map(o => <option key={o} value={o}>{o}</option>)}
                 </select>
               </div>
               <div>
-                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Sub-Unit / Direktorat (L2)</label>
-                <input type="text" value={infoForm.subUnitKerja} onChange={e => setInfoForm({ ...infoForm, subUnitKerja: e.target.value })} className="w-full px-4 py-2.5 text-sm border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50 text-slate-900" placeholder="Nama sub-unit / direktorat (opsional)" />
+                <label className="block text-xs font-bold text-slate-500 uppercase tracking-wider mb-1.5">Biro/Direktorat/Pusat (L2)</label>
+                <select value={infoForm.subUnitKerja} onChange={e => setInfoForm({ ...infoForm, subUnitKerja: e.target.value })} disabled={!infoForm.unitKerja} className="w-full px-4 py-2.5 text-sm border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50 text-slate-900 cursor-pointer disabled:opacity-50">
+                  <option value="">{infoForm.unitKerja ? '-- Pilih Biro/Direktorat/Pusat --' : '-- Pilih Unit Utama dulu --'}</option>
+                  {(() => {
+                    const opts = infoForm.unitKerja && HIERARKI_UNIT[infoForm.unitKerja] ? Object.keys(HIERARKI_UNIT[infoForm.unitKerja]) : [];
+                    const withCurrent = infoForm.subUnitKerja && !opts.includes(infoForm.subUnitKerja) ? [infoForm.subUnitKerja, ...opts] : opts;
+                    return withCurrent.map(o => <option key={o} value={o}>{o}</option>);
+                  })()}
+                </select>
               </div>
             </div>
             <div className="p-5 border-t border-slate-100 flex justify-end gap-3">

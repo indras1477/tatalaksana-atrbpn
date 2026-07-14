@@ -122,7 +122,10 @@ function SOPStudioContent() {
 
   const handleSave = async (dataJson: string) => {
     try {
-      await persist(dataJson, 'draft');
+      // Dokumen yang sudah lolos draft (pending/approved) pertahankan statusnya saat menyimpan
+      // perubahan konten — jangan turunkan ke 'draft'. Draft/rejected/usulan/baru → 'draft'.
+      const keepStatus = ['pending', 'approved'].includes(docStatus || '');
+      await persist(dataJson, keepStatus ? undefined : 'draft');
       alert("✅ Dokumen SOP Berhasil Disimpan!");
       localStorage.removeItem('e-sop-draft-local');
     } catch (e: unknown) {

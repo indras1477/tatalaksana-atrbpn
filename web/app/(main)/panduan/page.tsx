@@ -683,9 +683,10 @@ function PanduanModal({ item, onClose }: { item: typeof PANDUAN_ITEMS[0]; onClos
 export default function PanduanPage() {
   const { isDarkMode, currentUser } = useAppContext();
   const [activeItem, setActiveItem] = useState<typeof PANDUAN_ITEMS[0] | null>(null);
-  const visibleItems = currentUser?.role === 'admin'
+  // Non-admin: sembunyikan Manajemen Pengguna & Upload Manual (Tambah Dokumen).
+  const visibleItems = (currentUser?.role === 'admin' || currentUser?.role === 'superadmin')
     ? PANDUAN_ITEMS
-    : PANDUAN_ITEMS.filter(item => item.id !== 'users');
+    : PANDUAN_ITEMS.filter(item => item.id !== 'users' && item.id !== 'tambah');
 
   return (
     <div className="overflow-auto p-4 md:p-6 lg:p-8 h-full">

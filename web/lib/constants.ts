@@ -23,10 +23,11 @@ export const HIERARKI_UNIT: Record<string, Record<string, string[]>> = {
     "Direktorat Survei dan Pemetaan Tematik": ["Subdirektorat Tematik Pertanahan dan Ruang", "Subdirektorat Tematik Kawasan", "Subdirektorat Layanan Informasi Geospasial Tematik Multiguna"]
   },
   "Direktorat Jenderal Penetapan Hak dan Pendaftaran Tanah": {
-    "Sekretariat Direktorat Jenderal PENETAPAN HAK DAN PENDAFTARAN TANAH": ["Bagian Program dan Hukum", "Bagian Kepegawaian, Keuangan, dan Umum", "Bagian Manajemen Risiko"],
-    "Direktorat Pengaturan dan Penetapan Hak Atas Tanah": ["Subdirektorat Penetapan Hak Guna Usaha", "Subdirektorat Penetapan Hak Guna Bangunan", "Subdirektorat Penetapan Hak Pakai, Ruang Atas Tanah, dan Ruang Bawah Tanah"],
+    "Sekretariat Direktorat Jenderal Penetapan Hak dan Pendaftaran Tanah": ["Bagian Program dan Hukum", "Bagian Kepegawaian, Keuangan, dan Umum", "Bagian Manajemen Risiko"],
+    "Direktorat Pengaturan dan Penetapan Hak Atas Tanah dan Ruang": ["Subdirektorat Penetapan Hak Guna Usaha", "Subdirektorat Penetapan Hak Guna Bangunan", "Subdirektorat Penetapan Hak Pakai, Ruang Atas Tanah, dan Ruang Bawah Tanah"],
     "Direktorat Pengaturan Pendaftaran Tanah dan Ruang, Pejabat Pembuat Akta Tanah, dan Mitra Kerja": ["Subdirektorat Pengaturan Pendaftaran Tanah dan Ruang", "Subdirektorat Pengembangan Pemeliharaan Hak atas Tanah dan Ruang", "Subdirektorat Pengelolaan Pejabat Pembuah Akta Tanah dan Mitra Kerja"],
-    "Direktorat Hubungan Kelembagaan": ["Subdirektorat Hubungan Kelembagaan", "Subdirektorat Pengembangan Layanan Pertanahan"]
+    "Direktorat Hubungan Kelembagaan dan Pengaturan Layanan Pertanahan": ["Subdirektorat Hubungan Kelembagaan", "Subdirektorat Pengembangan Layanan Pertanahan"],
+    "Direktorat Pengaturan Tanah Pemerintah, Tanah Ulayat, dan Tanah Komunal": []
   },
   "Direktorat Jenderal Penataan Agraria": {
     "Sekretariat Direktorat Jenderal Penataan Agraria": ["Bagian Program dan Hukum", "Bagian Kepegawaian, Keuangan, dan Umum"],

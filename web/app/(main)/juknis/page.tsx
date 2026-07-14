@@ -71,7 +71,8 @@ export default function JuknisPage() {
   const { isDarkMode, currentUser } = useAppContext();
   const [token, setToken] = useState('');
 
-  const isAdmin  = currentUser?.role === 'admin';
+  // Superadmin diperlakukan sama seperti admin (akses kelola penuh).
+  const isAdmin  = currentUser?.role === 'admin' || currentUser?.role === 'superadmin';
   const isUser   = currentUser?.role === 'user';
   const isViewer = currentUser?.role === 'viewer';
 
@@ -493,8 +494,8 @@ export default function JuknisPage() {
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left">
+            <div className="hidden xl:block overflow-x-auto">
+              <table className="w-full min-w-220 text-sm text-left">
                 <thead className={`text-[11px] font-bold uppercase tracking-wider border-b ${dm ? 'bg-[#0F172A] text-slate-400 border-slate-800' : 'bg-slate-50 text-slate-400 border-slate-100'}`}>
                   <tr>
                     <th className="px-4 py-4 w-10 text-center">No</th>
@@ -510,11 +511,11 @@ export default function JuknisPage() {
                   {paginated.map((doc, idx) => (
                     <tr key={doc.id} onClick={() => setPreviewDoc(doc)} className={`border-b transition-colors cursor-pointer ${dm ? 'border-slate-800 hover:bg-blue-900/20' : 'border-slate-50 hover:bg-blue-50/60'}`}>
                       <td className="px-4 py-4 text-center text-slate-400 text-sm">{(safePage - 1) * pageSize + idx + 1}</td>
-                      <td className={`px-4 py-4 font-bold max-w-xs ${dm ? 'text-blue-100' : 'text-[#002855]'}`}>
+                      <td className={`px-4 py-4 font-bold min-w-72 max-w-md ${dm ? 'text-blue-100' : 'text-[#002855]'}`}>
                         <div className="flex items-start gap-2">
                           <div className="min-w-0">
-                            <p className="line-clamp-2 text-sm">{doc.judul}</p>
-                            {doc.tentang && <p className={`text-xs font-normal mt-0.5 line-clamp-1 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>{doc.tentang}</p>}
+                            <p className="text-sm leading-snug wrap-break-word">{doc.judul}</p>
+                            {doc.tentang && <p className={`text-xs font-normal mt-0.5 line-clamp-2 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>{doc.tentang}</p>}
                           </div>
                           <Eye className={`w-3.5 h-3.5 shrink-0 mt-0.5 opacity-30 ${dm ? 'text-blue-400' : 'text-blue-500'}`} />
                         </div>
@@ -563,6 +564,51 @@ export default function JuknisPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+          )}
+
+          {/* Daftar kartu (HP / tablet / iPad / layar sempit) — judul terbaca penuh */}
+          {paginated.length > 0 && (
+            <div className={`xl:hidden divide-y ${dm ? 'divide-slate-800' : 'divide-slate-100'}`}>
+              {paginated.map((doc, idx) => (
+                <div key={doc.id} onClick={() => setPreviewDoc(doc)} className={`p-4 cursor-pointer transition-colors ${dm ? 'hover:bg-blue-900/20' : 'hover:bg-blue-50/60'}`}>
+                  <div className="flex items-start justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className={`font-bold text-sm leading-snug wrap-break-word ${dm ? 'text-blue-100' : 'text-[#002855]'}`}>
+                        <span className={`inline-block mr-1.5 text-[11px] font-mono align-middle ${dm ? 'text-slate-500' : 'text-slate-400'}`}>{(safePage - 1) * pageSize + idx + 1}.</span>
+                        {doc.judul}
+                      </p>
+                      {doc.tentang && <p className={`text-xs font-normal mt-1 wrap-break-word ${dm ? 'text-slate-500' : 'text-slate-400'}`}>{doc.tentang}</p>}
+                    </div>
+                    <Eye className={`w-4 h-4 shrink-0 mt-0.5 opacity-40 ${dm ? 'text-blue-400' : 'text-blue-500'}`} />
+                  </div>
+                  <div className="flex flex-wrap items-center gap-1.5 mt-2.5">
+                    <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${dm ? JENIS_BADGE_DARK[doc.jenis] : JENIS_BADGE[doc.jenis]}`}>{doc.jenis}</span>
+                    {doc.tahun && <span className={`px-2 py-0.5 rounded-md text-[10px] font-bold ${dm ? 'bg-slate-800 text-slate-300' : 'bg-slate-100 text-slate-600'}`}>{doc.tahun}</span>}
+                    {doc.nomor && <span className={`px-2 py-0.5 rounded-md text-[10px] font-mono ${dm ? 'bg-slate-800 text-slate-400' : 'bg-slate-50 text-slate-500'}`}>{doc.nomor}</span>}
+                    {doc.tanggal_terbit && <span className={`text-[10px] flex items-center gap-1 ${dm ? 'text-slate-500' : 'text-slate-400'}`}><Calendar className="w-3 h-3 shrink-0" />{formatTanggal(doc.tanggal_terbit)}</span>}
+                  </div>
+                  {doc.unit_l1 && (
+                    <p className={`text-[11px] mt-2 wrap-break-word ${dm ? 'text-slate-400' : 'text-slate-500'}`}>
+                      <span className="font-semibold">{doc.unit_l1}</span>{doc.unit_l2 ? ` › ${doc.unit_l2}` : ''}{doc.unit_l3 ? ` › ${doc.unit_l3}` : ''}
+                    </p>
+                  )}
+                  <div className="flex items-center gap-2 mt-3" onClick={e => e.stopPropagation()}>
+                    {doc.link && (
+                      <a href={doc.link} target="_blank" rel="noreferrer" onClick={e => e.stopPropagation()}
+                        className={`inline-flex items-center gap-1 px-3 py-2 rounded-lg text-xs font-bold transition-all ${dm ? 'bg-blue-900/40 text-blue-400 hover:bg-blue-600 hover:text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white'}`}>
+                        Buka Dokumen <ExternalLink className="w-3 h-3" />
+                      </a>
+                    )}
+                    {(isAdmin || (isUser && (doc.created_by === currentUser?.id || (userUnit && doc.unit_l1?.toLowerCase().trim() === userUnit)))) && (
+                      <>
+                        <button onClick={e => { e.stopPropagation(); openEdit(doc); }} className={`px-3 py-2 rounded-lg text-xs font-bold ${dm ? 'text-blue-400 hover:bg-slate-800' : 'text-blue-600 hover:bg-blue-50'}`}>Edit</button>
+                        <button onClick={e => { e.stopPropagation(); handleDelete(doc.id); }} className={`px-3 py-2 rounded-lg text-xs font-bold ${dm ? 'text-red-400 hover:bg-slate-800' : 'text-red-500 hover:bg-red-50'}`}>Hapus</button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              ))}
             </div>
           )}
 

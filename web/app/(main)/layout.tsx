@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { usePathname } from 'next/navigation';
 import { AppProvider, useAppContext } from '@/lib/app-context';
 import AppSidebar from '@/components/layout/AppSidebar';
@@ -10,6 +10,24 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const { isDarkMode } = useAppContext();
   const pathname = usePathname();
+  const prefLoaded = useRef(false);
+
+  useEffect(() => {
+    // Saat app pertama dimuat (mis. setelah login): buka sidebar di desktop.
+    // Preferensi buka/minimize disimpan agar dihormati saat reload berikutnya.
+    if (typeof window === 'undefined') return;
+    const stored = localStorage.getItem('sidebarOpen');
+    const isDesktop = window.innerWidth >= 1024;
+    setSidebarOpen(isDesktop && (stored === null ? true : stored === '1'));
+    prefLoaded.current = true;
+  }, []);
+
+  useEffect(() => {
+    // Simpan preferensi hanya setelah nilai awal dibaca (hindari menimpa dengan default).
+    if (prefLoaded.current && typeof window !== 'undefined') {
+      localStorage.setItem('sidebarOpen', sidebarOpen ? '1' : '0');
+    }
+  }, [sidebarOpen]);
 
   useEffect(() => {
     // Di layar kecil, tutup overlay sidebar saat berpindah halaman.
@@ -52,7 +70,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         >
           Dibuat oleh{' '}
           <a
-            href="https://www.instagram.com/ferdiansyah_nanda"
+            href="https://www.linkedin.com/in/nanda-ferdiansyah-77640b121"
             target="_blank"
             rel="noopener noreferrer"
             className="text-blue-500 hover:underline font-medium"

@@ -55,7 +55,7 @@ export default function UsersPage() {
       const url = editingUser ? `${API_URL}/${editingUser.id}` : API_URL;
       const method = editingUser ? 'PUT' : 'POST';
 
-      const noUnit = formData.role === 'admin' || formData.role === 'viewer';
+      const noUnit = formData.role === 'admin' || formData.role === 'viewer' || formData.role === 'superadmin';
       const submissionData = {
         ...formData,
         id: editingUser?.id,
@@ -123,7 +123,7 @@ export default function UsersPage() {
 
   const handleDownloadExcel = () => {
     const roleLabel = (role: string) =>
-      role === 'admin' ? 'Admin' : role === 'viewer' ? 'Viewer' : 'User (Terbatas)';
+      role === 'superadmin' ? 'Superadmin' : role === 'admin' ? 'Admin' : role === 'viewer' ? 'Viewer' : 'User (Terbatas)';
 
     const rows = users.map(u => ({
       'Nama Lengkap': u.nama_lengkap || '-',
@@ -186,7 +186,7 @@ export default function UsersPage() {
                     <p className="text-xs font-mono text-slate-500">@{user.username}</p>
                   </td>
                   <td className="px-6 py-4">
-                    {(user.role === 'admin' || user.role === 'viewer') ? (
+                    {(user.role === 'admin' || user.role === 'viewer' || user.role === 'superadmin') ? (
                       <span className="text-xs font-bold text-slate-400 italic">
                         {user.role === 'viewer' ? 'Lihat Saja' : 'Akses Lintas Unit'}
                       </span>
@@ -199,13 +199,15 @@ export default function UsersPage() {
                   </td>
                   <td className="px-6 py-4 text-center">
                     <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase border ${
-                      user.role === 'admin'
-                        ? 'bg-purple-50 text-purple-600 border-purple-100'
-                        : user.role === 'viewer'
-                          ? 'bg-teal-50 text-teal-600 border-teal-100'
-                          : 'bg-blue-50 text-blue-600 border-blue-100'
+                      user.role === 'superadmin'
+                        ? 'bg-amber-50 text-amber-600 border-amber-100'
+                        : user.role === 'admin'
+                          ? 'bg-purple-50 text-purple-600 border-purple-100'
+                          : user.role === 'viewer'
+                            ? 'bg-teal-50 text-teal-600 border-teal-100'
+                            : 'bg-blue-50 text-blue-600 border-blue-100'
                     }`}>
-                      {user.role === 'admin' ? 'Admin' : user.role === 'viewer' ? 'Viewer' : 'User (Terbatas)'}
+                      {user.role === 'superadmin' ? 'Superadmin' : user.role === 'admin' ? 'Admin' : user.role === 'viewer' ? 'Viewer' : 'User (Terbatas)'}
                     </span>
                   </td>
                   <td className="px-6 py-4 text-center">
@@ -252,6 +254,7 @@ export default function UsersPage() {
                     <option value="user">User (Terbatas)</option>
                     <option value="viewer">Viewer</option>
                     <option value="admin">Admin</option>
+                    <option value="superadmin">Superadmin</option>
                   </select>
                 </div>
               </div>
@@ -281,7 +284,7 @@ export default function UsersPage() {
                 <input type="text" value={formData.nama_lengkap} onChange={e => setFormData({...formData, nama_lengkap: e.target.value})} className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" required />
               </div>
 
-              {formData.role !== 'admin' && formData.role !== 'viewer' && (
+              {formData.role !== 'admin' && formData.role !== 'viewer' && formData.role !== 'superadmin' && (
                 <div className="p-5 bg-blue-50/50 border border-blue-100 rounded-2xl space-y-4">
                   <p className="text-[10px] font-black text-blue-600 uppercase tracking-widest flex items-center gap-2">
                     <Building2 className="w-3 h-3" /> Penempatan Unit Kerja

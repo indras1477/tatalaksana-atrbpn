@@ -3,7 +3,7 @@
 import { usePathname, useRouter } from 'next/navigation';
 import {
   Home, FileSignature, GitBranch, Users, LogOut,
-  HelpCircle, X, FilePlus, ScrollText, Landmark,
+  HelpCircle, X, FilePlus, ScrollText, Landmark, Network, ClipboardCheck,
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
 
@@ -14,8 +14,10 @@ interface Props {
 
 const NAV_ITEMS_ALL = [
   { label: 'Dashboard', icon: Home, href: '/' },
-  { label: 'Buat Proses Bisnis (BPMN)', icon: GitBranch, href: '/bpmn' },
+  // '#probis' = grup "Proses Bisnis" (sub-menu: Peta Kementerian + BPMN L3/N)
+  { label: 'Proses Bisnis', icon: GitBranch, href: '#probis' },
   { label: 'Buat SOP', icon: FileSignature, href: '/sop' },
+  { label: 'Buat SP', icon: ClipboardCheck, href: '/sp' },
   { label: 'Peraturan', icon: Landmark, href: '/peraturan' },
   { label: 'Juknis / Juklak / SE', icon: ScrollText, href: '/juknis' },
 ];
@@ -40,11 +42,13 @@ export default function AppSidebar({ isOpen, onClose }: Props) {
     if (typeof window !== 'undefined' && window.innerWidth < 1024) onClose();
   };
 
+  const isSuperadmin = currentUser?.role === 'superadmin';
+
   const allNavItems = isViewer
     ? NAV_ITEMS_VIEWER
     : [
         ...NAV_ITEMS_ALL,
-        ...(currentUser?.role === 'admin'
+        ...(currentUser?.role === 'admin' || isSuperadmin
           ? [{ label: 'Manajemen Pengguna', icon: Users, href: '/users' }]
           : []),
       ];
@@ -104,6 +108,43 @@ export default function AppSidebar({ isOpen, onClose }: Props) {
           )}
 
           {allNavItems.map(({ label, icon: Icon, href }) => {
+            // Grup "Proses Bisnis": judul grup + sub-menu Peta Kementerian & BPMN L3/N
+            if (href === '#probis') {
+              const petaActive = pathname.startsWith('/peta-proses-bisnis');
+              const bpmnActive = pathname.startsWith('/bpmn');
+              const subBtn = (subHref: string, subLabel: string, SubIcon: typeof Network, subActive: boolean) => (
+                <button
+                  key={subHref}
+                  onClick={() => navigate(subHref)}
+                  title={!isOpen ? subLabel : undefined}
+                  className={`
+                    w-full flex items-center py-2.5 mb-1 rounded-2xl
+                    transition-all duration-200 text-[13px]
+                    ${isOpen ? 'gap-3 pl-10 pr-4' : 'justify-center px-3'}
+                    ${subActive
+                      ? 'bg-linear-to-r from-[#A29061] to-[#8c7a4b] text-white font-bold shadow-lg shadow-[#A29061]/25'
+                      : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'}
+                  `}
+                >
+                  <SubIcon className="w-4 h-4 shrink-0" />
+                  {isOpen && <span className="leading-tight text-left">{subLabel}</span>}
+                </button>
+              );
+              return (
+                <div key="probis-group">
+                  {isOpen ? (
+                    <div className="flex items-center gap-3 px-4 pt-2 pb-1 text-slate-500">
+                      <Icon className="w-5 h-5 shrink-0" />
+                      <span className="text-[11px] font-bold uppercase tracking-wider">{label}</span>
+                    </div>
+                  ) : (
+                    <div className="border-t border-white/10 my-2" />
+                  )}
+                  {isSuperadmin && subBtn('/peta-proses-bisnis', 'Peta Proses Bisnis Kementerian', Network, petaActive)}
+                  {subBtn('/bpmn', 'Buat Proses Bisnis (BPMN) Level 3/Level N', GitBranch, bpmnActive)}
+                </div>
+              );
+            }
             const active = pathname === href || (href !== '/' && pathname.startsWith(href));
             return (
               <button
@@ -125,8 +166,8 @@ export default function AppSidebar({ isOpen, onClose }: Props) {
             );
           })}
 
-          {/* Upload Manual — aksi cepat, disembunyikan untuk viewer */}
-          {!isViewer && (
+          {/* Upload Manual — khusus admin/superadmin (user terbatas tidak lagi) */}
+          {(currentUser?.role === 'admin' || isSuperadmin) && (
             <div className={`mt-4 ${isOpen ? 'px-1' : ''}`}>
               {isOpen && (
                 <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 px-3">

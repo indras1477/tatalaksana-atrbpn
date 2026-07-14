@@ -193,7 +193,7 @@ export default function LoginPage() {
         <p className="text-center text-sm text-gray-500 mt-6 leading-relaxed">
           Dibuat oleh{' '}
           <a
-            href="https://www.instagram.com/ferdiansyah_nanda"
+            href="https://www.linkedin.com/in/nanda-ferdiansyah-77640b121"
             target="_blank"
             rel="noopener noreferrer"
             className="text-blue-500 hover:underline font-medium"

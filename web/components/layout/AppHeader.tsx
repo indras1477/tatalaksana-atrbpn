@@ -9,6 +9,7 @@ import { HIERARKI_UNIT } from '@/lib/constants';
 const PAGE_TITLES: Record<string, { title: string; subtitle: string }> = {
   '/': { title: 'Dashboard Monitoring', subtitle: 'Rekapitulasi dokumen ketatalaksanaan seluruh unit kerja' },
   '/sop': { title: 'Dokumen SOP', subtitle: 'Manajemen dan pengajuan Standard Operating Procedure' },
+  '/sp': { title: 'Standar Pelayanan', subtitle: 'Manajemen dan pengajuan Standar Pelayanan unit kerja' },
   '/bpmn': { title: 'Proses Bisnis (BPMN)', subtitle: 'Pemodelan alur kerja dan proses bisnis unit kerja' },
   '/users': { title: 'Manajemen Pengguna', subtitle: 'Kelola akun dan hak akses pengguna sistem' },
   '/bpmn/studio': { title: 'Studio Editor BPMN', subtitle: 'Editor visual diagram proses bisnis' },

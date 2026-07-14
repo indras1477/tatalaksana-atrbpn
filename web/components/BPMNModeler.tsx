@@ -4,12 +4,17 @@ import BpmnModeler from 'bpmn-js/lib/Modeler';
 import NavigatedViewer from 'bpmn-js/lib/NavigatedViewer';
 import { Undo2, Redo2, ChevronRight, Save, LayoutGrid, X, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 import RuleProvider from 'diagram-js/lib/features/rules/RuleProvider';
+import CommandInterceptor from 'diagram-js/lib/command/CommandInterceptor';
+import OrderingProvider from 'diagram-js/lib/features/ordering/OrderingProvider';
 import poolGroupRendererModule from './bpmnPoolGroupRenderer';
 import { enableTouchInteraction } from './bpmnTouch';
 
 import 'bpmn-js/dist/assets/diagram-js.css';
 import 'bpmn-js/dist/assets/bpmn-font/css/bpmn-embedded.css';
-import 'bpmn-js/dist/assets/bpmn-js.css'; 
+import 'bpmn-js/dist/assets/bpmn-js.css';
+
+// Font seluruh dokumen BPMN (kanvas + ekspor SVG/PDF).
+const BPMN_FONT = "'Bookman Old Style', 'URW Bookman', Bookman, Georgia, serif";
 
 // === XML REPAIR ===
 // Fixes BPMN XML corrupted by placing a Pool (bpmn:Participant) inside a SubProcess.
@@ -158,6 +163,7 @@ interface BpmnModeling {
   createShape: (shape: BpmnElement, position: { x: number; y: number }, target: BpmnElement, hints?: unknown) => BpmnElement;
   updateLabel: (element: BpmnElement, newLabel: string) => void;
   resizeShape: (shape: BpmnElement, newBounds: { x: number; y: number; width: number; height: number }) => void;
+  removeElements: (elements: BpmnElement[]) => void;
 }
 
 interface BpmnContextPad {
@@ -402,6 +408,26 @@ class CustomContextPadProvider {
       };
     }
 
+    // Tombol pewarnaan elemen (ala bpmn-js-color-picker) — semua elemen non-label.
+    entries['set-color'] = {
+      group: 'edit',
+      html: '<div class="entry" title="Warnai Elemen" style="display:flex;align-items:center;justify-content:center;"><svg width="16" height="16" viewBox="0 0 16 16"><rect x="1" y="1" width="6.5" height="6.5" rx="1.5" fill="#BBDEFB" stroke="#1E88E5"/><rect x="8.5" y="1" width="6.5" height="6.5" rx="1.5" fill="#C8E6C9" stroke="#43A047"/><rect x="1" y="8.5" width="6.5" height="6.5" rx="1.5" fill="#FFE0B2" stroke="#FB8C00"/><rect x="8.5" y="8.5" width="6.5" height="6.5" rx="1.5" fill="#FFCDD2" stroke="#E53935"/></svg></div>',
+      action: {
+        click: (event: MouseEvent) => {
+          const pad = (contextPad._current && contextPad._current.html) || contextPad.getPad(element).html;
+          const rect = pad.getBoundingClientRect();
+          popupMenu.open(element, 'element-colors', {
+            x: rect.left,
+            y: rect.bottom + 5,
+            cursor: { x: event.x, y: event.y }
+          }, {
+            title: 'Warnai Elemen',
+            width: 200
+          });
+        }
+      }
+    };
+
     // Pada POOL (bpmn:Group yang bukan Lane): tombol tambah Lane.
     if (element.type === 'bpmn:Group' && !this._containerPool(element as BpmnShapeElement)) {
       entries['add-lane'] = {
@@ -464,6 +490,250 @@ class CustomRules extends (RuleProvider as unknown as { new(eb: BpmnEventBus): R
       }
     });
 
+    // Pool/Lane kita adalah bpmn:Group dengan isFrame=false (hit 'all' agar mudah
+    // diklik). Konsekuensinya Group jadi target drop, dan aturan bawaan menolak
+    // Group sebagai induk → elemen tak bisa ditaruh "di dalam" Pool. Izinkan drop
+    // elemen non-Group ke atas Group; GroupDropBehavior memindahkan induk sebenarnya
+    // ke leluhur non-Group (plane/SubProcess).
+    const allowDropOnGroup = (target?: { type?: string }, moved?: { type?: string }[]): boolean | void => {
+      if (!target || target.type !== 'bpmn:Group') return;
+      const list = (moved || []).filter(Boolean);
+      if (!list.length || list.some(el => el.type === 'bpmn:Group' || el.type === 'bpmn:Participant')) return;
+      return true;
+    };
+    this.addRule(['shape.create', 'elements.create'], 1500, (context: { target?: { type?: string }; shape?: { type?: string }; elements?: { type?: string }[] }) =>
+      allowDropOnGroup(context.target, context.shape ? [context.shape] : context.elements));
+    this.addRule('elements.move', 1500, (context: { target?: { type?: string }; shapes?: { type?: string }[] }) =>
+      allowDropOnGroup(context.target, context.shapes));
+  }
+}
+
+// === 3b. GROUP DROP BEHAVIOR ===
+// Saat elemen dibuat/dipindah dengan target sebuah Pool/Lane (bpmn:Group), alihkan
+// induknya ke leluhur non-Group terdekat (plane SubProcess / proses). Group adalah
+// Artifact BPMN dan tidak boleh memiliki flowElements — tanpa pengalihan ini XML
+// menjadi korup. Pembuatan Group itu sendiri (Pool/Lane via context-pad) dilewati
+// agar lane tetap menjadi anak pool-nya.
+type GroupDropEl = { type?: string; parent?: GroupDropEl } | undefined;
+class GroupDropBehavior extends (CommandInterceptor as unknown as { new(eb: BpmnEventBus): CommandInterceptor }) {
+  static $inject = ['eventBus', 'elementRegistry', 'modeling'];
+
+  constructor(eventBus: BpmnEventBus, elementRegistry: BpmnElementRegistry, modeling: BpmnModeling) {
+    super(eventBus);
+    const self = this as unknown as {
+      preExecute: (events: string[], priority: number, handler: (event: { context: Record<string, unknown> }) => void) => void;
+      postExecute: (events: string[], handler: (event: { context: Record<string, unknown> }) => void) => void;
+    };
+    const nonGroupAncestor = (el: GroupDropEl): GroupDropEl => {
+      let t = el;
+      while (t && t.type === 'bpmn:Group') t = t.parent;
+      return t;
+    };
+    const isGroup = (el: GroupDropEl) => !!el && el.type === 'bpmn:Group';
+
+    self.preExecute(['shape.create', 'elements.create'], 1500, (event) => {
+      const ctx = event.context as { shape?: GroupDropEl; elements?: GroupDropEl[]; parent?: GroupDropEl };
+      const shapes = ctx.shape ? [ctx.shape] : (ctx.elements || []);
+      if (shapes.some(isGroup)) return;
+      if (isGroup(ctx.parent)) ctx.parent = nonGroupAncestor(ctx.parent);
+    });
+
+    self.preExecute(['elements.move', 'shape.move'], 1500, (event) => {
+      const ctx = event.context as { shape?: GroupDropEl; shapes?: GroupDropEl[]; newParent?: GroupDropEl };
+      const shapes = ctx.shapes || (ctx.shape ? [ctx.shape] : []);
+      if (shapes.some(isGroup)) return;
+      if (isGroup(ctx.newParent)) ctx.newParent = nonGroupAncestor(ctx.newParent);
+    });
+
+    // Pool/Lane digeser → bawa serta semua elemen yang secara GEOMETRI berada di
+    // dalamnya. Diperlukan karena relasi induk-anak pool→lane/isi tidak round-trip
+    // lewat XML (Group = artifact datar, posisi DI absolut) — setelah muat ulang,
+    // menggeser pool akan meninggalkan lane & elemen di dalamnya. Prioritas tinggi
+    // (5000) agar berjalan SEBELUM label/attach support menambahkan turunannya.
+    // Sekaligus: LANE tidak boleh keluar dari pool-nya — delta dibatasi (clamp)
+    // agar lane tetap berada di dalam area isi pool.
+    const rootOf = (el: { parent?: unknown }): unknown => {
+      let t: { parent?: unknown } | undefined = el;
+      while (t && t.parent) t = t.parent as { parent?: unknown };
+      return t;
+    };
+    // Pool terkecil yang membungkus (geometri) elemen ini pada plane yang sama.
+    const containerPoolOf = (el: BpmnShapeElement): BpmnShapeElement | null => {
+      if (el.x == null || el.width == null) return null;
+      const cx = el.x + el.width / 2;
+      const cy = el.y + el.height / 2;
+      const area = el.width * el.height;
+      const elRoot = rootOf(el);
+      let best: BpmnShapeElement | null = null;
+      let bestArea = Infinity;
+      elementRegistry.forEach((other) => {
+        if (other === el || other.type !== 'bpmn:Group') return;
+        if (other.x == null || other.width == null) return;
+        const oa = other.width * other.height;
+        if (oa <= area || oa >= bestArea || rootOf(other) !== elRoot) return;
+        if (cx > other.x && cx < other.x + other.width && cy > other.y && cy < other.y + other.height) {
+          best = other; bestArea = oa;
+        }
+      });
+      return best;
+    };
+
+    self.preExecute(['elements.move'], 5000, (event) => {
+      const ctx = event.context as { shapes?: (BpmnShapeElement & { waypoints?: unknown; labelTarget?: BpmnShapeElement })[]; delta?: { x: number; y: number } };
+      let shapes = ctx.shapes || [];
+      // Label eksternal Pool/Lane TIDAK boleh dipindah terpisah dari Group-nya —
+      // buang dari set bila Group-nya tidak ikut (teks selalu menyatu dgn pool).
+      const glued = shapes.filter(s => !(
+        s.type === 'label' && s.labelTarget?.type === 'bpmn:Group' && !shapes.includes(s.labelTarget as never)
+      ));
+      if (glued.length !== shapes.length) { ctx.shapes = glued; shapes = glued; }
+      if (!shapes.length) return;
+      const movedGroups = shapes.filter(s => s.type === 'bpmn:Group');
+      if (!movedGroups.length) return;
+      // Zero-delta = pemindahan programatik (mis. re-parent lane→pool saat import)
+      // — jangan ekspansi/clamp.
+      if (!ctx.delta || (!ctx.delta.x && !ctx.delta.y)) return;
+      const groupRoots = movedGroups.map(g => rootOf(g));
+      const extra: BpmnShapeElement[] = [];
+      elementRegistry.forEach((el) => {
+        const cand = el as BpmnShapeElement & { waypoints?: unknown };
+        if (shapes.includes(cand) || extra.includes(cand)) return;
+        if (!cand.parent || cand.type === 'label' || cand.waypoints) return;
+        if (cand.x == null || cand.width == null) return;
+        const cx = cand.x + cand.width / 2;
+        const cy = cand.y + cand.height / 2;
+        const inside = movedGroups.some((g, i) =>
+          g !== cand && rootOf(cand) === groupRoots[i] &&
+          g.x != null && cx > g.x && cx < g.x + g.width && cy > g.y && cy < g.y + g.height
+        );
+        if (inside) extra.push(cand);
+      });
+      const allMoved = extra.length ? [...shapes, ...extra] : shapes;
+      if (extra.length) ctx.shapes = allMoved;
+
+      // Clamp: lane (Group di dalam pool yang TIDAK ikut dipindah) harus tetap
+      // berada di dalam area isi pool-nya.
+      if (!ctx.delta) return;
+      let minDx = -Infinity, maxDx = Infinity, minDy = -Infinity, maxDy = Infinity;
+      for (const g of movedGroups) {
+        const pool = containerPoolOf(g);
+        if (!pool || (allMoved as BpmnShapeElement[]).includes(pool)) continue;
+        const isH = pool.di?.isHorizontal;
+        const vertical = isH === false || (isH == null && pool.height > pool.width);
+        const contentX = vertical ? pool.x : pool.x + 28;   // 28 = pita judul pool
+        const contentY = vertical ? pool.y + 28 : pool.y;
+        minDx = Math.max(minDx, contentX - g.x);
+        maxDx = Math.min(maxDx, (pool.x + pool.width) - (g.x + g.width));
+        minDy = Math.max(minDy, contentY - g.y);
+        maxDy = Math.min(maxDy, (pool.y + pool.height) - (g.y + g.height));
+      }
+      if (minDx <= maxDx && isFinite(minDx + maxDx)) ctx.delta.x = Math.min(Math.max(ctx.delta.x, minDx), maxDx);
+      if (minDy <= maxDy && isFinite(minDy + maxDy)) ctx.delta.y = Math.min(Math.max(ctx.delta.y, minDy), maxDy);
+    });
+
+    // POOL di-resize → lane di dalamnya otomatis mengikuti: di-tile ulang secara
+    // proporsional memenuhi area isi pool (penuh pada sumbu silang, proporsi
+    // masing-masing lane dipertahankan pada sumbu susun).
+    self.postExecute(['shape.resize'], (event) => {
+      const ctx = event.context as { shape?: BpmnShapeElement; oldBounds?: { x: number; y: number; width: number; height: number } };
+      const shape = ctx.shape; const old = ctx.oldBounds;
+      if (!shape || shape.type !== 'bpmn:Group' || !old) return;
+      if (containerPoolOf(shape)) return; // yang di-resize lane → biarkan manual
+      const isH = shape.di?.isHorizontal;
+      const vertical = isH === false || (isH == null && shape.height > shape.width);
+      const B = 28; // pita judul pool
+      const oldC = vertical
+        ? { x: old.x, y: old.y + B, w: old.width, h: old.height - B }
+        : { x: old.x + B, y: old.y, w: old.width - B, h: old.height };
+      const newC = vertical
+        ? { x: shape.x, y: shape.y + B, w: shape.width, h: shape.height - B }
+        : { x: shape.x + B, y: shape.y, w: shape.width - B, h: shape.height };
+      if (oldC.w <= 0 || oldC.h <= 0 || newC.w <= 0 || newC.h <= 0) return;
+      const shapeRoot = rootOf(shape);
+      const lanes: BpmnShapeElement[] = [];
+      elementRegistry.forEach((el) => {
+        if (el.type !== 'bpmn:Group' || el === shape || el.x == null || el.width == null) return;
+        if (rootOf(el) !== shapeRoot) return;
+        if (el.width * el.height >= old.width * old.height) return;
+        const cx = el.x + el.width / 2, cy = el.y + el.height / 2;
+        if (cx > old.x && cx < old.x + old.width && cy > old.y && cy < old.y + old.height) lanes.push(el);
+      });
+      for (const lane of lanes) {
+        const nb = vertical
+          ? { // lane = kolom → tiling pada sumbu X
+              x: Math.round(newC.x + ((lane.x - oldC.x) / oldC.w) * newC.w),
+              y: newC.y,
+              width: Math.max(30, Math.round((lane.width / oldC.w) * newC.w)),
+              height: newC.h,
+            }
+          : { // lane = baris → tiling pada sumbu Y
+              x: newC.x,
+              y: Math.round(newC.y + ((lane.y - oldC.y) / oldC.h) * newC.h),
+              width: newC.w,
+              height: Math.max(30, Math.round((lane.height / oldC.h) * newC.h)),
+            };
+        modeling.resizeShape(lane as unknown as BpmnElement, nb);
+      }
+    });
+  }
+}
+
+// === 3b2. URUTAN GAMBAR GROUP ===
+// Bawaan bpmn-js menaruh bpmn:Group di lapisan PALING ATAS (level 10) — pool kita
+// menutupi elemen di dalamnya. Paksa Group ke indeks 0 (paling bawah, seperti
+// bpmn:Participant level -2) sehingga elemen selalu tampil DI ATAS pool/lane.
+// Berlaku saat create maupun move ('elements.move' dipecah jadi 'shape.move'
+// per elemen oleh MoveHelper, yang di-hook OrderingProvider).
+class GroupOrderingProvider extends (OrderingProvider as unknown as { new(eb: BpmnEventBus): { getOrdering: unknown } }) {
+  static $inject = ['eventBus'];
+
+  constructor(eventBus: BpmnEventBus) {
+    super(eventBus);
+    this.getOrdering = (element: BpmnElement, newParent: BpmnElement) => {
+      if (element.type === 'bpmn:Group') return { parent: newParent, index: 0 };
+      return null;
+    };
+  }
+}
+
+// === 3c. PEWARNAAN ELEMEN (ala bpmn-js-color-picker) ===
+// Palet warna mengikuti referensi github bpmn-io/bpmn-js-color-picker.
+const ELEMENT_COLORS: { label: string; fill?: string; stroke?: string }[] = [
+  { label: 'Bawaan' },
+  { label: 'Biru',    fill: '#BBDEFB', stroke: '#1E88E5' },
+  { label: 'Hijau',   fill: '#C8E6C9', stroke: '#43A047' },
+  { label: 'Kuning',  fill: '#FFF9C4', stroke: '#F9A825' },
+  { label: 'Oranye',  fill: '#FFE0B2', stroke: '#FB8C00' },
+  { label: 'Merah',   fill: '#FFCDD2', stroke: '#E53935' },
+  { label: 'Ungu',    fill: '#E1BEE7', stroke: '#8E24AA' },
+  { label: 'Abu-abu', fill: '#ECEFF1', stroke: '#546E7A' },
+];
+
+type BpmnModelingWithColor = BpmnModeling & { setColor: (elements: BpmnElement[], colors: { fill?: string; stroke?: string } | null) => void };
+class ColorPickerProvider {
+  static $inject = ['popupMenu', 'modeling'];
+
+  private _modeling: BpmnModelingWithColor;
+
+  constructor(popupMenu: BpmnPopupMenu & { registerProvider: (id: string, provider: unknown) => void }, modeling: BpmnModelingWithColor) {
+    this._modeling = modeling;
+    popupMenu.registerProvider('element-colors', this);
+  }
+
+  getPopupMenuEntries(target: BpmnElement | BpmnElement[]) {
+    const elements = Array.isArray(target) ? target : [target];
+    const modeling = this._modeling;
+    const entries: Record<string, unknown> = {};
+    for (const c of ELEMENT_COLORS) {
+      entries[`color-${c.label.toLowerCase()}`] = {
+        label: c.label,
+        imageHtml: `<svg width="18" height="18" viewBox="0 0 18 18"><rect x="1.5" y="1.5" width="15" height="15" rx="3" fill="${c.fill || '#ffffff'}" stroke="${c.stroke || '#94a3b8'}" stroke-width="1.5"/></svg>`,
+        action: () => {
+          modeling.setColor(elements, c.fill ? { fill: c.fill, stroke: c.stroke } : { fill: undefined, stroke: undefined });
+        },
+      };
+    }
+    return entries;
   }
 }
 
@@ -587,13 +857,28 @@ const DEFAULT_XML = `<?xml version="1.0" encoding="UTF-8"?>
   </bpmndi:BPMNDiagram>
 </bpmn:definitions>`;
 
-export default function BPMNModelerComponent({ xml, projectName, onSave, isViewOnly = false, onDirtyChange }: { xml?: string, projectName?: string, onSave?: (xml: string, svg: string) => void, isViewOnly?: boolean, onDirtyChange?: (isDirty: boolean) => void }) {
+export interface BpmnSelectedElement { id: string; type: string; name: string; parentType?: string }
+export interface BpmnCanvasApi {
+  // Buat sub-process BERSARANG di dalam elemen induk tertentu (mis. proses L3
+  // di dalam kotak kegiatan pada kanvas L2). Mengembalikan id elemen baru.
+  addNestedSubProcess: (parentElementId: string, name: string) => string | null;
+  // Hapus elemen dari kanvas (mis. kotak proses L3 saat usulannya dihapus).
+  removeElement: (elementId: string) => boolean;
+  // Impor XML BPMN 2.0 (mis. buka file .bpmn lokal) — MENGGANTI diagram saat ini.
+  importXml: (xml: string) => Promise<boolean>;
+}
+
+export default function BPMNModelerComponent({ xml, projectName, onSave, isViewOnly = false, onDirtyChange, onSelectionChange, registerSaveHandler, registerCanvasApi, toolbarExtra, onBeforeDelete }: { xml?: string, projectName?: string, onSave?: (xml: string, svg: string, subSvgs?: { id: string; name: string; svg: string; depth?: number; path?: string[] }[]) => void, isViewOnly?: boolean, onDirtyChange?: (isDirty: boolean) => void, onSelectionChange?: (el: BpmnSelectedElement | null) => void, registerSaveHandler?: (fn: () => Promise<void>) => void, registerCanvasApi?: (api: BpmnCanvasApi) => void, toolbarExtra?: React.ReactNode, onBeforeDelete?: (els: BpmnSelectedElement[]) => boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const modelerRef = useRef<BpmnModeler | NavigatedViewer | null>(null);
   const navStackRef = useRef<BreadcrumbItem[]>([]);
   // Ref agar closure di eventBus selalu gunakan callback terbaru
   const onDirtyChangeRef = useRef(onDirtyChange);
   useEffect(() => { onDirtyChangeRef.current = onDirtyChange; });
+  const onSelectionChangeRef = useRef(onSelectionChange);
+  useEffect(() => { onSelectionChangeRef.current = onSelectionChange; });
+  const onBeforeDeleteRef = useRef(onBeforeDelete);
+  useEffect(() => { onBeforeDeleteRef.current = onBeforeDelete; });
   const [canUndo, setCanUndo] = useState(false);
   const [canRedo, setCanRedo] = useState(false);
   const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbItem[]>([]);
@@ -608,6 +893,12 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
     const modeler = new ModelerClass({
       container: containerRef.current,
       keyboard: isViewOnly ? undefined : { bindTo: window },
+      // Seluruh teks diagram memakai Bookman Old Style (fallback URW Bookman/serif)
+      // — ikut terbawa ke ekspor SVG/PDF karena font-family tertulis di SVG.
+      textRenderer: {
+        defaultStyle: { fontFamily: BPMN_FONT },
+        externalStyle: { fontFamily: BPMN_FONT },
+      },
       // poolGroupRendererModule: bpmn:Group digambar sebagai Pool/Swimlane — aktif
       // di mode edit MAUPUN view agar pool di dalam SubProcess tetap tampil saat dilihat.
       additionalModules: isViewOnly
@@ -615,10 +906,13 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
         : [
             poolGroupRendererModule,
             {
-              __init__: ['customPaletteProvider', 'customRules', 'customContextPadProvider'],
+              __init__: ['customPaletteProvider', 'customRules', 'customContextPadProvider', 'groupDropBehavior', 'colorPickerProvider', 'groupOrderingProvider'],
               customPaletteProvider: ['type', CustomPaletteProvider],
               customRules: ['type', CustomRules],
-              customContextPadProvider: ['type', CustomContextPadProvider]
+              customContextPadProvider: ['type', CustomContextPadProvider],
+              groupDropBehavior: ['type', GroupDropBehavior],
+              colorPickerProvider: ['type', ColorPickerProvider],
+              groupOrderingProvider: ['type', GroupOrderingProvider]
             }
           ]
     });
@@ -626,6 +920,23 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
     modelerRef.current = modeler;
     navStackRef.current = [];
     let isMounted = true;
+
+    // Label Pool/Lane (bpmn:Group) multi-baris: Enter = baris baru, bukan menutup editor.
+    // Default diagram-js: Enter (tanpa Shift) memanggil complete(). Listener fase-capture
+    // ini menghentikan event SEBELUM sampai ke handler diagram-js, KHUSUS saat yang sedang
+    // diedit adalah bpmn:Group — sehingga browser menyisipkan newline di contenteditable.
+    // Elemen lain (Task, dsb.) tidak terpengaruh; Shift+Enter tetap berfungsi seperti biasa.
+    const directEditing = modeler.get('directEditing', false) as
+      | { isActive?: () => boolean; _active?: { element?: { type?: string } } }
+      | null;
+    const enterNewlineForGroup = (e: KeyboardEvent) => {
+      if (e.key !== 'Enter' || e.shiftKey || e.ctrlKey || e.metaKey || e.altKey) return;
+      if (!directEditing || !directEditing.isActive?.()) return;
+      if (directEditing._active?.element?.type === 'bpmn:Group') {
+        e.stopPropagation();
+      }
+    };
+    document.addEventListener('keydown', enterNewlineForGroup, true);
 
     const initCanvas = async () => {
       try {
@@ -666,6 +977,97 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
         drainCmdStack();
         cmdStack?.clear();
 
+        // ===== Helper struktur Pool/Group (dipakai re-parent & pin label) =====
+        const registryAll = modeler.get('elementRegistry') as BpmnElementRegistry;
+        const rootOfEl = (el: { parent?: unknown } | undefined): unknown => {
+          let t: { parent?: unknown } | undefined = el;
+          while (t && t.parent) t = t.parent as { parent?: unknown };
+          return t;
+        };
+        // Group pembungkus terkecil (geometri, satu plane) — pool bagi sebuah lane.
+        const enclosingGroup = (g: BpmnShapeElement): BpmnShapeElement | null => {
+          if (g.x == null || g.width == null) return null;
+          const cx = g.x + g.width / 2, cy = g.y + g.height / 2;
+          const area = g.width * g.height, r = rootOfEl(g);
+          let best: BpmnShapeElement | null = null; let bestArea = Infinity;
+          registryAll.forEach((o) => {
+            if (o === g || o.type !== 'bpmn:Group' || o.x == null || o.width == null) return;
+            const oa = o.width * o.height;
+            if (oa <= area || oa >= bestArea || rootOfEl(o) !== r) return;
+            if (cx > o.x && cx < o.x + o.width && cy > o.y && cy < o.y + o.height) { best = o; bestArea = oa; }
+          });
+          return best;
+        };
+        const isVertGroup = (el: BpmnShapeElement) =>
+          el?.di?.isHorizontal === false || (el?.di?.isHorizontal == null && (el.height || 0) > (el.width || 0));
+        // Tempelkan label eksternal Group ke pita judul pool/lane-nya — teks menyatu
+        // dengan pool, tidak "mengambang" bisa dipilih/dipindah terpisah.
+        const pinGroupLabel = (label: BpmnShapeElement & { labelTarget?: BpmnShapeElement }) => {
+          const target = label.labelTarget;
+          if (!target || target.type !== 'bpmn:Group' || target.x == null) return;
+          const pool = enclosingGroup(target);
+          let cx: number, cy: number;
+          if (!pool) { // target = POOL: pita 28px di kiri (horizontal) / atas (vertikal)
+            if (isVertGroup(target)) { cx = target.x + target.width / 2; cy = target.y + 14; }
+            else { cx = target.x + 14; cy = target.y + target.height / 2; }
+          } else {     // target = LANE: pita 22px mengikuti orientasi pool
+            if (isVertGroup(pool)) { cx = target.x + target.width / 2; cy = target.y + 11; }
+            else { cx = target.x + 11; cy = target.y + target.height / 2; }
+          }
+          label.x = Math.round(cx - (label.width || 0) / 2);
+          label.y = Math.round(cy - (label.height || 0) / 2);
+        };
+
+        // Turunkan Pool ke lapisan PALING BAWAH secara visual (DOM). Ordering saja
+        // tidak cukup: BpmnOrderingProvider bawaan menganggap bpmn:Group level 10
+        // (teratas) sehingga setiap elemen yang dibuat/digeser disisipkan DI BAWAH
+        // pool lagi di pohon elemen. Di sini wrapper gfx tiap pool (Group yang
+        // parent-nya bukan Group) dipindah ke posisi pertama container plane-nya —
+        // elemen lain selalu tergambar di atas pool. Lane (anak pool) otomatis di
+        // atas pool karena gfx-nya bersarang di container anak pool.
+        const restackGroups = () => {
+          try {
+            const regG = registryAll as BpmnElementRegistry & { getGraphics: (el: unknown) => SVGElement | undefined };
+            registryAll.forEach((el) => {
+              if (el.type !== 'bpmn:Group') return;
+              const parent = (el as { parent?: { type?: string } }).parent;
+              if (!parent || parent.type === 'bpmn:Group') return;
+              const gfx = regG.getGraphics(el);              // <g.djs-element>
+              const wrapper = gfx?.parentNode as SVGElement | null;   // <g.djs-group>
+              const container = wrapper?.parentNode as SVGElement | null;
+              if (wrapper && container && container.firstChild !== wrapper) {
+                container.insertBefore(wrapper, container.firstChild);
+              }
+            });
+          } catch { /* abaikan */ }
+        };
+
+        // Pulihkan struktur Pool setelah import: relasi induk-anak pool→lane hilang
+        // saat round-trip XML (bpmn:Group = artifact datar). Re-parent lane ke
+        // pool-nya (pemindahan zero-delta) agar menggeser pool otomatis membawa
+        // lane, lalu bersihkan command stack agar tidak tercatat sebagai perubahan.
+        if (!isViewOnly) {
+          try {
+            const mdl = modeler.get('modeling') as BpmnModeling & { moveElements: (els: BpmnElement[], delta: { x: number; y: number }, target?: BpmnElement) => void };
+            const groups = registryAll.filter(el => el.type === 'bpmn:Group');
+            for (const g of groups) {
+              const pool = enclosingGroup(g);
+              if (pool && (g as { parent?: unknown }).parent !== pool) {
+                mdl.moveElements([g as unknown as BpmnElement], { x: 0, y: 0 }, pool as unknown as BpmnElement);
+              } else if (!pool && (g as { parent?: BpmnElement }).parent) {
+                // Pool: pindahan zero-delta ke parent yang sama memicu
+                // GroupOrderingProvider → z-order turun ke paling bawah,
+                // elemen di dalamnya tampil di atas pool.
+                mdl.moveElements([g as unknown as BpmnElement], { x: 0, y: 0 }, (g as { parent?: BpmnElement }).parent);
+              }
+            }
+            drainCmdStack();
+            cmdStack?.clear();
+          } catch { /* struktur tetap datar — ekspansi geometri saat drag tetap bekerja */ }
+        }
+        // Terapkan penataan lapisan awal (mode edit MAUPUN view-only).
+        restackGroups();
+
         // Inisialisasi navigation stack dengan root awal setelah import selesai
         const canvas = modeler.get('canvas') as BpmnCanvas;
         const initialRoot = canvas.getRootElement();
@@ -676,6 +1078,43 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
         };
         navStackRef.current = [initialItem];
         setBreadcrumbs([initialItem]);
+
+        // Konfirmasi SEBELUM penghapusan elemen. JANGAN lewat rule
+        // 'elements.delete' — rule itu juga dievaluasi saat context pad
+        // sekadar TAMPIL (elemen diklik) sehingga dialog muncul tanpa niat
+        // menghapus. Semua jalur hapus nyata (tong sampah context pad, tombol
+        // Delete/Backspace, editorActions) bermuara ke modeling.removeElements —
+        // bungkus fungsi itu.
+        if (!isViewOnly) {
+          const modelingForDelete = modeler.get('modeling') as BpmnModeling;
+          const origRemove = modelingForDelete.removeElements.bind(modelingForDelete);
+          modelingForDelete.removeElements = (elements: BpmnElement[]) => {
+            const cb = onBeforeDeleteRef.current;
+            if (cb) {
+              const els = (elements || []).filter(e => e && e.type);
+              if (els.length > 0) {
+                const mapped: BpmnSelectedElement[] = els.map(e => ({
+                  id: e.id, type: e.type || '', name: e.businessObject?.name || '',
+                  parentType: (e as BpmnElement & { parent?: BpmnElement }).parent?.type,
+                }));
+                if (cb(mapped) === false) return;
+              }
+            }
+            return origRemove(elements);
+          };
+        }
+
+        // Teruskan seleksi elemen ke pemakai komponen (mis. panel properti
+        // sub-process pada Peta Proses Bisnis berjenjang).
+        modeler.on('selection.changed', (evt: { newSelection?: BpmnElement[] }) => {
+          if (!isMounted) return;
+          const sel = evt.newSelection && evt.newSelection[0] as (BpmnElement & { parent?: BpmnElement }) | undefined;
+          onSelectionChangeRef.current?.(
+            sel && sel.type
+              ? { id: sel.id, type: sel.type, name: sel.businessObject?.name || '', parentType: sel.parent?.type }
+              : null
+          );
+        });
 
         // Tangani navigasi masuk SubProcess dan kembali ke parent
         modeler.on('root.set', ({ element }: { element: BpmnElement }) => {
@@ -717,6 +1156,47 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
                   el.di.isHorizontal = (el.width || 0) >= (el.height || 0);
                 }
               }
+              // Label eksternal Group: tempelkan ke pita pool/lane dan matikan
+              // interaksinya (pointer-events) — teks menyatu dengan pool.
+              const asLabel = el as BpmnShapeElement & { labelTarget?: BpmnShapeElement };
+              if (el.type === 'label' && asLabel.labelTarget?.type === 'bpmn:Group') {
+                pinGroupLabel(asLabel);
+                try { (canvas as unknown as { addMarker: (e: BpmnElement, m: string) => void }).addMarker(el, 'group-label-pin'); } catch { /* gfx belum ada */ }
+              }
+            });
+
+          // Rekatkan ulang label ke pita SETIAP kali Group berubah (digeser, di-resize,
+          // di-rename) atau label-nya sendiri tergeser — teks selalu menyatu dgn pool.
+          modeler.on('elements.changed', (e: { elements?: BpmnElement[] }) => {
+            const changed = e.elements || [];
+            for (const el of changed) {
+              const asL = el as BpmnShapeElement & { labelTarget?: BpmnShapeElement; label?: BpmnShapeElement };
+              const label = (el.type === 'bpmn:Group' ? asL.label : (el.type === 'label' && asL.labelTarget?.type === 'bpmn:Group' ? asL : undefined)) as (BpmnShapeElement & { labelTarget?: BpmnShapeElement }) | undefined;
+              if (!label) continue;
+              if (!label.labelTarget) (label as { labelTarget?: BpmnShapeElement }).labelTarget = el as BpmnShapeElement;
+              pinGroupLabel(label);
+              try {
+                const gf = modeler.get('graphicsFactory') as { update: (t: string, el: unknown, gfx: unknown) => void };
+                const reg = modeler.get('elementRegistry') as BpmnElementRegistry & { getGraphics: (el: unknown) => unknown };
+                gf.update('shape', label, reg.getGraphics(label));
+              } catch { /* abaikan */ }
+            }
+          });
+
+          // Setelah nama Pool/Lane diubah, LabelBehavior menata ulang posisi label —
+          // tempelkan kembali ke pita dan segarkan grafiknya.
+          (modeler as unknown as { on(ev: string, cb: (e: { context?: { element?: BpmnElement & { label?: BpmnShapeElement } } }) => void): void })
+            .on('commandStack.element.updateLabel.postExecuted', (e) => {
+              const target = e.context?.element;
+              const label = (target?.type === 'label' ? target : target?.label) as (BpmnShapeElement & { labelTarget?: BpmnShapeElement }) | undefined;
+              if (!label || label.labelTarget?.type !== 'bpmn:Group') return;
+              pinGroupLabel(label);
+              try {
+                const gf = modeler.get('graphicsFactory') as { update: (t: string, el: unknown, gfx: unknown) => void };
+                const reg = modeler.get('elementRegistry') as BpmnElementRegistry & { getGraphics: (el: unknown) => unknown };
+                gf.update('shape', label, reg.getGraphics(label));
+                (canvas as unknown as { addMarker: (e: unknown, m: string) => void }).addMarker(label, 'group-label-pin');
+              } catch { /* abaikan */ }
             });
 
           // Hanya tandai dirty pada aksi nyata pengguna (bukan 'clear' atau restore pool)
@@ -724,6 +1204,9 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
             const stack = modeler.get('commandStack') as BpmnCommandStack;
             setCanUndo(stack.canUndo());
             setCanRedo(stack.canRedo());
+            // Jaga pool tetap di lapisan bawah setelah SETIAP perubahan — ordering
+            // bawaan bpmn-js terus menyisipkan elemen baru di bawah Group.
+            restackGroups();
             if (evt?.trigger !== 'clear') {
               onDirtyChangeRef.current?.(true);
             }
@@ -793,7 +1276,7 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
     // Dukungan sentuh: terjemahkan touch → mouse agar tarik/geser/edit jalan di tablet.
     const detachTouch = containerRef.current ? enableTouchInteraction(containerRef.current) : undefined;
 
-    return () => { isMounted = false; detachTouch?.(); modeler.destroy(); };
+    return () => { isMounted = false; document.removeEventListener('keydown', enterNewlineForGroup, true); detachTouch?.(); modeler.destroy(); };
   }, [isViewOnly, xml, projectName]);
 
   // Tambah swimlane (bpmn:Group) langsung di dalam SubProcess yang sedang aktif.
@@ -820,16 +1303,141 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
     if (!modelerRef.current || !onSave) return;
     setIsExporting(true);
     try {
-      const { xml: savedXml } = await modelerRef.current.saveXML({ format: true });
-      const { svg } = await modelerRef.current.saveSVG();
+      const modeler = modelerRef.current;
+      const { xml: savedXml } = await modeler.saveXML({ format: true });
       if (!savedXml) return;
+
+      // saveSVG hanya mengekspor plane yang sedang aktif. Ambil SVG proses utama
+      // dari root utamanya (meski pengguna sedang drill-in ke sub-proses), lalu
+      // kumpulkan SVG tiap plane sub-proses yang sudah punya isi — dipakai untuk
+      // pilihan ekspor "sertakan sub-proses" di dialog unduh.
+      const canvas = modeler.get('canvas') as BpmnCanvas;
+      const registry = modeler.get('elementRegistry') as BpmnElementRegistry;
+      const originalRoot = canvas.getRootElement();
+      type RootEl = BpmnShapeElement & { children?: unknown[]; businessObject?: { name?: string } };
+      const roots = registry.filter((el) => !(el as RootEl & { parent?: unknown }).parent && !!el.id) as unknown as RootEl[];
+      const mainRoot = roots.find(r => !String(r.id).endsWith('_plane')) || (originalRoot as unknown as RootEl);
+      const subRoots = roots.filter(r => String(r.id).endsWith('_plane') && (r.children || []).length > 0);
+
+      // Susun sub-proses SESUAI HIERARKI (sub-proses di dalam sub-proses / berjenjang).
+      // Tiap plane "X_plane" bersarang di dalam plane induknya bila elemen X berada
+      // di dalam sub-proses lain. Urutkan depth-first (induk → anak) & bangun jalur
+      // breadcrumb ("Induk › Anak") supaya sub-SUB-proses ikut terekspor rapi dan
+      // penamaannya jelas — bukan sekadar daftar datar berurutan registry.
+      const planeById = new Map<string, RootEl>();
+      for (const p of subRoots) planeById.set(String(p.id), p);
+      const nameOfPlane = (p: RootEl) => p.businessObject?.name || String(p.id).replace(/_plane$/, '');
+      const parentPlaneId = (p: RootEl): string | null => {
+        const elId = String(p.id).replace(/_plane$/, '');
+        const el = registry.get(elId) as (BpmnElement & { parent?: { id?: string } }) | undefined;
+        const parentId = el?.parent?.id;
+        return parentId && parentId.endsWith('_plane') && planeById.has(parentId) ? parentId : null;
+      };
+      const childrenOf = new Map<string | null, RootEl[]>();
+      for (const p of subRoots) {
+        const key = parentPlaneId(p);
+        const arr = childrenOf.get(key) || [];
+        arr.push(p);
+        childrenOf.set(key, arr);
+      }
+      const ordered: { plane: RootEl; depth: number; path: string[] }[] = [];
+      const walkPlanes = (key: string | null, depth: number, prefix: string[]) => {
+        for (const p of (childrenOf.get(key) || [])) {
+          const path = [...prefix, nameOfPlane(p)];
+          ordered.push({ plane: p, depth, path });
+          walkPlanes(String(p.id), depth + 1, path);
+        }
+      };
+      walkPlanes(null, 0, []);
+
+      let svg = '';
+      const subSvgs: { id: string; name: string; svg: string; depth: number; path: string[] }[] = [];
+      try {
+        canvas.setRootElement(mainRoot as unknown as BpmnElement);
+        svg = (await modeler.saveSVG()).svg;
+        for (const { plane, depth, path } of ordered) {
+          canvas.setRootElement(plane as unknown as BpmnElement);
+          const { svg: s } = await modeler.saveSVG();
+          subSvgs.push({ id: String(plane.id), name: nameOfPlane(plane), svg: s, depth, path });
+        }
+      } finally {
+        canvas.setRootElement(originalRoot);
+      }
 
       // Repair sebelum simpan: gabungkan elemen Pool yang ada di dalam SubProcess
       // ke flowElements SubProcess yang benar. Pool-container itu sendiri tidak
       // dapat diserialisasi BPMN, tapi isinya tetap tersimpan dan muncul kembali.
-      onSave(repairBpmnXml(savedXml), svg);
+      onSave(repairBpmnXml(savedXml), svg, subSvgs);
     } catch { alert("Gagal Simpan"); } finally { setIsExporting(false); }
   };
+
+  // Beri pemakai komponen cara memicu simpan secara terprogram (mis. auto-save
+  // sebelum berpindah ke peta turunan di Peta Proses Bisnis berjenjang).
+  const handleExportRef = useRef(handleExport);
+  handleExportRef.current = handleExport;
+  useEffect(() => {
+    registerSaveHandler?.(() => handleExportRef.current());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registerSaveHandler]);
+
+  // API kanvas imperatif: tambah sub-process bersarang ke elemen induk tertentu.
+  useEffect(() => {
+    registerCanvasApi?.({
+      addNestedSubProcess: (parentElementId: string, name: string) => {
+        const modeler = modelerRef.current as BpmnModeler | null;
+        if (!modeler) return null;
+        try {
+          const registry = modeler.get('elementRegistry') as BpmnElementRegistry;
+          const parent = registry.get(parentElementId);
+          if (!parent) return null;
+          const ef = modeler.get('elementFactory') as BpmnElementFactory;
+          const modeling = modeler.get('modeling') as BpmnModeling;
+          // Collapsed (dengan penanda [+]) — konsisten dgn kotak di Level 0/1.
+          const shape = ef.createShape({ type: 'bpmn:SubProcess', isExpanded: false });
+          shape.width = 100; shape.height = 80;
+          // Susun berjajar di dalam induk berdasarkan jumlah anak yang sudah ada.
+          const count = ((parent as BpmnShapeElement & { children?: BpmnElement[] }).children || [])
+            .filter(c => c.type === 'bpmn:SubProcess').length;
+          const pos = {
+            x: Math.round(parent.x + 20 + count * 120 + 50),
+            y: Math.round(parent.y + 45 + 40),
+          };
+          modeling.createShape(shape, pos, parent as unknown as BpmnElement);
+          if (name) modeling.updateLabel(shape, name);
+          return shape.id;
+        } catch { return null; }
+      },
+      removeElement: (elementId: string) => {
+        const modeler = modelerRef.current as BpmnModeler | null;
+        if (!modeler) return false;
+        try {
+          const registry = modeler.get('elementRegistry') as BpmnElementRegistry;
+          const el = registry.get(elementId);
+          if (!el) return false;
+          const modeling = modeler.get('modeling') as BpmnModeling;
+          modeling.removeElements([el as unknown as BpmnElement]);
+          return true;
+        } catch { return false; }
+      },
+      importXml: async (xmlIn: string) => {
+        const modeler = modelerRef.current as BpmnModeler | null;
+        if (!modeler) return false;
+        try {
+          await modeler.importXML(repairBpmnXml(xmlIn));
+          // Drain + clear CommandStack (cegah snap-back & undo balik ke diagram lama).
+          const cmdStack = modeler.get('commandStack') as BpmnCommandStack | undefined;
+          const ex = (cmdStack as unknown as { _currentExecution?: { actions: unknown[]; dirty: unknown[]; trigger: unknown } })?._currentExecution;
+          if (ex) { ex.actions.length = 0; ex.dirty.length = 0; ex.trigger = null; }
+          cmdStack?.clear();
+          const canvas = modeler.get('canvas') as BpmnCanvas;
+          canvas.zoom('fit-viewport', true);
+          onDirtyChange?.(true);
+          return true;
+        } catch (e) { console.error('importXml gagal:', e); return false; }
+      },
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [registerCanvasApi]);
 
   const handleZoomIn = () => {
     const canvas = modelerRef.current?.get('canvas') as BpmnCanvas & { zoom: (s?: number | string, c?: boolean | { x: number; y: number }) => number };
@@ -871,9 +1479,46 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
     // Tempatkan langsung di tengah viewport lalu seleksi — ramah sentuh (tanpa
     // "klik untuk menaruh"). Pengguna tinggal menggeser ke posisi yang diinginkan.
     const vb = canvas.viewbox();
-    const pos = { x: Math.round(vb.x + vb.width / 2), y: Math.round(vb.y + vb.height / 2) };
+    let pos = { x: Math.round(vb.x + vb.width / 2), y: Math.round(vb.y + vb.height / 2) };
     const root = canvas.getRootElement();
-    modeling.createShape(shape, pos, root);
+
+    // Cari container tersempit (Participant/Lane/SubProcess) pada titik letak agar
+    // elemen masuk KE DALAM pool — bukan menjadi saudara pool di collaboration
+    // (yang membuat elemen tertutup pool / model tidak valid).
+    const registry = modeler.get('elementRegistry') as BpmnElementRegistry;
+    const CONTAINERS = ['bpmn:Participant', 'bpmn:Lane', 'bpmn:SubProcess'];
+    const findContainerAt = (p: { x: number; y: number }): BpmnShapeElement | null => {
+      let best: BpmnShapeElement | null = null;
+      let bestArea = Infinity;
+      registry.forEach((el) => {
+        if (!el.type || !CONTAINERS.includes(el.type) || el.x == null) return;
+        if (el.type === shape.type) return; // jangan sarangkan pool ke pool
+        if (p.x > el.x && p.x < el.x + el.width && p.y > el.y && p.y < el.y + el.height) {
+          const area = el.width * el.height;
+          if (area < bestArea) { best = el; bestArea = area; }
+        }
+      });
+      return best;
+    };
+    let parent: BpmnElement = root;
+    if (item.type !== 'bpmn:Participant') {
+      let container = findContainerAt(pos);
+      // Root collaboration (mis. template Level 0): elemen non-pool WAJIB berada di
+      // dalam sebuah Participant. Bila titik tengah tidak mengenai pool, pakai pool pertama.
+      if (!container && root.type === 'bpmn:Collaboration') {
+        const pools: BpmnShapeElement[] = [];
+        registry.forEach((el) => {
+          if (el.type === 'bpmn:Participant' && el.x != null) pools.push(el);
+        });
+        if (pools.length > 0) {
+          const fp = pools[0];
+          container = fp;
+          pos = { x: Math.round(fp.x + fp.width / 2), y: Math.round(fp.y + fp.height / 2) };
+        }
+      }
+      if (container) parent = container as unknown as BpmnElement;
+    }
+    modeling.createShape(shape, pos, parent);
     selection.select(shape);
   };
 
@@ -912,6 +1557,8 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
             <button onClick={() => setShowElementPicker(v => !v)} className={`flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-semibold transition-all ${showElementPicker ? 'bg-blue-50 border-blue-300 text-blue-700' : 'bg-white border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
               <LayoutGrid size={14} /> Elemen
             </button>
+            {/* Slot tombol tambahan dari pemakai komponen (mis. 🗺 Lihat Peta Relasi) */}
+            {toolbarExtra}
             {onSave && (
               <button onClick={handleExport} disabled={isExporting} className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow transition-all active:scale-95 disabled:bg-slate-400 hover:bg-blue-700">
                 <Save size={15} /> {isExporting ? 'Menyimpan...' : 'Simpan Alur'}
@@ -974,8 +1621,13 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
            agar tarik/geser elemen berfungsi. */
         .djs-container, .djs-container svg { touch-action: none; }
         /* Pastikan teks di kotak edit selalu terlihat (tidak terpengaruh dark mode OS) */
-        .djs-direct-editing-parent { color: #1f2937 !important; background-color: #ffffff !important; z-index: 100 !important; }
-        .djs-direct-editing-content { color: #1f2937 !important; }
+        .djs-direct-editing-parent { color: #1f2937 !important; background-color: #ffffff !important; z-index: 100 !important; font-family: 'Bookman Old Style', 'URW Bookman', Bookman, Georgia, serif !important; }
+        .djs-direct-editing-content { color: #1f2937 !important; font-family: inherit !important; }
+        /* Popup pilihan warna elemen */
+        .djs-popup[data-popup="element-colors"] .djs-popup-body .entry { display: flex; align-items: center; gap: 8px; }
+        /* Label eksternal Pool/Lane (bpmn:Group) — tidak bisa diklik/dipilih terpisah;
+           teks digambar menyatu di pita pool oleh renderer. */
+        .group-label-pin { pointer-events: none !important; }
         .djs-palette { left: 20px !important; top: 20px !important; border-radius: 12px !important; box-shadow: 0 4px 12px rgba(0,0,0,0.1) !important; }
         .djs-palette.open { width: 94px !important; max-height: calc(100% - 48px) !important; overflow-y: auto !important; overflow-x: hidden !important; }
         .djs-palette.open::-webkit-scrollbar { width: 4px; }

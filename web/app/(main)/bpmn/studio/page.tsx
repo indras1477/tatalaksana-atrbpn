@@ -7,9 +7,10 @@ import { useAppContext } from '@/lib/app-context';
 import SearchableSelect from '@/components/SearchableSelect';
 import {
   ArrowLeft, GitBranch, X, Image as ImageIcon, FileText,
-  AlertCircle, MessageSquare, Pencil, Lock, Send
+  AlertCircle, MessageSquare, Pencil, Lock, Send, FolderOpen, FileCode
 } from 'lucide-react';
 import { HIERARKI_UNIT } from '@/lib/constants';
+import type { BpmnCanvasApi } from '@/components/BPMNModeler';
 
 const Modeler = dynamic(() => import('@/components/BPMNModeler'), {
   ssr: false,
@@ -91,6 +92,14 @@ function BPMNStudioContent() {
 
   const [currentXml, setCurrentXml] = useState<string>("");
   const [currentSvg, setCurrentSvg] = useState<string>("");
+  // API kanvas imperatif (impor .bpmn) + input file tersembunyi utk "Buka .bpmn".
+  const canvasApiRef = useRef<BpmnCanvasApi | null>(null);
+  const bpmnFileInputRef = useRef<HTMLInputElement | null>(null);
+  // SVG tiap plane Sub-Proses yang sudah punya isi — untuk pilihan "sertakan sub-proses" saat unduh.
+  const [subPlaneSvgs, setSubPlaneSvgs] = useState<{ id: string; name: string; svg: string; depth?: number; path?: string[] }[]>([]);
+  const [exportChecked, setExportChecked] = useState<Record<string, boolean>>({});
+  // Popup pilihan sub-proses; muncul saat klik unduh PDF/SVG bila ada sub-proses yang sudah digambar.
+  const [exportPick, setExportPick] = useState<null | 'pdf' | 'svg'>(null);
   // The XML used to initialise the BPMN canvas. Only updated when loading a
   // document from the API — NOT after saves — so the canvas never reinitialises
   // mid-session just because currentModel.bpmn_xml changed.
@@ -117,7 +126,10 @@ function BPMNStudioContent() {
       const userStr = localStorage.getItem('user');
       if (!tok || !userStr) { router.replace('/login'); return; }
       try {
-        setCurrentUser(JSON.parse(userStr));
+        const parsedUser = JSON.parse(userStr);
+        // Superadmin = superset admin: berlaku seperti admin di seluruh halaman ini.
+        if (parsedUser.role === 'superadmin') parsedUser.role = 'admin';
+        setCurrentUser(parsedUser);
         setToken(tok);
       } catch {
         router.replace('/login');
@@ -161,6 +173,8 @@ function BPMNStudioContent() {
             klasifikasiProses: data.klasifikasi_proses || '',
           });
           setHasUnsavedChanges(false);
+          // Usulan (baru dilanjutkan) → tampilkan modal info dulu sebelum menyusun.
+          if (data.status === 'usulan') setShowConfigModal(true);
         })
         .catch(err => {
           console.error(err);
@@ -176,6 +190,8 @@ function BPMNStudioContent() {
       setConfig({ processTitle: '', processKey: '', orgUnitL1: prefillL1, orgUnitL2: '', description: '', jenisProses: '', klasifikasiProses: '' });
       setCurrentXml("");
       setCurrentSvg("");
+      setSubPlaneSvgs([]);
+      setExportChecked({});
       setHasUnsavedChanges(false);
       setIsLoadingDocument(false);
       if (!isViewOnly) setShowConfigModal(true);
@@ -219,49 +235,102 @@ function BPMNStudioContent() {
     if (validateConfig()) setShowConfigModal(false);
   };
 
-  const handleModelerSave = (xml: string, svg: string) => {
+  const handleModelerSave = (xml: string, svg: string, subSvgs?: { id: string; name: string; svg: string; depth?: number; path?: string[] }[]) => {
     setCurrentXml(xml);
     setCurrentSvg(svg);
+    const subs = subSvgs || [];
+    setSubPlaneSvgs(subs);
+    // Default: semua sub-proses yang sudah digambar ikut diunduh (bisa di-uncheck).
+    setExportChecked(Object.fromEntries(subs.map(s => [s.id, true])));
     setShowSaveModal(true);
   };
 
-  const handleDownloadSVG = () => {
+  const checkedSubPlanes = subPlaneSvgs.filter(s => exportChecked[s.id]);
+  const slugName = (s: string) => s.trim().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-') || 'Sub-Proses';
+
+  const handleDownloadSVG = async () => {
     if (!currentSvg) return alert('Data SVG kosong.');
-    const blob = new Blob([currentSvg], { type: 'image/svg+xml' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a'); a.href = url; a.download = `${config.processKey || 'BPMN'}.svg`; a.click();
+    const baseName = config.processKey || config.processTitle || 'BPMN';
+    const downloadOne = (svg: string, filename: string) => {
+      const blob = new Blob([svg], { type: 'image/svg+xml' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+    };
+    downloadOne(currentSvg, `${baseName}.svg`);
+    for (const sub of checkedSubPlanes) {
+      // Jeda kecil agar browser tidak menggabungkan/memblokir unduhan beruntun.
+      await new Promise(r => setTimeout(r, 400));
+      // Sertakan jalur bersarang pada nama file agar sub-sub-proses tidak bertabrakan.
+      const label = sub.path && sub.path.length > 1 ? sub.path.map(slugName).join(' - ') : slugName(sub.name);
+      downloadOne(sub.svg, `${baseName} - ${label}.svg`);
+    }
   };
 
+  // Unduh diagram sebagai file BPMN 2.0 (.bpmn) untuk disimpan/diedit lokal.
+  const handleDownloadBpmn = () => {
+    if (!currentXml) return alert('Belum ada diagram untuk diunduh.');
+    const blob = new Blob([currentXml], { type: 'application/xml' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = `${config.processKey || config.processTitle || 'diagram'}.bpmn`; a.click();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+  };
+
+  // Buka/impor file .bpmn (BPMN 2.0) dari komputer ke kanvas studio ini.
+  const handleOpenBpmnFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file) return;
+    if (!/\.(bpmn|xml)$/i.test(file.name)) { alert('Pilih file berformat .bpmn (BPMN 2.0).'); return; }
+    let text = '';
+    try { text = await file.text(); } catch { alert('Gagal membaca file.'); return; }
+    if (!/<(\w+:)?definitions/i.test(text)) { alert('File tidak dikenali sebagai BPMN 2.0 yang valid.'); return; }
+    if (currentXml && !window.confirm('Membuka file ini akan MENGGANTI diagram yang sedang tampil. Lanjutkan?')) return;
+    const api = canvasApiRef.current;
+    if (!api?.importXml) { alert('Kanvas belum siap. Coba lagi sebentar.'); return; }
+    const ok = await api.importXml(text);
+    if (!ok) { alert('Gagal membuka diagram — pastikan file BPMN 2.0 benar dan tidak rusak.'); return; }
+    setHasUnsavedChanges(true);
+  };
+
+  // PDF VEKTOR: SVG dikirim ke server (Chrome headless) supaya teks tetap bisa
+  // diseleksi/di-blok — bukan lagi raster PNG. Header rapi & diagram menempel di
+  // bawah header (tidak lagi terpusat vertikal yang menyisakan jarak besar).
   const handleDownloadPDF = async () => {
     if (!currentSvg) return alert('Data SVG kosong.');
     try {
-      const { jsPDF } = await import('jspdf');
-      const doc = new jsPDF('landscape', 'mm', 'a4');
-      doc.setFontSize(16);
-      doc.text(config.processTitle || 'Dokumen BPMN', 14, 15);
-      doc.setFontSize(10);
-      doc.text(`Unit: ${config.orgUnitL1} ${config.orgUnitL2 ? `> ${config.orgUnitL2}` : ''}`, 14, 21);
-      const img = new Image();
-      const svgBlob = new Blob([currentSvg], { type: 'image/svg+xml;charset=utf-8' });
-      const url = URL.createObjectURL(svgBlob);
-      img.onload = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = img.width; canvas.height = img.height;
-        const ctx = canvas.getContext('2d');
-        if(ctx) {
-          ctx.fillStyle = '#ffffff'; ctx.fillRect(0,0, canvas.width, canvas.height);
-          ctx.drawImage(img, 0, 0);
-          const imgData = canvas.toDataURL('image/png');
-          const pdfWidth = 270;
-          const pdfHeight = (img.height * pdfWidth) / img.width;
-          doc.addImage(imgData, 'PNG', 14, 26, pdfWidth, pdfHeight);
-          doc.save(`${config.processKey || 'BPMN'}.pdf`);
-        }
-        URL.revokeObjectURL(url);
-      };
-      img.src = url;
+      const title = config.processTitle || 'Dokumen BPMN';
+      const pages = [
+        { svg: currentSvg, label: 'PROSES BISNIS', judul: title },
+        ...checkedSubPlanes.map(s => {
+          // depth 0 = sub-proses; depth ≥ 1 = sub-proses di dalam sub-proses (berjenjang).
+          const level = (s.depth || 0) + 1;
+          const label = level > 1 ? `SUB-PROSES LV.${level} — ${title.toUpperCase()}` : `SUB-PROSES — ${title.toUpperCase()}`;
+          // Judul memakai jalur breadcrumb ("Induk › Anak") agar posisinya jelas.
+          const judul = s.path && s.path.length > 1 ? s.path.join(' › ') : s.name;
+          return { svg: s.svg, label, judul };
+        }),
+      ];
+      const res = await apiFetch('/bpmn/pdf', token, {
+        method: 'POST',
+        body: JSON.stringify({
+          title,
+          unit1: config.orgUnitL1 || '',
+          unit2: config.orgUnitL2 || '',
+          filename: config.processKey || config.processTitle || 'BPMN',
+          pages,
+        }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({} as { error?: string })); throw new Error(e.error || 'Gagal membuat PDF'); }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = `${config.processKey || config.processTitle || 'BPMN'}.pdf`; a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
     } catch (error) {
-      console.error(error); alert("Gagal membuat PDF. Pastikan jspdf terinstal.");
+      console.error(error);
+      alert('Gagal membuat PDF: ' + (error instanceof Error ? error.message : String(error)));
     }
   };
 
@@ -405,6 +474,19 @@ function BPMNStudioContent() {
               </button>
             )}
           </div>
+
+          {!isViewOnly && (
+            <div className="flex items-center gap-2 shrink-0">
+              <input ref={bpmnFileInputRef} type="file" accept=".bpmn,.xml" onChange={handleOpenBpmnFile} className="hidden" />
+              <button
+                onClick={() => bpmnFileInputRef.current?.click()}
+                title="Buka file .bpmn (BPMN 2.0) dari komputer"
+                className={`py-2.5 px-3 rounded-lg text-sm font-medium flex items-center gap-2 border transition-colors ${isDarkMode ? 'border-slate-700 text-slate-300 hover:bg-slate-800' : 'border-slate-300 text-slate-600 hover:bg-slate-100'}`}
+              >
+                <FolderOpen className="w-4 h-4" /> <span className="hidden sm:inline">Buka .bpmn</span>
+              </button>
+            </div>
+          )}
         </div>
 
       </div>
@@ -422,6 +504,7 @@ function BPMNStudioContent() {
                   onSave={handleModelerSave}
                   isViewOnly={false}
                   onDirtyChange={setHasUnsavedChanges}
+                  registerCanvasApi={(api) => { canvasApiRef.current = api; }}
                 />
             )}
 
@@ -618,12 +701,16 @@ function BPMNStudioContent() {
                   <p className="text-sm font-bold uppercase tracking-wider text-slate-500 mb-1">Ekspor File</p>
                   <p className="text-xs text-slate-400">Unduh gambar ke komputer Anda.</p>
                 </div>
-                <button onClick={handleDownloadPDF} className="w-full px-4 py-3 bg-red-50 hover:bg-red-100 text-red-700 font-bold rounded-xl flex items-center justify-center border border-red-200 transition-colors shadow-sm">
-                  <FileText className="w-5 h-5 mr-2" /> Format PDF (A4)
+                <button onClick={() => subPlaneSvgs.length > 0 ? setExportPick('pdf') : handleDownloadPDF()} className="w-full px-4 py-3 bg-red-50 hover:bg-red-100 text-red-700 font-bold rounded-xl flex items-center justify-center border border-red-200 transition-colors shadow-sm">
+                  <FileText className="w-5 h-5 mr-2" /> Format PDF (F4)
                 </button>
-                <button onClick={handleDownloadSVG} className="w-full px-4 py-3 bg-orange-50 hover:bg-orange-100 text-orange-700 font-bold rounded-xl flex items-center justify-center border border-orange-200 transition-colors shadow-sm">
+                <button onClick={() => subPlaneSvgs.length > 0 ? setExportPick('svg') : handleDownloadSVG()} className="w-full px-4 py-3 bg-orange-50 hover:bg-orange-100 text-orange-700 font-bold rounded-xl flex items-center justify-center border border-orange-200 transition-colors shadow-sm">
                   <ImageIcon className="w-5 h-5 mr-2" /> Format Gambar SVG
                 </button>
+                <button onClick={handleDownloadBpmn} className="w-full px-4 py-3 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 font-bold rounded-xl flex items-center justify-center border border-indigo-200 transition-colors shadow-sm">
+                  <FileCode className="w-5 h-5 mr-2" /> Format BPMN 2.0 (.bpmn)
+                </button>
+                <p className="text-[11px] text-slate-400 leading-snug">File .bpmn dapat dibuka kembali di studio ini (tombol <b>Buka .bpmn</b>) atau di aplikasi BPMN lain.</p>
               </div>
 
               <div className="space-y-4 flex flex-col md:border-l md:pl-8" style={{ borderColor: isDarkMode ? '#1e293b' : '#e5e7eb' }}>
@@ -675,6 +762,45 @@ function BPMNStudioContent() {
                   </p>
                 )}
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* POPUP PILIH SUB-PROSES YANG IKUT DIEKSPOR */}
+      {exportPick && (
+        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-70 p-4" onClick={() => setExportPick(null)}>
+          <div className="w-full max-w-sm rounded-2xl shadow-2xl p-5 border animate-in zoom-in-95 duration-200" style={{ backgroundColor: isDarkMode ? '#151F32' : '#ffffff', borderColor: isDarkMode ? '#1e293b' : '#e5e7eb' }} onClick={e => e.stopPropagation()}>
+            <div className="flex justify-between items-start mb-3">
+              <div>
+                <h3 className={`text-base font-extrabold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>Sertakan Sub-Proses?</h3>
+                <p className={`text-xs mt-1 leading-snug ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Proses utama selalu diunduh. Centang sub-proses yang detailnya ingin ikut diekspor ({exportPick === 'pdf' ? 'sebagai halaman tambahan PDF' : 'sebagai file SVG terpisah'}).</p>
+              </div>
+              <button onClick={() => setExportPick(null)} className={`p-1.5 rounded-lg shrink-0 ${isDarkMode ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-700'}`}><X className="w-4 h-4" /></button>
+            </div>
+            <div className="space-y-2 mb-4">
+              {subPlaneSvgs.map(sub => (
+                <label key={sub.id} style={{ marginLeft: (sub.depth || 0) * 16 }} className={`flex items-center gap-2.5 cursor-pointer text-sm font-semibold px-3 py-2.5 rounded-xl border ${isDarkMode ? 'text-slate-200 border-slate-700 bg-[#0F172A]' : 'text-slate-700 border-slate-200 bg-slate-50'}`}>
+                  <input
+                    type="checkbox"
+                    checked={!!exportChecked[sub.id]}
+                    onChange={e => setExportChecked(prev => ({ ...prev, [sub.id]: e.target.checked }))}
+                    className="w-4 h-4 rounded accent-blue-600"
+                  />
+                  {(sub.depth || 0) > 0 && <span className="text-slate-400 shrink-0">↳</span>}
+                  <span className="truncate">{sub.name}</span>
+                </label>
+              ))}
+            </div>
+            <div className="flex gap-2">
+              <button onClick={() => setExportPick(null)} className={`flex-1 px-4 py-2.5 text-sm font-bold border rounded-xl ${isDarkMode ? 'border-slate-600 text-slate-300' : 'border-slate-200 text-slate-600'}`}>Batal</button>
+              <button
+                onClick={() => { const kind = exportPick; setExportPick(null); if (kind === 'pdf') handleDownloadPDF(); else handleDownloadSVG(); }}
+                className={`flex-1 px-4 py-2.5 text-sm font-bold text-white rounded-xl shadow-sm flex items-center justify-center gap-2 ${exportPick === 'pdf' ? 'bg-red-600 hover:bg-red-700' : 'bg-orange-600 hover:bg-orange-700'}`}
+              >
+                {exportPick === 'pdf' ? <FileText className="w-4 h-4" /> : <ImageIcon className="w-4 h-4" />}
+                Unduh ({1 + checkedSubPlanes.length} {exportPick === 'pdf' ? 'halaman' : 'file'})
+              </button>
             </div>
           </div>
         </div>

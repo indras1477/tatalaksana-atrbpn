@@ -62,9 +62,25 @@ const getEmbedUrl = (url: string) => {
   return url;
 };
 
+// Ambil nomor dari nama peraturan bila kolom nomor kosong — mis. "... Nomor 5 Tahun 2024 ..." → "5".
+const deriveNomor = (nama: string): string => {
+  if (!nama) return '';
+  const m = nama.match(/\bno(?:mor|\.)?\s*([0-9]+[A-Za-z0-9./-]*)/i);
+  return m ? m[1] : '';
+};
+
+// Judul ringkas & mudah terbaca = subjek setelah kata "tentang"; fallback ke deskripsi lalu nama penuh.
+const deriveJudul = (doc: { nama: string; tentang?: string }): string => {
+  const m = (doc.nama || '').match(/\btentang\s+(.+)$/i);
+  if (m && m[1].trim()) return m[1].trim();
+  if (doc.tentang && doc.tentang.trim()) return doc.tentang.trim();
+  return doc.nama || '—';
+};
+
 export default function PeraturanPage() {
   const { isDarkMode, currentUser } = useAppContext();
   const dm = isDarkMode;
+  const canManage = currentUser?.role === 'admin' || currentUser?.role === 'superadmin';
   const [token, setToken] = useState('');
   const [list, setList] = useState<Peraturan[]>([]);
   const [loading, setLoading] = useState(false);
@@ -208,7 +224,7 @@ export default function PeraturanPage() {
             <button onClick={exportExcel} className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm shadow-sm transition-all shrink-0 ${dm ? 'bg-emerald-700 hover:bg-emerald-600 text-white' : 'bg-emerald-600 hover:bg-emerald-700 text-white'}`}>
               <Download className="w-4 h-4" /> Export Excel
             </button>
-            {currentUser?.role === 'admin' && (
+            {canManage && (
               <button onClick={openTambah} className={`flex items-center gap-2 px-4 py-2.5 rounded-xl font-bold text-sm shadow-sm transition-all shrink-0 ${dm ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-[#002855] hover:bg-[#001b3a] text-white'}`}>
                 <FilePlus className="w-4 h-4" /> Tambah Peraturan
               </button>
@@ -288,59 +304,99 @@ export default function PeraturanPage() {
               </div>
               <p className={`text-base font-bold ${dm ? 'text-slate-400' : 'text-slate-500'}`}>Belum ada peraturan</p>
               <p className={`text-sm ${dm ? 'text-slate-600' : 'text-slate-400'}`}>
-                {currentUser?.role === 'admin' ? 'Klik "Tambah Peraturan" untuk menambahkan.' : 'Peraturan dan Keputusan Menteri akan muncul di sini.'}
+                {canManage ? 'Klik "Tambah Peraturan" untuk menambahkan.' : 'Peraturan dan Keputusan Menteri akan muncul di sini.'}
               </p>
             </div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm text-left">
-                <thead className={`text-[11px] font-bold uppercase tracking-wider border-b ${dm ? 'bg-[#0F172A] text-slate-400 border-slate-800' : 'bg-slate-50 text-slate-400 border-slate-100'}`}>
-                  <tr>
-                    <th className="px-4 py-4 w-10 text-center">No</th>
-                    <th className="px-4 py-4">Nama Peraturan</th>
-                    <th className="px-4 py-4">Jenis</th>
-                    <th className="px-4 py-4">Nomor</th>
-                    <th className="px-4 py-4">Tahun / Tanggal Ditetapkan</th>
-                    <th className="px-4 py-4 text-center">Aksi</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {paginated.map((doc, idx) => (
-                    <tr key={doc.id} onClick={() => setViewDoc(doc)} className={`border-b transition-colors cursor-pointer ${dm ? 'border-slate-800 hover:bg-blue-900/20' : 'border-slate-50 hover:bg-blue-50/60'}`}>
-                      <td className="px-4 py-4 text-center text-slate-400 text-sm">{(safePage - 1) * pageSize + idx + 1}</td>
-                      <td className="px-4 py-4 max-w-sm">
-                        <p className={`font-bold text-sm line-clamp-2 ${dm ? 'text-blue-100' : 'text-[#002855]'}`}>{doc.nama}</p>
-                        {doc.tentang && <p className={`text-xs font-normal mt-0.5 line-clamp-1 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>{doc.tentang}</p>}
-                      </td>
-                      <td className="px-4 py-4">
-                        <span className={`px-2.5 py-1 rounded-full text-[11px] font-extrabold uppercase tracking-wider whitespace-nowrap ${dm ? JENIS_BADGE_DARK[doc.jenis] : JENIS_BADGE[doc.jenis]}`}>
-                          {doc.jenis === 'Peraturan Menteri' ? 'Permen' : 'Kepmen'}
-                        </span>
-                      </td>
-                      <td className={`px-4 py-4 text-xs font-mono ${dm ? 'text-slate-400' : 'text-slate-500'}`}>{doc.nomor || '—'}</td>
-                      <td className="px-4 py-4">
-                        <p className={`text-sm font-bold ${dm ? 'text-slate-300' : 'text-slate-700'}`}>{doc.tahun || '—'}</p>
-                        {doc.tanggal_ditetapkan && (
-                          <p className={`text-[11px] mt-0.5 flex items-center gap-1 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>
-                            <Calendar className="w-3 h-3 shrink-0" />{formatTanggal(doc.tanggal_ditetapkan)}
-                          </p>
-                        )}
-                      </td>
-                      <td className="px-4 py-4 text-center" onClick={e => e.stopPropagation()}>
-                        <div className="flex items-center justify-center gap-2">
-                          {currentUser?.role === 'admin' && (
-                            <>
-                              <button onClick={e => { e.stopPropagation(); openEdit(doc); }} className={`px-2.5 py-2.5 inline-flex items-center min-h-11 text-xs font-bold transition-colors ${dm ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'}`}>Edit</button>
-                              <button onClick={e => { e.stopPropagation(); handleDelete(doc.id); }} className={`px-2.5 py-2.5 inline-flex items-center min-h-11 text-xs font-bold transition-colors ${dm ? 'text-red-400 hover:text-red-300' : 'text-red-500 hover:text-red-600'}`}>Hapus</button>
-                            </>
-                          )}
+            <>
+              {/* Kartu (HP / tablet kecil) — nama peraturan tampil penuh & mudah terbaca */}
+              <div className={`md:hidden divide-y ${dm ? 'divide-slate-800' : 'divide-slate-100'}`}>
+                {paginated.map((doc, idx) => {
+                  const nomor = doc.nomor || deriveNomor(doc.nama);
+                  return (
+                    <div key={doc.id} onClick={() => setViewDoc(doc)} className={`p-4 cursor-pointer transition-colors ${dm ? 'hover:bg-blue-900/20' : 'hover:bg-blue-50/60'}`}>
+                      <div className="flex items-start justify-between gap-2 mb-2">
+                        <div className="flex items-center gap-2 flex-wrap min-w-0">
+                          <span className="text-[11px] text-slate-400 font-bold shrink-0">{(safePage - 1) * pageSize + idx + 1}.</span>
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider shrink-0 ${dm ? JENIS_BADGE_DARK[doc.jenis] : JENIS_BADGE[doc.jenis]}`}>
+                            {doc.jenis === 'Peraturan Menteri' ? 'Permen' : 'Kepmen'}
+                          </span>
+                          {nomor && <span className={`text-[11px] font-mono font-semibold shrink-0 ${dm ? 'text-slate-400' : 'text-slate-500'}`}>No. {nomor}</span>}
+                          <span className={`text-[11px] font-bold shrink-0 ${dm ? 'text-slate-400' : 'text-slate-500'}`}>{doc.tahun || '—'}</span>
                         </div>
-                      </td>
+                        {canManage && (
+                          <div className="flex gap-1 shrink-0" onClick={e => e.stopPropagation()}>
+                            <button onClick={e => { e.stopPropagation(); openEdit(doc); }} className={`px-2 py-1.5 text-xs font-bold rounded-lg transition-colors ${dm ? 'text-blue-400 hover:bg-slate-800' : 'text-blue-600 hover:bg-blue-50'}`}>Edit</button>
+                            <button onClick={e => { e.stopPropagation(); handleDelete(doc.id); }} className={`px-2 py-1.5 text-xs font-bold rounded-lg transition-colors ${dm ? 'text-red-400 hover:bg-slate-800' : 'text-red-500 hover:bg-red-50'}`}>Hapus</button>
+                          </div>
+                        )}
+                      </div>
+                      <p className={`font-bold text-sm leading-snug ${dm ? 'text-blue-100' : 'text-[#002855]'}`}>{deriveJudul(doc)}</p>
+                      <p className={`text-xs mt-1 leading-relaxed line-clamp-2 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>{doc.nama}</p>
+                      {doc.tanggal_ditetapkan && (
+                        <p className={`text-[11px] mt-1.5 flex items-center gap-1 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>
+                          <Calendar className="w-3 h-3 shrink-0" /> Ditetapkan {formatTanggal(doc.tanggal_ditetapkan)}
+                        </p>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Tabel (desktop / layar lebar) */}
+              <div className="hidden md:block overflow-x-auto">
+                <table className="w-full text-sm text-left">
+                  <thead className={`text-[11px] font-bold uppercase tracking-wider border-b ${dm ? 'bg-[#0F172A] text-slate-400 border-slate-800' : 'bg-slate-50 text-slate-400 border-slate-100'}`}>
+                    <tr>
+                      <th className="px-4 py-4 w-10 text-center">No</th>
+                      <th className="px-4 py-4">Peraturan</th>
+                      <th className="px-4 py-4">Jenis</th>
+                      <th className="px-4 py-4">Nomor</th>
+                      <th className="px-4 py-4">Tahun / Tanggal Ditetapkan</th>
+                      <th className="px-4 py-4 text-center">Aksi</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
+                  </thead>
+                  <tbody>
+                    {paginated.map((doc, idx) => {
+                      const nomor = doc.nomor || deriveNomor(doc.nama);
+                      return (
+                        <tr key={doc.id} onClick={() => setViewDoc(doc)} className={`border-b transition-colors cursor-pointer ${dm ? 'border-slate-800 hover:bg-blue-900/20' : 'border-slate-50 hover:bg-blue-50/60'}`}>
+                          <td className="px-4 py-4 text-center text-slate-400 text-sm">{(safePage - 1) * pageSize + idx + 1}</td>
+                          <td className="px-4 py-4 max-w-md">
+                            <p className={`font-bold text-sm leading-snug ${dm ? 'text-blue-100' : 'text-[#002855]'}`}>{deriveJudul(doc)}</p>
+                            <p className={`text-xs font-normal mt-0.5 line-clamp-2 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>{doc.nama}</p>
+                          </td>
+                          <td className="px-4 py-4">
+                            <span className={`px-2.5 py-1 rounded-full text-[11px] font-extrabold uppercase tracking-wider whitespace-nowrap ${dm ? JENIS_BADGE_DARK[doc.jenis] : JENIS_BADGE[doc.jenis]}`}>
+                              {doc.jenis === 'Peraturan Menteri' ? 'Permen' : 'Kepmen'}
+                            </span>
+                          </td>
+                          <td className={`px-4 py-4 text-xs font-mono whitespace-nowrap ${dm ? 'text-slate-400' : 'text-slate-500'}`}>{nomor || '—'}</td>
+                          <td className="px-4 py-4">
+                            <p className={`text-sm font-bold ${dm ? 'text-slate-300' : 'text-slate-700'}`}>{doc.tahun || '—'}</p>
+                            {doc.tanggal_ditetapkan && (
+                              <p className={`text-[11px] mt-0.5 flex items-center gap-1 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>
+                                <Calendar className="w-3 h-3 shrink-0" />{formatTanggal(doc.tanggal_ditetapkan)}
+                              </p>
+                            )}
+                          </td>
+                          <td className="px-4 py-4 text-center" onClick={e => e.stopPropagation()}>
+                            <div className="flex items-center justify-center gap-2">
+                              {canManage && (
+                                <>
+                                  <button onClick={e => { e.stopPropagation(); openEdit(doc); }} className={`px-2.5 py-2.5 inline-flex items-center min-h-11 text-xs font-bold transition-colors ${dm ? 'text-blue-400 hover:text-blue-300' : 'text-blue-600 hover:text-blue-700'}`}>Edit</button>
+                                  <button onClick={e => { e.stopPropagation(); handleDelete(doc.id); }} className={`px-2.5 py-2.5 inline-flex items-center min-h-11 text-xs font-bold transition-colors ${dm ? 'text-red-400 hover:text-red-300' : 'text-red-500 hover:text-red-600'}`}>Hapus</button>
+                                </>
+                              )}
+                            </div>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </>
           )}
 
           {/* Pagination footer */}
@@ -475,14 +531,18 @@ export default function PeraturanPage() {
                 <input required type="text" value={formData.nama} onChange={e => setFormData({ ...formData, nama: e.target.value })} placeholder="Cth: Peraturan Menteri ATR/BPN Nomor 5 Tahun 2024 tentang ..." className={inputCls} />
               </div>
 
-              {/* Jenis + Tahun */}
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              {/* Jenis + Nomor + Tahun */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                 <div>
                   <label className={labelCls}>Jenis Peraturan</label>
                   <select value={formData.jenis} onChange={e => setFormData({ ...formData, jenis: e.target.value as 'Peraturan Menteri' | 'Keputusan Menteri' })} className={inputCls}>
                     <option value="Peraturan Menteri">Peraturan Menteri (Permen)</option>
                     <option value="Keputusan Menteri">Keputusan Menteri (Kepmen)</option>
                   </select>
+                </div>
+                <div>
+                  <label className={labelCls}>Nomor Peraturan</label>
+                  <input type="text" value={formData.nomor} onChange={e => setFormData({ ...formData, nomor: e.target.value })} placeholder="Cth: 5 atau 5/2024" className={inputCls} />
                 </div>
                 <div>
                   <label className={labelCls}>Tahun Terbit</label>
