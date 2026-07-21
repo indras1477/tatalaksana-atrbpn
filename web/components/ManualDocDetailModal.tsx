@@ -11,10 +11,11 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   X, FileText, ExternalLink, CheckCircle, XCircle, Stamp, Upload, Pencil,
-  Building2, Calendar, Hash, AlertTriangle, Clock, Landmark, Link2,
+  Building2, Calendar, Hash, AlertTriangle, Clock, Landmark, Link2, History, RotateCcw,
 } from 'lucide-react';
 import { HIERARKI_UNIT } from '@/lib/constants';
 import { JENIS_OPTIONS, KLASIFIKASI_OPTIONS } from '@/components/ManualDocModal';
+import DocHistoryModal from '@/components/DocHistoryModal';
 
 const API_BASE = '/e-sop-atrbpn/api';
 
@@ -59,8 +60,12 @@ export default function ManualDocDetailModal({ kind, model, token, role, isDarkM
   const [pdfUrl, setPdfUrl] = useState<string | null>(null);
   const [loadingPdf, setLoadingPdf] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [rejectNote, setRejectNote] = useState<{ open: boolean; note: string; backTo: 'rejected' | 'penetapan' }>({ open: false, note: '', backTo: 'rejected' });
+  const [rejectNote, setRejectNote] = useState<{ open: boolean; note: string; backTo: 'rejected' | 'approved' }>({ open: false, note: '', backTo: 'rejected' });
   const [signedFile, setSignedFile] = useState<File | null>(null);
+  // Alternatif unggah ulang: ganti tautan dokumen (Drive/eksternal) dan/atau tautan Visio.
+  const [relinkPdf, setRelinkPdf] = useState('');
+  const [relinkVisio, setRelinkVisio] = useState('');
+  const [showHistory, setShowHistory] = useState(false);
   const [editing, setEditing] = useState(false);
   const [editForm, setEditForm] = useState({ judul: '', nomor: '', jenis: '', klasifikasi: '', l1: '', l2: '', tanggal: '', link: '', linkVisio: '' });
   const urlRef = useRef<string | null>(null);
@@ -173,17 +178,57 @@ export default function ManualDocDetailModal({ kind, model, token, role, isDarkM
     } finally { setBusy(false); }
   };
 
+  // Admin/superadmin membatalkan proses penetapan → status kembali ke tahap sebelumnya.
+  const batalPenetapan = async () => {
+    const tahap = model.status === 'approved' ? 'persetujuan (lanjut pengesahan pimpinan)' : 'proses penetapan';
+    if (!window.confirm(`Batalkan ${tahap} dokumen "${model.process_title}"?\n\nDokumen akan dikembalikan ke tahap sebelumnya agar dapat ditinjau/diperbaiki ulang.`)) return;
+    const alasan = window.prompt('Alasan pembatalan (opsional, tercatat di riwayat):', '') ?? '';
+    setBusy(true);
+    try {
+      const res = await fetch(`${API_BASE}/${kind}/models/${model.id}/batal-penetapan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ alasan }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({} as { error?: string })); alert(e.error || 'Gagal membatalkan penetapan.'); return; }
+      const row = await res.json();
+      row.unit_l1 = model.unit_l1; row.unit_l2 = model.unit_l2;
+      onChanged(row);
+    } finally { setBusy(false); }
+  };
+
+  // Ganti tautan dokumen/Visio sebagai alternatif unggah ulang PDF (revisi lebih fleksibel).
+  const submitRelink = async () => {
+    const link = relinkPdf.trim();
+    const linkVisio = relinkVisio.trim();
+    if (!link && !linkVisio) { alert('Isi minimal satu tautan (dokumen atau Visio).'); return; }
+    const isHttp = (u: string) => /^https?:\/\//i.test(u);
+    if ((link && !isHttp(link)) || (linkVisio && !isHttp(linkVisio))) { alert('Tautan harus diawali http:// atau https://'); return; }
+    if (link && !window.confirm('Tautan dokumen baru akan MENGGANTIKAN dokumen sebelumnya (file PDF yang pernah diunggah ikut diganti). Lanjutkan?')) return;
+    setBusy(true);
+    try {
+      const res = await fetch(`${API_BASE}/${kind}/models/${model.id}/manual-relink`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ link: link || null, link_visio: linkVisio || null }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({} as { error?: string })); alert(e.error || 'Gagal menyimpan tautan.'); return; }
+      const row = await res.json();
+      row.unit_l1 = model.unit_l1; row.unit_l2 = model.unit_l2;
+      setRelinkPdf(''); setRelinkVisio('');
+      onChanged(row);
+    } finally { setBusy(false); }
+  };
+
   const statusInfo = (): { label: string; cls: string; icon: React.ReactNode; hint: string } => {
     switch (model.status) {
       case 'pending': return { label: 'REVIEW ORTALA MR', cls: 'bg-blue-50 text-blue-700 border-blue-200', icon: <Clock className="w-3 h-3" />, hint: 'Menunggu admin memeriksa dokumen ini — setujui untuk lanjut ke pengesahan pimpinan, atau tolak dengan catatan.' };
-      case 'penetapan': return kind === 'bpmn'
-        ? { label: 'MENUNGGU PENETAPAN MENTERI', cls: 'bg-violet-50 text-violet-700 border-violet-200', icon: <Landmark className="w-3 h-3" />, hint: 'Sudah disetujui Ortala MR — tinggal ditetapkan oleh admin/superadmin (tombol Ditetapkan di daftar).' }
-        : { label: 'PENGESAHAN PIMPINAN', cls: 'bg-violet-50 text-violet-700 border-violet-200', icon: <Landmark className="w-3 h-3" />, hint: 'Disetujui — cetak & mintakan tanda tangan pimpinan, lalu unggah kembali PDF yang sudah ditandatangani.' };
+      case 'penetapan': return { label: 'MENUNGGU PENETAPAN MENTERI', cls: 'bg-violet-50 text-violet-700 border-violet-200', icon: <Landmark className="w-3 h-3" />, hint: 'Dokumen sudah lengkap & disetujui — tinggal ditetapkan oleh admin/superadmin (tombol Ditetapkan di daftar).' };
       case 'verifikasi': return { label: 'VERIFIKASI TTD', cls: 'bg-cyan-50 text-cyan-700 border-cyan-200', icon: <Stamp className="w-3 h-3" />, hint: 'PDF ber-TTD sudah diunggah — admin memeriksa; bila sesuai, tetapkan agar dokumen terbit.' };
       case 'rejected': return { label: 'PERLU REVISI', cls: 'bg-red-50 text-red-700 border-red-200', icon: <XCircle className="w-3 h-3" />, hint: 'Ditolak — perbaiki lewat "Edit Informasi" atau unggah ulang PDF; perbaikan otomatis mengantre ulang ke review admin.' };
       case 'approved': return kind === 'bpmn'
         ? { label: 'DITETAPKAN', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: <CheckCircle className="w-3 h-3" />, hint: 'Dokumen sudah ditetapkan dan tercatat di registry Dashboard.' }
-        : { label: 'DISETUJUI', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: <CheckCircle className="w-3 h-3" />, hint: '' };
+        : { label: 'PROSES PENGESAHAN PIMPINAN', cls: 'bg-violet-50 text-violet-700 border-violet-200', icon: <Landmark className="w-3 h-3" />, hint: 'Disetujui Ortala MR — cetak & mintakan tanda tangan pimpinan, lalu unggah kembali PDF yang sudah ditandatangani (atau ganti lewat tautan).' };
       case 'terbit': return { label: 'TERBIT', cls: 'bg-emerald-50 text-emerald-700 border-emerald-200', icon: <CheckCircle className="w-3 h-3" />, hint: 'Dokumen sudah terbit dan tercatat di registry Dashboard.' };
       default: return { label: (model.status || 'DRAFT').toUpperCase(), cls: 'bg-slate-100 text-slate-600 border-slate-200', icon: <FileText className="w-3 h-3" />, hint: '' };
     }
@@ -211,6 +256,12 @@ export default function ManualDocDetailModal({ kind, model, token, role, isDarkM
             </div>
           </div>
           <div className="flex items-center gap-1 shrink-0">
+            {kind !== 'sp' && (
+              <button onClick={() => setShowHistory(true)} title="Riwayat / log aktivitas dokumen (termasuk catatan review terdahulu)"
+                className={`min-h-11 px-3 rounded-xl border text-xs font-bold flex items-center gap-1.5 ${isDarkMode ? 'border-slate-700 text-indigo-400 hover:bg-indigo-900/30' : 'border-slate-200 text-indigo-600 hover:bg-indigo-50'}`}>
+                <History className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Riwayat</span>
+              </button>
+            )}
             {canEdit && !editing && (
               <button onClick={startEdit} title="Edit Informasi Dokumen"
                 className={`min-h-11 px-3 rounded-xl border text-xs font-bold flex items-center gap-1.5 ${isDarkMode ? 'border-slate-700 text-teal-400 hover:bg-teal-900/30' : 'border-slate-200 text-teal-600 hover:bg-teal-50'}`}>
@@ -387,7 +438,7 @@ export default function ManualDocDetailModal({ kind, model, token, role, isDarkM
                 {/* Admin: review awal */}
                 {isAdmin && model.status === 'pending' && (
                   <div className="flex flex-col sm:flex-row gap-2">
-                    <button disabled={busy} onClick={() => { if (window.confirm(kind === 'bpmn' ? 'Setujui dokumen ini? Selanjutnya menunggu proses penetapan menteri untuk ditetapkan admin.' : 'Setujui dokumen ini? Selanjutnya penyusun mencetak & memintakan tanda tangan pimpinan, lalu mengunggah ulang PDF ber-TTD.')) patchStatus('penetapan'); }}
+                    <button disabled={busy} onClick={() => { if (window.confirm(kind === 'bpmn' ? 'Setujui dokumen ini? Selanjutnya menunggu proses penetapan menteri untuk ditetapkan admin.' : 'Setujui dokumen ini? Selanjutnya penyusun mencetak & memintakan tanda tangan pimpinan, lalu mengunggah ulang PDF ber-TTD.')) patchStatus(kind === 'bpmn' ? 'penetapan' : 'approved'); }}
                       className="flex-1 min-h-11 flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:bg-slate-300">
                       <CheckCircle className="w-4 h-4" /> {kind === 'bpmn' ? 'Setujui — Lanjut Penetapan Menteri' : 'Setujui — Lanjut Pengesahan Pimpinan'}
                     </button>
@@ -399,17 +450,25 @@ export default function ManualDocDetailModal({ kind, model, token, role, isDarkM
                 )}
 
                 {/* BPMN: tidak pakai TTD/pimpinan — setelah disetujui, tinggal ditetapkan lewat daftar. */}
-                {kind === 'bpmn' && isAdmin && model.status === 'penetapan' && (
+                {isAdmin && model.status === 'penetapan' && (
                   <p className={`text-xs rounded-xl px-3.5 py-2.5 border ${isDarkMode ? 'text-violet-300 bg-violet-900/20 border-violet-800' : 'text-violet-700 bg-violet-50 border-violet-200'}`}>
-                    Dokumen sudah disetujui dan menunggu <b>penetapan menteri</b>. Tekan tombol <b>Ditetapkan</b> pada baris dokumen di daftar untuk menetapkannya (mengisi dasar & tanggal penetapan).
+                    Dokumen sudah lengkap dan menunggu <b>penetapan menteri</b>. Tekan tombol <b>Ditetapkan</b> pada baris dokumen di daftar untuk menetapkannya (mengisi dasar &amp; tanggal penetapan), atau <b>Batalkan</b> bila perlu ditinjau ulang.
                   </p>
                 )}
 
+                {/* Admin: batalkan proses penetapan (salah klik/terlewat) → kembali ke tahap sebelumnya */}
+                {isAdmin && (model.status === 'penetapan' || (kind !== 'bpmn' && model.status === 'approved')) && (
+                  <button disabled={busy} onClick={batalPenetapan}
+                    className={`w-full min-h-11 flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/30' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
+                    <RotateCcw className="w-4 h-4" /> {model.status === 'approved' ? 'Batalkan Persetujuan (Kembali ke Review)' : 'Batalkan Proses Penetapan'}
+                  </button>
+                )}
+
                 {/* Unggah ulang PDF ber-TTD (SOP/SP; setelah disetujui) atau perbaikan (setelah ditolak) */}
-                {kind !== 'bpmn' && canUpload && (model.status === 'penetapan' || model.status === 'rejected') && (
+                {kind !== 'bpmn' && canUpload && (model.status === 'approved' || model.status === 'rejected') && (
                   <div>
                     <label className={label}>
-                      {model.status === 'penetapan' ? 'Unggah PDF yang Sudah Ditandatangani Pimpinan (≤7MB)' : 'Unggah Ulang PDF Perbaikan (≤7MB)'}
+                      {model.status === 'approved' ? 'Unggah PDF yang Sudah Ditandatangani Pimpinan (≤7MB)' : 'Unggah Ulang PDF Perbaikan (≤7MB)'}
                     </label>
                     <div className="flex flex-col sm:flex-row gap-2 mt-1">
                       <input type="file" accept="application/pdf" onChange={e => setSignedFile(e.target.files?.[0] || null)}
@@ -420,17 +479,37 @@ export default function ManualDocDetailModal({ kind, model, token, role, isDarkM
                       </button>
                     </div>
                     {signedFile && <p className="text-[11px] mt-1 text-violet-500 font-semibold">{signedFile.name} ({(signedFile.size / 1024 / 1024).toFixed(2)} MB)</p>}
+
+                    {/* ATAU: ganti lewat tautan (Google Drive / eksternal) — lebih fleksibel dari unggah PDF */}
+                    <div className={`flex items-center gap-2 my-3 text-[10px] font-black uppercase tracking-wider ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                      <span className={`flex-1 border-t ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`} /> atau ganti lewat tautan <span className={`flex-1 border-t ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`} />
+                    </div>
+                    <div className="space-y-2">
+                      <div>
+                        <label className={label}>{model.status === 'approved' ? 'Tautan Dokumen Ber-TTD (Google Drive / eksternal)' : 'Tautan Dokumen Perbaikan (Google Drive / eksternal)'}</label>
+                        <input type="url" value={relinkPdf} onChange={e => setRelinkPdf(e.target.value)} placeholder="https://drive.google.com/… (menggantikan dokumen/PDF sebelumnya)" className={`${input} mt-1`} />
+                      </div>
+                      <div>
+                        <label className={label}>Tautan Visio Baru (opsional)</label>
+                        <input type="url" value={relinkVisio} onChange={e => setRelinkVisio(e.target.value)} placeholder="https://… (menggantikan tautan Visio sebelumnya)" className={`${input} mt-1`} />
+                      </div>
+                      <button disabled={busy || (!relinkPdf.trim() && !relinkVisio.trim())} onClick={submitRelink}
+                        className="w-full sm:w-auto min-h-11 flex items-center justify-center gap-2 rounded-xl bg-teal-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-teal-700 disabled:bg-slate-300">
+                        <ExternalLink className="w-4 h-4" /> {busy ? 'Menyimpan…' : 'Simpan Tautan Revisi'}
+                      </button>
+                      <p className={`text-[11px] leading-snug ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Tautan yang diisi akan menggantikan tautan/berkas lama pada informasi dokumen; yang dikosongkan tidak berubah. Setelah disimpan, dokumen otomatis {model.status === 'approved' ? 'masuk verifikasi admin' : 'mengantre ulang ke review admin'}.</p>
+                    </div>
                   </div>
                 )}
 
                 {/* Admin: penetapan akhir setelah verifikasi TTD */}
                 {isAdmin && model.status === 'verifikasi' && (
                   <div className="flex flex-col sm:flex-row gap-2">
-                    <button disabled={busy} onClick={() => { if (window.confirm('Dokumen ber-TTD sudah sesuai semua? Tetapkan & terbitkan — dokumen akan tercatat di registry Dashboard.')) patchStatus(finalStatus); }}
+                    <button disabled={busy} onClick={() => { if (window.confirm('Dokumen ber-TTD sudah sesuai semua? Setujui — dokumen lanjut ke proses penetapan menteri.')) patchStatus('penetapan'); }}
                       className="flex-1 min-h-11 flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:bg-slate-300">
-                      <Stamp className="w-4 h-4" /> Tetapkan &amp; Terbitkan
+                      <CheckCircle className="w-4 h-4" /> Setujui Dokumen — Lanjut Penetapan Menteri
                     </button>
-                    <button disabled={busy} onClick={() => setRejectNote({ open: true, note: '', backTo: 'penetapan' })}
+                    <button disabled={busy} onClick={() => setRejectNote({ open: true, note: '', backTo: 'approved' })}
                       className={`flex-1 min-h-11 flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/30' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
                       <AlertTriangle className="w-4 h-4" /> Kembalikan (TTD belum sesuai)
                     </button>
@@ -450,11 +529,11 @@ export default function ManualDocDetailModal({ kind, model, token, role, isDarkM
           <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 p-4" onClick={() => setRejectNote(r => ({ ...r, open: false }))}>
             <div className={`w-full max-w-md rounded-2xl shadow-2xl ${isDarkMode ? 'bg-[#0F172A] text-white' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
               <div className={`px-5 py-4 border-b ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-                <h3 className="font-bold text-red-600 flex items-center gap-2"><XCircle className="w-5 h-5" /> {rejectNote.backTo === 'penetapan' ? 'Kembalikan untuk Perbaikan TTD' : 'Tolak Dokumen'}</h3>
+                <h3 className="font-bold text-red-600 flex items-center gap-2"><XCircle className="w-5 h-5" /> {rejectNote.backTo === 'approved' ? 'Kembalikan untuk Perbaikan TTD' : 'Tolak Dokumen'}</h3>
               </div>
               <div className="p-5">
                 <textarea rows={5} value={rejectNote.note} onChange={e => setRejectNote(r => ({ ...r, note: e.target.value }))}
-                  placeholder={rejectNote.backTo === 'penetapan' ? 'Contoh: tanda tangan kurang jelas / halaman TTD tidak lengkap…' : 'Tuliskan alasan penolakan / poin revisi…'}
+                  placeholder={rejectNote.backTo === 'approved' ? 'Contoh: tanda tangan kurang jelas / halaman TTD tidak lengkap…' : 'Tuliskan alasan penolakan / poin revisi…'}
                   className={`w-full border rounded-xl p-3.5 text-base outline-none focus:ring-2 focus:ring-red-500 ${isDarkMode ? 'bg-slate-800 border-slate-700 text-white' : 'bg-white border-slate-300'}`} />
               </div>
               <div className={`flex justify-end gap-2 px-5 py-4 border-t ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
@@ -464,6 +543,10 @@ export default function ManualDocDetailModal({ kind, model, token, role, isDarkM
               </div>
             </div>
           </div>
+        )}
+
+        {showHistory && kind !== 'sp' && (
+          <DocHistoryModal kind={kind as 'bpmn' | 'sop'} modelId={model.id} title={model.process_title} token={token} isDarkMode={isDarkMode} onClose={() => setShowHistory(false)} />
         )}
       </div>
     </div>

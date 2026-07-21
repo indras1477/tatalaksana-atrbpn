@@ -1,8 +1,10 @@
 "use client";
 
-import React, { useEffect, useState, Suspense } from 'react';
+import React, { useEffect, useState, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import SOPBuilder from '@/components/SOPBuilder';
+import SOPBuilder, { type SOPBuilderRef } from '@/components/SOPBuilder';
+import { useEditingPresence } from '@/lib/useEditingPresence';
+import { getClientId } from '@/lib/clientId';
 
 function SOPStudioContent() {
   const searchParams = useSearchParams();
@@ -23,6 +25,17 @@ function SOPStudioContent() {
   const [docStatus, setDocStatus] = useState<string | null>(null);
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [coverMime, setCoverMime] = useState<string>('');
+  const [editConflict, setEditConflict] = useState<{username: string; nama_lengkap: string}[]>([]);
+
+  // Auto-save: aktif hanya setelah dokumen tersimpan pertama kali (punya currentId).
+  const builderRef = useRef<SOPBuilderRef>(null);
+  const lastSavedRef = useRef<string | null>(null);
+  const [autoSavedAt, setAutoSavedAt] = useState<string | null>(null);
+
+  const [presenceToken, setPresenceToken] = useState('');
+  useEffect(() => { setPresenceToken(localStorage.getItem('token') || ''); }, []);
+  const isViewOnlySop = mode === 'view' || ['terbit', 'verifikasi', 'penetapan'].includes(docStatus || '');
+  useEditingPresence('sop', (isViewOnlySop || !currentId) ? null : Number(currentId), presenceToken);
 
   const apiFetch = async (path: string, options?: RequestInit) => {
     const token = localStorage.getItem('token');
@@ -60,6 +73,21 @@ function SOPStudioContent() {
         .then((data) => {
            if (data && data.sop_data) setInitialData(data.sop_data);
            if (data && data.status) setDocStatus(data.status);
+           // Cek apakah perangkat lain sedang mengedit dokumen ini (termasuk akun sama beda perangkat).
+           // Mode lihat / dokumen terkunci tidak perlu peringatan — pembaca tidak menimbulkan konflik.
+           if (currentId && mode !== 'view' && !['terbit', 'verifikasi', 'penetapan'].includes(data?.status || '')) {
+             const tok = localStorage.getItem('token');
+             fetch(`/e-sop-atrbpn/api/editing-sessions/sop`, { headers: { Authorization: `Bearer ${tok}` } })
+               .then(r => r.ok ? r.json() : [])
+               .then((sessions: {model_id: number; user_id: number; client_id: string; username: string; nama_lengkap: string}[]) => {
+                 const me = JSON.parse(localStorage.getItem('user') || '{}');
+                 const others = sessions
+                   .filter(s => s.model_id === Number(currentId) && s.client_id !== getClientId())
+                   .map(s => s.user_id === me.id ? { ...s, nama_lengkap: `${s.nama_lengkap || s.username} (perangkat lain, akun sama)` } : s);
+                 if (others.length) setEditConflict(others);
+               })
+               .catch(() => {});
+           }
         })
         .catch(() => {})
         .finally(() => setLoading(false));
@@ -117,8 +145,31 @@ function SOPStudioContent() {
       setCurrentId(id);
       window.history.replaceState(null, '', `/e-sop-atrbpn/sop/studio?id=${id}`);
     }
+    // Perbarui patokan auto-save agar tak menyimpan ulang data yang identik.
+    lastSavedRef.current = dataJson;
     return id as string;
   };
+
+  // AUTO-SAVE SOP tiap 25 detik. Hanya berjalan bila dokumen sudah pernah disimpan
+  // (currentId ada) dan bukan mode lihat / status terkunci. Menyimpan diam-diam tanpa
+  // mengubah status (persist tanpa argumen status → server mempertahankan status lama).
+  useEffect(() => {
+    if (isViewOnlySop) return;
+    const timer = setInterval(async () => {
+      if (!currentId || !builderRef.current) return;
+      if (['terbit', 'verifikasi', 'penetapan'].includes(docStatus || '')) return;
+      let data: string;
+      try { data = builderRef.current.getSOPData(); } catch { return; }
+      if (lastSavedRef.current === null) { lastSavedRef.current = data; return; } // patok baseline
+      if (data === lastSavedRef.current) return; // tak ada perubahan
+      try {
+        await persist(data); // pertahankan status
+        setAutoSavedAt(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }));
+      } catch { /* diamkan — coba lagi tick berikutnya */ }
+    }, 25000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentId, docStatus, isViewOnlySop]);
 
   const handleSave = async (dataJson: string) => {
     try {
@@ -179,7 +230,50 @@ function SOPStudioContent() {
   if (loading) return <div className="h-[calc(100dvh-4rem)] flex items-center justify-center text-sm font-bold text-slate-500">Memuat Studio...</div>;
 
   return (
+    <>
+    {/* Peringatan konflik editing */}
+    {editConflict.length > 0 && (
+      <div className="fixed inset-0 z-300 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+        <div className="rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl bg-white text-slate-800">
+          <div className="flex flex-col gap-4">
+            <div className="flex items-start gap-3">
+              <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                <svg className="w-5 h-5 text-amber-600" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
+              </div>
+              <div>
+                <h3 className="font-bold text-base">Dokumen Sedang Diedit</h3>
+                <p className="text-sm mt-1 text-slate-500">
+                  {editConflict.map(u => u.nama_lengkap || u.username).join(', ')} sedang mengedit dokumen ini. Hubungi rekan/tim Anda yang sedang mengerjakan dokumen ini untuk berkoordinasi sebelum melanjutkan.
+                </p>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                onClick={() => { setEditConflict([]); window.location.search = window.location.search + '&mode=view'; }}
+                className="flex-1 py-2.5 rounded-xl text-sm font-medium border border-slate-200 text-slate-600 hover:bg-slate-50 transition-colors"
+              >
+                Buka Mode Lihat
+              </button>
+              <button
+                onClick={() => { setEditConflict([]); router.push('/sop'); }}
+                className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-amber-500 text-white hover:bg-amber-600 transition-colors"
+              >
+                Kembali ke Daftar
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    )}
+    {/* Indikator auto-save */}
+    {autoSavedAt && !isViewOnlySop && (
+      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-100 px-3 py-1.5 rounded-full bg-emerald-600/90 text-white text-xs font-semibold shadow-lg flex items-center gap-1.5 pointer-events-none">
+        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
+        Tersimpan otomatis {autoSavedAt}
+      </div>
+    )}
     <SOPBuilder
+      ref={builderRef}
       initialData={initialData}
       initialTitle={title}
       initialKey={key}
@@ -195,7 +289,9 @@ function SOPStudioContent() {
       onSubmitTrigger={handleSubmit}
       onBackTrigger={handleBack}
       onDownloadPdf={handleDownloadPdf}
+      shareModelId={currentId ? Number(currentId) : null}
     />
+    </>
   );
 }
 

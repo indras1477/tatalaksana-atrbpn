@@ -5,16 +5,18 @@ import { useRouter } from 'next/navigation';
 import {
   Plus, Edit, CheckCircle,
   Clock, XCircle, Search, X, FileEdit, FileStack, AlertCircle, Filter,
-  Trash2, Calendar, GitCommit, HelpCircle, GitBranch, ChevronRight, Save,
+  Trash2, Calendar, GitCommit, HelpCircle, GitBranch, ChevronRight, Save, History as HistoryIcon, RotateCcw,
   ExternalLink, Building2, Copy, Landmark, Lock, FileUp, FileSpreadsheet, FileText, MessageSquare
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
 import { BPMNSymbolsSection } from '@/components/PanduanSymbols';
 import ManualDocModal from '@/components/ManualDocModal';
 import ManualDocDetailModal from '@/components/ManualDocDetailModal';
+import DocHistoryModal from '@/components/DocHistoryModal';
 import ManualDocImportModal from '@/components/ManualDocImportModal';
 import ShareButton from '@/components/ShareButton';
 import { HIERARKI_UNIT } from '@/lib/constants';
+import { getClientId } from '@/lib/clientId';
 
 const API_BASE = '/e-sop-atrbpn/api';
 
@@ -61,10 +63,32 @@ export default function BPMNDashboardPage() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
   const [savedModels, setSavedModels] = useState<BPMNModel[]>([]);
   const [loading, setLoading] = useState(true);
+  const [editingMap, setEditingMap] = useState<Record<number, string>>({});
+  const [editWarning, setEditWarning] = useState<{ model: BPMNModel; editorName: string } | null>(null);
 
   const [searchQuery, setSearchQuery] = useState('');
+  // Dari klik notifikasi: /halaman?q=<judul>&doc=<id> → pencarian terisi & dokumen
+  // yang dimaksud langsung dibuka (lihat efek di bawah).
+  const [pendingDocId, setPendingDocId] = useState<number | null>(null);
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    const q = sp.get('q');
+    if (q) setSearchQuery(q);
+    const doc = sp.get('doc');
+    if (!doc || isNaN(Number(doc))) return;
+    // Sekali-pakai: Next/browser bisa memulihkan URL berparam saat navigasi balik —
+    // tanpa penanda ini popup akan muncul lagi setiap kembali ke halaman.
+    const key = `bpmn:${doc}:${sp.get('n') || ''}`;
+    try {
+      if (sessionStorage.getItem('esop-doc-opened') === key) return;
+      sessionStorage.setItem('esop-doc-opened', key);
+    } catch { /* sessionStorage diblokir — lanjut tanpa penanda */ }
+    setPendingDocId(Number(doc));
+  }, []);
   const [filterUnit, setFilterUnit] = useState('Semua');
   const [filterStatus, setFilterStatus] = useState('Semua');
+  // Urutan daftar: terbaru diperbarui (default) / terbaru dibuat / terlama / judul.
+  const [sortBy, setSortBy] = useState<'updated' | 'created' | 'oldest' | 'title'>('updated');
   const [listTab, setListTab] = useState<'usulan' | 'penyusunan' | 'terbit'>('penyusunan');
   const [rekapDrill, setRekapDrill] = useState<{ l1: string | null; l2: string | null }>({ l1: null, l2: null });
   // Filter cepat via klik kartu ringkasan (khusus admin/superadmin): tampilkan
@@ -89,6 +113,7 @@ export default function BPMNDashboardPage() {
   const [manualDetail, setManualDetail] = useState<BPMNModel | null>(null);
 
   const [previewModel, setPreviewModel] = useState<BPMNModel | null>(null);
+  const [showHistoryFor, setShowHistoryFor] = useState<BPMNModel | null>(null);
   const [editMeta, setEditMeta] = useState({ process_title: '', jenis_proses: '', klasifikasi_proses: '' });
   const [savingMeta, setSavingMeta] = useState(false);
 
@@ -147,7 +172,32 @@ export default function BPMNDashboardPage() {
       })
       .catch(err => console.error("Gagal mengambil data model:", err))
       .finally(() => setLoading(false));
+
   }, [token, currentUser]);
+
+  // Refresh indikator "sedang diedit" setiap 30 detik
+  useEffect(() => {
+    if (!token) return;
+    const refresh = () => {
+      apiFetch('/editing-sessions/bpmn', token)
+        .then(r => r.ok ? r.json() : [])
+        .then((sessions: {model_id: number; user_id: number; client_id: string; username: string; nama_lengkap: string}[]) => {
+          // Bandingkan per-PERANGKAT (client_id), bukan per-akun — akun shared tetap terdeteksi
+          const me = JSON.parse(localStorage.getItem('user') || '{}');
+          const myClient = getClientId();
+          const map: Record<number, string> = {};
+          sessions.filter(s => s.client_id !== myClient).forEach(s => {
+            const nama = s.nama_lengkap || s.username;
+            map[s.model_id] = s.user_id === me.id ? `${nama} (perangkat lain, akun sama)` : nama;
+          });
+          setEditingMap(map);
+        })
+        .catch(() => {});
+    };
+    refresh();
+    const timer = setInterval(refresh, 30_000);
+    return () => clearInterval(timer);
+  }, [token]);
 
   const currentFilteredModels = useMemo(() => {
     return savedModels.filter(m => {
@@ -229,12 +279,49 @@ export default function BPMNDashboardPage() {
     return Object.entries(groups).map(([nama, docs]) => ({ nama, ...progressCounts(docs) })).sort((a, b) => a.nama.localeCompare(b.nama));
   }, [rekapDataset, rekapDrill]);
 
+  // Pengurutan daftar dokumen — dokumen terbaru/baru diperbarui di paling atas.
+  const waktu = (v?: string) => (v ? new Date(v).getTime() : 0);
+  const urutkan = <T extends { process_title: string; created_at?: string; updated_at?: string }>(arr: T[]) => {
+    const out = [...arr];
+    if (sortBy === 'title') return out.sort((a, b) => a.process_title.localeCompare(b.process_title, 'id'));
+    if (sortBy === 'created') return out.sort((a, b) => waktu(b.created_at) - waktu(a.created_at));
+    if (sortBy === 'oldest') return out.sort((a, b) => (waktu(a.updated_at) || waktu(a.created_at)) - (waktu(b.updated_at) || waktu(b.created_at)));
+    return out.sort((a, b) => (waktu(b.updated_at) || waktu(b.created_at)) - (waktu(a.updated_at) || waktu(a.created_at)));
+  };
+
   const visibleModels = useMemo(() => {
     if (isAdminRekap && rekapDrill.l2 !== null) {
-      return rekapDataset.filter(m => (m.unit_l1 || '(Tanpa Unit)') === rekapDrill.l1 && (m.unit_l2 || '(Tanpa Sub-Unit)') === rekapDrill.l2);
+      return urutkan(rekapDataset.filter(m => (m.unit_l1 || '(Tanpa Unit)') === rekapDrill.l1 && (m.unit_l2 || '(Tanpa Sub-Unit)') === rekapDrill.l2));
     }
-    return currentFilteredModels.filter(m => tabOf(m.status) === listTab);
-  }, [currentFilteredModels, listTab, isAdminRekap, rekapDrill, rekapDataset]);
+    return urutkan(currentFilteredModels.filter(m => tabOf(m.status) === listTab));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentFilteredModels, listTab, isAdminRekap, rekapDrill, rekapDataset, sortBy]);
+  // Buka dokumen dari klik notifikasi (?doc=<id>): pilih tab sesuai statusnya,
+  // keluar dari rekap per-unit (admin), lalu tampilkan modal detailnya.
+  useEffect(() => {
+    if (pendingDocId === null || !token) return;
+    const id = pendingDocId;
+    setPendingDocId(null);
+    window.history.replaceState(null, '', '/e-sop-atrbpn/bpmn');
+    // Dokumen manual → popup Dokumen Manual (ada viewer PDF/tautan); selain itu
+    // modal Detail Dokumen (lewat openPreview agar form informasinya ikut terisi).
+    const show = (doc: BPMNModel) => {
+      setListTab(tabOf(doc.status));
+      setRekapDrill({ l1: null, l2: null });
+      if (doc.is_manual) setManualDetail(doc); else openPreview(doc);
+    };
+    // Ambil LANGSUNG dari server (tidak menunggu seluruh daftar selesai dimuat)
+    // agar popup muncul seketika; bila gagal, pakai data dari daftar bila ada.
+    apiFetch(`/bpmn/models/${id}`, token)
+      .then(r => r.ok ? r.json() : null)
+      .then((doc: BPMNModel | null) => {
+        if (doc) show(doc);
+        else { const m = savedModels.find(x => x.id === id); if (m) show(m); }
+      })
+      .catch(() => { const m = savedModels.find(x => x.id === id); if (m) show(m); });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingDocId, token]);
+
   const countUsulan = useMemo(() => currentFilteredModels.filter(m => m.status === 'usulan').length, [currentFilteredModels]);
   const countPenyusunan = useMemo(() => currentFilteredModels.filter(m => tabOf(m.status) === 'penyusunan').length, [currentFilteredModels]);
   const countTerbit = useMemo(() => currentFilteredModels.filter(m => m.status === 'approved').length, [currentFilteredModels]);
@@ -244,7 +331,7 @@ export default function BPMNDashboardPage() {
     () => visibleModels.slice((currentPage - 1) * pageSize, currentPage * pageSize),
     [visibleModels, currentPage, pageSize]
   );
-  useEffect(() => { setCurrentPage(1); }, [listTab, searchQuery, filterUnit, filterStatus, pageSize, rekapDrill]);
+  useEffect(() => { setCurrentPage(1); }, [listTab, searchQuery, filterUnit, filterStatus, pageSize, rekapDrill, sortBy]);
   useEffect(() => { setRekapDrill({ l1: null, l2: null }); }, [listTab, filterUnit]);
   useEffect(() => { if (currentPage > totalPages) setCurrentPage(totalPages); }, [currentPage, totalPages]);
 
@@ -274,6 +361,24 @@ export default function BPMNDashboardPage() {
   };
 
   const handleLanjutPenyusunan = (model: BPMNModel) => {
+    openForEdit(model);
+  };
+
+  const openForEdit = async (model: BPMNModel) => {
+    // Cek real-time siapa yang sedang edit (per-perangkat, tidak mengandalkan cache 30-detik)
+    try {
+      const r = await apiFetch('/editing-sessions/bpmn', token);
+      if (r.ok) {
+        const sessions: { model_id: number; user_id: number; client_id: string; username: string; nama_lengkap: string }[] = await r.json();
+        const me = JSON.parse(localStorage.getItem('user') || '{}');
+        const other = sessions.find(s => s.model_id === model.id && s.client_id !== getClientId());
+        if (other) {
+          const nama = other.nama_lengkap || other.username;
+          setEditWarning({ model, editorName: other.user_id === me.id ? `${nama} (perangkat lain, akun sama)` : nama });
+          return;
+        }
+      }
+    } catch { /* fetch gagal — lanjut tanpa peringatan */ }
     router.push(`/bpmn/studio?id=${model.id}`);
   };
 
@@ -317,6 +422,24 @@ export default function BPMNDashboardPage() {
       dasar: model.penetapan_dasar || '',
       tanggal: model.penetapan_tanggal ? String(model.penetapan_tanggal).slice(0, 10) : new Date().toISOString().slice(0, 10),
     });
+  };
+
+  // Admin/superadmin membatalkan proses penetapan (salah klik/terlewat) →
+  // dokumen kembali ke status sebelumnya (dihitung server dari riwayat).
+  const handleBatalPenetapan = async (model: BPMNModel) => {
+    if (!window.confirm(`Batalkan proses penetapan Proses Bisnis "${model.process_title}"?\n\nDokumen akan dikembalikan ke tahap sebelumnya agar dapat diperbaiki/ditinjau ulang.`)) return;
+    const alasan = window.prompt('Alasan pembatalan (opsional, tercatat di riwayat):', '') ?? '';
+    try {
+      const res = await apiFetch(`/bpmn/models/${model.id}/batal-penetapan`, token, {
+        method: 'POST', body: JSON.stringify({ alasan }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({})); alert(`❌ ${e.error || 'Gagal membatalkan penetapan.'}`); return; }
+      const row = await res.json();
+      setSavedModels(prev => prev.map(m => m.id === model.id ? { ...m, status: row.status, penetapan_dasar: null, penetapan_tanggal: null } : m));
+      if (previewModel?.id === model.id) setPreviewModel(prev => prev ? { ...prev, status: row.status, penetapan_dasar: null, penetapan_tanggal: null } : null);
+      if (manualDetail?.id === model.id) setManualDetail(prev => prev ? { ...prev, status: row.status, penetapan_dasar: null, penetapan_tanggal: null } : null);
+      alert(`✅ Proses penetapan dibatalkan. Status kembali ke: ${statusLabel(row.status)}.`);
+    } catch { alert('❌ Gagal membatalkan penetapan.'); }
   };
 
   const submitPenetapan = async () => {
@@ -514,7 +637,7 @@ export default function BPMNDashboardPage() {
         {model.status === 'rejected' && <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '', mode: 'edit' }); }} className="px-3 py-2 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all">Edit Revisi</button>}
       </>)}
       {model.status === 'penetapan' && currentUser?.role === 'admin' && (
-        <button onClick={(e) => { e.stopPropagation(); handleDitetapkan(model); }} className="px-3 py-2 bg-violet-100 hover:bg-violet-600 hover:text-white text-violet-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><Landmark className="w-4 h-4" /> Ditetapkan</button>
+        <><button onClick={(e) => { e.stopPropagation(); handleDitetapkan(model); }} className="px-3 py-2 bg-violet-100 hover:bg-violet-600 hover:text-white text-violet-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><Landmark className="w-4 h-4" /> Ditetapkan</button><button onClick={(e) => { e.stopPropagation(); handleBatalPenetapan(model); }} title="Batalkan proses penetapan (kembali ke tahap sebelumnya)" className="px-3 py-2 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><RotateCcw className="w-4 h-4" /> Batalkan</button></>
       )}
       {model.status === 'approved' && currentUser?.role === 'admin' && (
         <button onClick={(e) => { e.stopPropagation(); batalkanPenetapan(model); }} className="px-3 py-2 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><XCircle className="w-4 h-4" /> Batalkan Penetapan</button>
@@ -522,7 +645,7 @@ export default function BPMNDashboardPage() {
       {model.is_manual ? (
         <button onClick={(e) => { e.stopPropagation(); setManualDetail(model); }} className="px-3 py-2 text-blue-600 hover:bg-blue-50 font-bold text-xs rounded-lg border border-transparent hover:border-blue-200 flex items-center gap-1"><FileText className="w-4 h-4" /> Lihat Dokumen</button>
       ) : (
-        <button onClick={(e) => { e.stopPropagation(); router.push(`/bpmn/studio?id=${model.id}${['approved', 'penetapan'].includes(model.status || '') ? '&mode=view' : ''}`); }} className="px-3 py-2 text-blue-600 hover:bg-blue-50 font-bold text-xs rounded-lg border border-transparent hover:border-blue-200 flex items-center gap-1"><Edit className="w-4 h-4" /> Buka</button>
+        <button onClick={(e) => { e.stopPropagation(); if (['approved', 'penetapan'].includes(model.status || '')) { router.push(`/bpmn/studio?id=${model.id}&mode=view`); } else { openForEdit(model); } }} className="px-3 py-2 text-blue-600 hover:bg-blue-50 font-bold text-xs rounded-lg border border-transparent hover:border-blue-200 flex items-center gap-1"><Edit className="w-4 h-4" /> Buka</button>
       )}
       {currentUser?.role === 'admin' && (
         <button onClick={(e) => { e.stopPropagation(); deleteModel(model.id); }} className={`p-2 rounded-lg transition-colors hover:text-red-600 hover:bg-red-50 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} title="Hapus Dokumen"><Trash2 className="w-4 h-4" /></button>
@@ -534,6 +657,41 @@ export default function BPMNDashboardPage() {
 
   return (
     <>
+
+      {/* Peringatan dokumen sedang diedit */}
+      {editWarning && (
+        <div className="fixed inset-0 z-500 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className={`rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl ${isDarkMode ? 'bg-slate-800 text-slate-100' : 'bg-white text-slate-800'}`}>
+            <div className="flex flex-col gap-4">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-full bg-orange-100 flex items-center justify-center shrink-0">
+                  <AlertCircle className="w-5 h-5 text-orange-600" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base">Dokumen Sedang Diedit</h3>
+                  <p className={`text-sm mt-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                    <span className="font-semibold text-orange-600">{editWarning.editorName}</span> sedang mengedit dokumen ini. Hubungi rekan/tim Anda yang sedang mengerjakan dokumen ini untuk berkoordinasi sebelum melanjutkan.
+                  </p>
+                </div>
+              </div>
+              <div className="flex flex-col gap-2">
+                <button
+                  onClick={() => { setEditWarning(null); router.push(`/bpmn/studio?id=${editWarning.model.id}&mode=view`); }}
+                  className={`w-full py-2.5 rounded-xl text-sm font-medium border transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}
+                >
+                  Buka Mode Lihat (Aman)
+                </button>
+                <button
+                  onClick={() => setEditWarning(null)}
+                  className={`w-full py-2 text-xs font-medium transition-colors ${isDarkMode ? 'text-slate-500 hover:text-slate-300' : 'text-slate-400 hover:text-slate-600'}`}
+                >
+                  Batal
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* MODAL PANDUAN BPMN */}
       {showManualDoc && currentUser && (
@@ -802,9 +960,15 @@ export default function BPMNDashboardPage() {
                   <p className={`text-xs truncate max-w-55 sm:max-w-xs font-mono ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{previewModel.process_key || '—'}</p>
                 </div>
               </div>
-              <button onClick={() => setPreviewModel(null)} className={`p-2.5 rounded-xl transition-colors shrink-0 ml-2 ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-400'}`}>
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center shrink-0 ml-2">
+                <button onClick={() => setShowHistoryFor(previewModel)} title="Riwayat / log aktivitas dokumen (termasuk catatan review terdahulu)"
+                  className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center gap-1.5 mr-1 ${isDarkMode ? 'border-slate-700 text-indigo-400 hover:bg-indigo-900/30' : 'border-slate-200 text-indigo-600 hover:bg-indigo-50'}`}>
+                  <HistoryIcon className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Riwayat</span>
+                </button>
+                <button onClick={() => setPreviewModel(null)} className={`p-2.5 rounded-xl transition-colors ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-400'}`}>
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Body scroll */}
@@ -1051,6 +1215,14 @@ export default function BPMNDashboardPage() {
                           {model.process_key && <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${isDarkMode ? 'text-slate-400 bg-slate-800 border-slate-700' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>{model.process_key}</span>}
                           <span className={`text-[10px] flex items-center gap-1 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}><Calendar className="w-3 h-3" />{new Date(model.updated_at).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' })}</span>
                         </div>
+                        {editingMap[model.id] && (
+                          <div className="mt-1.5">
+                            <span className="inline-flex items-center gap-1.5 text-[10px] font-bold px-2 py-1 rounded-full bg-orange-100 text-orange-700 border border-orange-200">
+                              <span className="w-1.5 h-1.5 rounded-full bg-orange-500 animate-pulse shrink-0" />
+                              Sedang diedit oleh {editingMap[model.id]}
+                            </span>
+                          </div>
+                        )}
                       </td>
                       <td className="px-4 sm:px-6 py-3.5">
                         <p className={`font-semibold text-xs sm:text-sm ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{model.unit_l1 || '—'}</p>
@@ -1118,6 +1290,7 @@ export default function BPMNDashboardPage() {
                   <option value="approved">Status: Ditetapkan</option>
                 </select>
               </div>
+              <select value={sortBy} onChange={e => setSortBy(e.target.value as typeof sortBy)} title="Urutkan daftar dokumen" className={`w-full sm:w-48 px-3 py-2.5 border rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}><option value="updated">Urut: Baru Diperbarui</option><option value="created">Urut: Terbaru Dibuat</option><option value="oldest">Urut: Terlama</option><option value="title">Urut: Judul (A–Z)</option></select>
               <div className="relative w-full sm:flex-1 sm:min-w-48">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Search className={`h-4 w-4 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} /></div>
                 <input type="text" placeholder="Cari judul atau kode..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className={`w-full pl-10 pr-4 py-2.5 border rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white placeholder:text-slate-500' : 'bg-white border-slate-300 text-slate-900'}`} />
@@ -1293,7 +1466,7 @@ export default function BPMNDashboardPage() {
                           )}
                           {model.status !== 'usulan' && (<>
                           <button
-                            onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else { router.push(`/bpmn/studio?id=${model.id}`); } }}
+                            onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else { openForEdit(model); } }}
                             className="px-3 py-2.5 text-blue-600 hover:bg-blue-50 font-bold text-xs rounded-lg transition-colors flex items-center gap-1 border border-transparent hover:border-blue-200"
                           >
                             {model.is_manual ? <><FileText className="w-4 h-4" /> Lihat Dokumen</> : <><Edit className="w-4 h-4" /> Buka</>}
@@ -1322,7 +1495,7 @@ export default function BPMNDashboardPage() {
                             </div>
                           )}
                           {model.status === 'penetapan' && currentUser.role === 'admin' && (
-                            <button onClick={(e) => { e.stopPropagation(); handleDitetapkan(model); }} className="ml-2 px-3 py-2.5 bg-violet-100 hover:bg-violet-600 hover:text-white text-violet-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm flex items-center gap-1.5"><Landmark className="w-4 h-4" /> Ditetapkan</button>
+                            <><button onClick={(e) => { e.stopPropagation(); handleDitetapkan(model); }} className="ml-2 px-3 py-2.5 bg-violet-100 hover:bg-violet-600 hover:text-white text-violet-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm flex items-center gap-1.5"><Landmark className="w-4 h-4" /> Ditetapkan</button><button onClick={(e) => { e.stopPropagation(); handleBatalPenetapan(model); }} title="Batalkan proses penetapan (kembali ke tahap sebelumnya)" className="ml-2 px-3 py-2.5 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm flex items-center gap-1.5"><RotateCcw className="w-4 h-4" /> Batalkan</button></>
                           )}
                           {model.status === 'penetapan' && currentUser.role !== 'admin' && (
                             <span className="ml-2 px-2.5 py-1.5 text-[11px] font-bold text-violet-700 bg-violet-50 rounded-lg border border-violet-200">Menunggu penetapan menteri</span>
@@ -1411,7 +1584,7 @@ export default function BPMNDashboardPage() {
                         </>
                       )}
                       {model.status !== 'usulan' && (<>
-                      <button onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else { router.push(`/bpmn/studio?id=${model.id}`); } }} className="px-2.5 py-2.5 text-blue-600 bg-blue-50 font-bold text-xs rounded-lg flex items-center gap-1">{model.is_manual ? <><FileText className="w-3 h-3" /> Lihat</> : <><Edit className="w-3 h-3" /> Buka</>}</button>
+                      <button onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else { openForEdit(model); } }} className="px-2.5 py-2.5 text-blue-600 bg-blue-50 font-bold text-xs rounded-lg flex items-center gap-1">{model.is_manual ? <><FileText className="w-3 h-3" /> Lihat</> : <><Edit className="w-3 h-3" /> Buka</>}</button>
                       {currentUser.role === 'admin' && ['pending', 'draft', 'rejected'].includes(model.status || 'draft') && (
                         <>
                           <button onClick={(e) => { e.stopPropagation(); handleApprove(model); }} className="px-2.5 py-2.5 bg-emerald-100 text-emerald-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Setujui"><CheckCircle className="w-3.5 h-3.5" /></button>
@@ -1420,7 +1593,7 @@ export default function BPMNDashboardPage() {
                         </>
                       )}
                       {model.status === 'penetapan' && currentUser.role === 'admin' && (
-                        <button onClick={(e) => { e.stopPropagation(); handleDitetapkan(model); }} className="px-2.5 py-2.5 bg-violet-100 text-violet-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Ditetapkan"><Landmark className="w-3.5 h-3.5" /></button>
+                        <><button onClick={(e) => { e.stopPropagation(); handleDitetapkan(model); }} className="px-2.5 py-2.5 bg-violet-100 text-violet-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Ditetapkan"><Landmark className="w-3.5 h-3.5" /></button><button onClick={(e) => { e.stopPropagation(); handleBatalPenetapan(model); }} className="px-2.5 py-2.5 bg-amber-100 text-amber-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Batalkan proses penetapan"><RotateCcw className="w-3.5 h-3.5" /></button></>
                       )}
                       {model.status === 'penetapan' && currentUser.role !== 'admin' && (
                         <span className="px-2.5 py-2 text-[10px] font-bold text-violet-700 bg-violet-50 rounded-lg border border-violet-200 self-center">Penetapan</span>
@@ -1469,6 +1642,11 @@ export default function BPMNDashboardPage() {
         </div>
         )}
       </div>
+
+      {/* MODAL RIWAYAT DOKUMEN */}
+      {showHistoryFor && (
+        <DocHistoryModal kind="bpmn" modelId={showHistoryFor.id} title={showHistoryFor.process_title} token={token} isDarkMode={isDarkMode} onClose={() => setShowHistoryFor(null)} />
+      )}
 
       {/* MODAL PENETAPAN PROSES BISNIS */}
       {penetapanModal.isOpen && penetapanModal.model && (

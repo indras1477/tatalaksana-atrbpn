@@ -72,10 +72,19 @@ class PoolGroupRenderer extends BaseRenderer {
   }
 
   // Pool terkecil yang membungkus (secara geometri) elemen ini; null bila elemen
-  // adalah Pool (tidak dibungkus Group lain).
+  // adalah Pool. Hanya mempertimbangkan Group dalam FLOW-CONTAINER (proses/sub-proses
+  // non-Group terdekat) yang SAMA — registry memuat semua plane dengan koordinat yang
+  // tumpang-tindih; sub-proses expanded berbagi root dgn kanvas utama, jadi pool di
+  // sub-proses harus dibedakan lewat flow-container-nya, bukan sekadar root/geometri.
   private _containerPool(element: El): El | null {
     const reg = this._elementRegistry;
     if (element.width == null || element.x == null) return null;
+    const flowContainer = (el: { parent?: { type?: string } } | undefined): unknown => {
+      let t = el?.parent as { type?: string; parent?: unknown } | undefined;
+      while (t && t.type === 'bpmn:Group') t = t.parent as { type?: string; parent?: unknown };
+      return t || null;
+    };
+    const elFC = flowContainer(element as unknown as { parent?: { type?: string } });
     const cx = element.x + element.width / 2;
     const cy = element.y + element.height / 2;
     const area = element.width * element.height;
@@ -84,6 +93,7 @@ class PoolGroupRenderer extends BaseRenderer {
     reg.forEach((other: El) => {
       if (other === element || !is(other, 'bpmn:Group')) return;
       if (other.width == null || other.x == null) return;
+      if (flowContainer(other as unknown as { parent?: { type?: string } }) !== elFC) return;
       const oa = other.width * other.height;
       if (oa <= area) return;
       if (cx > other.x && cx < other.x + other.width && cy > other.y && cy < other.y + other.height) {

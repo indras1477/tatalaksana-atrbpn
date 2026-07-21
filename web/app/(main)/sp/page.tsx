@@ -45,6 +45,11 @@ export default function SPPage() {
   const [listTab, setListTab] = useState<'usulan' | 'penyusunan' | 'terbit'>('terbit');
   const [rekapDrill, setRekapDrill] = useState<{ l1: string | null; l2: string | null }>({ l1: null, l2: null });
   const [searchQuery, setSearchQuery] = useState('');
+  // Dari klik notifikasi: /halaman?q=<judul> → langsung terisi di pencarian.
+  useEffect(() => {
+    const q = new URLSearchParams(window.location.search).get('q');
+    if (q) setSearchQuery(q);
+  }, []);
   const [showManualDoc, setShowManualDoc] = useState(false);
   const [showImport, setShowImport] = useState(false);
   const [isSuperadmin, setIsSuperadmin] = useState(false);

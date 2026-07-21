@@ -72,7 +72,7 @@ export default function LoginPage() {
       localStorage.setItem('user', JSON.stringify(data.user));
       localStorage.setItem('expiresIn', String(data.expiresIn || 120));
 
-      const maxAge = rememberMe ? 120 * 60 : 120 * 60;
+      const maxAge = rememberMe ? 120 * 3600 : 8 * 3600;
       document.cookie = `token=${data.token}; path=/; max-age=${maxAge}`;
 
       window.location.replace(window.location.origin + '/e-sop-atrbpn/');
@@ -198,7 +198,7 @@ export default function LoginPage() {
             rel="noopener noreferrer"
             className="text-blue-500 hover:underline font-medium"
           >
-            Ferdiansyah
+            Nanda Ferdiansyah
           </a>{' '}
           &copy; 2025–{new Date().getFullYear()}
         </p>

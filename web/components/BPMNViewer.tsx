@@ -85,8 +85,14 @@ function repairBpmnXml(xml: string): string {
   return new XMLSerializer().serializeToString(doc);
 }
 
+export type BpmnSubSvg = { id: string; name: string; svg: string; depth: number; path: string[] };
+export type BpmnViewerExport = () => Promise<{ svg: string; subSvgs: BpmnSubSvg[] }>;
+
 interface BPMNViewerProps {
   xml?: string;
+  // Daftarkan fungsi ekspor (SVG proses utama + tiap plane sub-proses) agar halaman
+  // studio bisa mengunduh PDF/SVG saat mode baca — sama seperti dari editor.
+  registerExportApi?: (fn: BpmnViewerExport) => void;
 }
 
 interface BreadcrumbItem {
@@ -111,7 +117,7 @@ type BpmnElementRegistry = {
   filter: (fn: (el: { type?: string; parent?: { id?: string } }) => boolean) => unknown[];
 };
 
-export default function BPMNViewer({ xml }: BPMNViewerProps) {
+export default function BPMNViewer({ xml, registerExportApi }: BPMNViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<InstanceType<typeof NavigatedViewer> | null>(null);
   const navStackRef = useRef<BreadcrumbItem[]>([]);
@@ -206,6 +212,54 @@ export default function BPMNViewer({ xml }: BPMNViewerProps) {
         };
         navStackRef.current = [rootItem];
         setViewerState({ breadcrumbs: [rootItem], isLoading: false, isEmpty: false });
+
+        // Ekspor SVG on-demand: proses utama + tiap plane sub-proses (berjenjang),
+        // dengan penamaan jalur breadcrumb. Meniru handleExport di BPMNModeler agar
+        // unduh PDF/SVG di mode baca sama lengkapnya dengan dari editor.
+        if (registerExportApi) {
+          type XRoot = { id: string; parent?: unknown; children?: unknown[]; businessObject?: { name?: string } };
+          const reg = viewer.get('elementRegistry') as unknown as {
+            filter: (fn: (el: XRoot) => boolean) => XRoot[];
+            get: (id: string) => { parent?: { id?: string } } | undefined;
+          };
+          const svgViewer = viewer as unknown as { saveSVG: () => Promise<{ svg: string }> };
+          registerExportApi(async () => {
+            const originalRoot = canvas.getRootElement() as unknown as XRoot;
+            const roots = reg.filter((el) => !el.parent && !!el.id);
+            const mainRoot = roots.find((r) => !String(r.id).endsWith('_plane')) || originalRoot;
+            const subRoots = roots.filter((r) => String(r.id).endsWith('_plane') && (r.children || []).length > 0);
+            const planeById = new Map<string, XRoot>();
+            for (const p of subRoots) planeById.set(String(p.id), p);
+            const nameOfPlane = (p: XRoot) => p.businessObject?.name || String(p.id).replace(/_plane$/, '');
+            const parentPlaneId = (p: XRoot): string | null => {
+              const el = reg.get(String(p.id).replace(/_plane$/, ''));
+              const parentId = el?.parent?.id;
+              return parentId && parentId.endsWith('_plane') && planeById.has(parentId) ? parentId : null;
+            };
+            const childrenOf = new Map<string | null, XRoot[]>();
+            for (const p of subRoots) { const key = parentPlaneId(p); const arr = childrenOf.get(key) || []; arr.push(p); childrenOf.set(key, arr); }
+            const ordered: { plane: XRoot; depth: number; path: string[] }[] = [];
+            const walk = (key: string | null, depth: number, prefix: string[]) => {
+              for (const p of (childrenOf.get(key) || [])) { const path = [...prefix, nameOfPlane(p)]; ordered.push({ plane: p, depth, path }); walk(String(p.id), depth + 1, path); }
+            };
+            walk(null, 0, []);
+            let svg = '';
+            const subSvgs: BpmnSubSvg[] = [];
+            try {
+              canvas.setRootElement(mainRoot as unknown as object);
+              svg = (await svgViewer.saveSVG()).svg;
+              for (const { plane, depth, path } of ordered) {
+                canvas.setRootElement(plane as unknown as object);
+                const { svg: s } = await svgViewer.saveSVG();
+                subSvgs.push({ id: String(plane.id), name: nameOfPlane(plane), svg: s, depth, path });
+              }
+            } finally {
+              canvas.setRootElement(originalRoot as unknown as object);
+              try { canvas.zoom('fit-viewport'); } catch { /* abaikan */ }
+            }
+            return { svg, subSvgs };
+          });
+        }
 
         // root.set fires when canvas root changes (drill-down ▼ button or our dblclick)
         // We guard: only treat '_plane' entries as forward navigation (SubProcess planes).

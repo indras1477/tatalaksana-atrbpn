@@ -4,6 +4,7 @@ import BpmnModeler from 'bpmn-js/lib/Modeler';
 import NavigatedViewer from 'bpmn-js/lib/NavigatedViewer';
 import { Undo2, Redo2, ChevronRight, Save, LayoutGrid, X, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
 import RuleProvider from 'diagram-js/lib/features/rules/RuleProvider';
+import BpmnRules from 'bpmn-js/lib/features/rules/BpmnRules';
 import CommandInterceptor from 'diagram-js/lib/command/CommandInterceptor';
 import OrderingProvider from 'diagram-js/lib/features/ordering/OrderingProvider';
 import poolGroupRendererModule from './bpmnPoolGroupRenderer';
@@ -270,9 +271,21 @@ class CustomContextPadProvider {
   }
 
   // Pool terkecil yang membungkus (geometri) elemen ini; null bila elemen adalah Pool.
+  // WAJIB satu FLOW-CONTAINER yang sama (proses/sub-proses non-Group terdekat):
+  // registry memuat elemen kanvas utama + tiap sub-proses dengan koordinat yang bisa
+  // tumpang-tindih. Sub-proses EXPANDED berbagi root yang sama dengan kanvas utama,
+  // jadi guard "root sama" saja tak cukup — pool di dalam sub-proses masih dikira Lane
+  // → tombol "Tambah Lane" hilang (bug laporan pengguna). Flow-container membedakan
+  // pool-di-subproses (container = SubProcess) dari pool-kanvas (container = Process).
   private _containerPool(element: BpmnShapeElement): BpmnShapeElement | null {
     const reg = this._elementRegistry;
     if (element.width == null || element.x == null) return null;
+    const flowContainer = (el: { parent?: { type?: string } } | undefined): unknown => {
+      let t = el?.parent as { type?: string; parent?: unknown } | undefined;
+      while (t && t.type === 'bpmn:Group') t = t.parent as { type?: string; parent?: unknown };
+      return t || null;
+    };
+    const elFC = flowContainer(element as unknown as { parent?: { type?: string } });
     const cx = element.x + element.width / 2;
     const cy = element.y + element.height / 2;
     const area = element.width * element.height;
@@ -281,6 +294,7 @@ class CustomContextPadProvider {
     reg.forEach((other) => {
       if (other === element || other.type !== 'bpmn:Group') return;
       if (other.width == null || other.x == null) return;
+      if (flowContainer(other as unknown as { parent?: { type?: string } }) !== elFC) return;
       const oa = other.width * other.height;
       if (oa <= area) return;
       if (cx > other.x && cx < other.x + other.width && cy > other.y && cy < other.y + other.height) {
@@ -466,6 +480,37 @@ class CustomContextPadProvider {
 }
 
 // === 3. CUSTOM RULES ===
+// --- Helper koneksi antar pool (dipakai CustomRules & CrossPoolBpmnRules) ---
+type ConnEl = { type?: string; parent?: ConnEl } | undefined;
+const poolOfEl = (el: ConnEl): ConnEl => {
+  let t = el;
+  while (t && t.type !== 'bpmn:Participant') t = t.parent;
+  return t;
+};
+const isFlowNodeEl = (el: ConnEl): boolean =>
+  !!el?.type && /Task|Gateway|Event|SubProcess|CallActivity/.test(el.type) && !el.type.includes('label');
+const isCrossPoolFlowNodes = (source: ConnEl, target: ConnEl): boolean => {
+  if (!isFlowNodeEl(source) || !isFlowNodeEl(target)) return false;
+  const sp = poolOfEl(source), tp = poolOfEl(target);
+  return !!(sp && tp && sp !== tp);
+};
+
+// Override service `bpmnRules` bawaan: longgarkan canConnectMessageFlow agar
+// Gateway (decision) dkk boleh jadi ujung message flow antar pool. PENTING karena
+// ReplaceConnectionBehavior bpmn-js memanggil bpmnRules.canConnectMessageFlow()
+// LANGSUNG saat elemen digeser/reconnect — bila false, koneksi DIHAPUS diam-diam
+// (inilah sebab "panah hilang saat elemen digeser"). Registry rule di CustomRules
+// hanya menangani pembuatan; method service ini yang menjaga koneksi tetap hidup.
+class CrossPoolBpmnRules extends (BpmnRules as unknown as { new(eb: BpmnEventBus): object }) {
+  static $inject = ['eventBus'];
+  canConnectMessageFlow(source: ConnEl, target: ConnEl): boolean {
+    const base = (BpmnRules.prototype as unknown as { canConnectMessageFlow: (s: ConnEl, t: ConnEl) => boolean })
+      .canConnectMessageFlow.call(this, source, target);
+    if (base) return base;
+    return isCrossPoolFlowNodes(source, target);
+  }
+}
+
 class CustomRules extends (RuleProvider as unknown as { new(eb: BpmnEventBus): RuleProvider }) {
   static $inject = ['eventBus'];
 
@@ -505,6 +550,19 @@ class CustomRules extends (RuleProvider as unknown as { new(eb: BpmnEventBus): R
       allowDropOnGroup(context.target, context.shape ? [context.shape] : context.elements));
     this.addRule('elements.move', 1500, (context: { target?: { type?: string }; shapes?: { type?: string }[] }) =>
       allowDropOnGroup(context.target, context.shapes));
+
+    // Aturan bawaan bpmn-js (sesuai spek BPMN ketat) MENOLAK message flow dari/ke
+    // Gateway — panah antar-Pool hanya boleh Task/Event. Pengguna butuh decision di
+    // satu pool bisa ditarik panah putus-putus ke elemen pool lain. Izinkan: bila
+    // kedua ujung adalah flow node yang berada di Participant (pool) BERBEDA,
+    // jadikan koneksi bpmn:MessageFlow (putus-putus). Di dalam pool yang sama,
+    // aturan bawaan tetap berlaku (sequence flow solid). Pasangan aturan ini:
+    // CrossPoolBpmnRules (override service) menjaga koneksi tak dihapus saat digeser.
+    const allowCrossPool = (context: { source?: ConnEl; target?: ConnEl }): { type: string } | void => {
+      if (isCrossPoolFlowNodes(context.source, context.target)) return { type: 'bpmn:MessageFlow' };
+    };
+    this.addRule('connection.create', 1500, allowCrossPool);
+    this.addRule('connection.reconnect', 1500, allowCrossPool);
   }
 }
 
@@ -866,6 +924,9 @@ export interface BpmnCanvasApi {
   removeElement: (elementId: string) => boolean;
   // Impor XML BPMN 2.0 (mis. buka file .bpmn lokal) — MENGGANTI diagram saat ini.
   importXml: (xml: string) => Promise<boolean>;
+  // Ekspor diagram diam-diam (XML + SVG proses utama) untuk AUTO-SAVE, tanpa membuka
+  // dialog simpan atau menyentuh state ekspor. null bila kanvas belum siap/gagal.
+  exportSilent: () => Promise<{ xml: string; svg: string } | null>;
 }
 
 export default function BPMNModelerComponent({ xml, projectName, onSave, isViewOnly = false, onDirtyChange, onSelectionChange, registerSaveHandler, registerCanvasApi, toolbarExtra, onBeforeDelete }: { xml?: string, projectName?: string, onSave?: (xml: string, svg: string, subSvgs?: { id: string; name: string; svg: string; depth?: number; path?: string[] }[]) => void, isViewOnly?: boolean, onDirtyChange?: (isDirty: boolean) => void, onSelectionChange?: (el: BpmnSelectedElement | null) => void, registerSaveHandler?: (fn: () => Promise<void>) => void, registerCanvasApi?: (api: BpmnCanvasApi) => void, toolbarExtra?: React.ReactNode, onBeforeDelete?: (els: BpmnSelectedElement[]) => boolean }) {
@@ -912,12 +973,17 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
               customContextPadProvider: ['type', CustomContextPadProvider],
               groupDropBehavior: ['type', GroupDropBehavior],
               colorPickerProvider: ['type', ColorPickerProvider],
-              groupOrderingProvider: ['type', GroupOrderingProvider]
+              groupOrderingProvider: ['type', GroupOrderingProvider],
+              // Ganti service bpmnRules bawaan → message flow dari/ke Gateway antar
+              // pool tidak dihapus ReplaceConnectionBehavior saat elemen digeser.
+              bpmnRules: ['type', CrossPoolBpmnRules]
             }
           ]
     });
 
     modelerRef.current = modeler;
+    // Hook debug/E2E: akses instance modeler dari console (tidak dipakai kode produksi).
+    if (typeof window !== 'undefined') (window as unknown as { __bpmnModeler?: unknown }).__bpmnModeler = modeler;
     navStackRef.current = [];
     let isMounted = true;
 
@@ -1434,6 +1500,30 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
           onDirtyChange?.(true);
           return true;
         } catch (e) { console.error('importXml gagal:', e); return false; }
+      },
+      exportSilent: async () => {
+        const modeler = modelerRef.current as BpmnModeler | null;
+        if (!modeler) return null;
+        try {
+          const { xml: savedXml } = await modeler.saveXML({ format: true });
+          if (!savedXml) return null;
+          // SVG proses UTAMA (meski pengguna sedang drill-in ke sub-proses):
+          // set root utama sementara, ekspor, lalu kembalikan root semula.
+          const canvas = modeler.get('canvas') as BpmnCanvas;
+          const registry = modeler.get('elementRegistry') as BpmnElementRegistry;
+          const originalRoot = canvas.getRootElement();
+          type RootEl = BpmnShapeElement & { parent?: unknown };
+          const roots = registry.filter((el) => !(el as RootEl).parent && !!el.id) as unknown as RootEl[];
+          const mainRoot = roots.find(r => !String(r.id).endsWith('_plane')) || (originalRoot as unknown as RootEl);
+          let svg = '';
+          try {
+            canvas.setRootElement(mainRoot as unknown as BpmnElement);
+            svg = (await modeler.saveSVG()).svg;
+          } finally {
+            canvas.setRootElement(originalRoot);
+          }
+          return { xml: repairBpmnXml(savedXml), svg };
+        } catch (e) { console.error('exportSilent gagal:', e); return null; }
       },
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps

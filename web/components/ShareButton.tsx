@@ -12,7 +12,7 @@ export default function ShareButton({ kind, modelId, token, isDarkMode, variant 
   modelId: number;
   token: string;
   isDarkMode?: boolean;
-  variant?: 'icon' | 'button';
+  variant?: 'icon' | 'button' | 'solid';
 }) {
   const [open, setOpen] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -42,7 +42,12 @@ export default function ShareButton({ kind, modelId, token, isDarkMode, variant 
 
   return (
     <>
-      {variant === 'icon' ? (
+      {variant === 'solid' ? (
+        <button onClick={handleShare} title="Bagikan (tautan view-only, tanpa perlu login)"
+          className="px-3 py-1.5 bg-teal-600 hover:bg-teal-700 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95">
+          <Share2 size={16} /> Bagikan
+        </button>
+      ) : variant === 'icon' ? (
         <button onClick={handleShare} title="Bagikan (tautan view-only)"
           className={`p-2.5 rounded-lg transition-colors hover:text-teal-600 hover:bg-teal-50 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
           <Share2 className="w-4 h-4" />

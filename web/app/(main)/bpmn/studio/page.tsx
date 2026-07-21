@@ -4,13 +4,17 @@ import dynamic from 'next/dynamic';
 import React, { useState, useEffect, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
+import { useEditingPresence } from '@/lib/useEditingPresence';
+import { getClientId } from '@/lib/clientId';
 import SearchableSelect from '@/components/SearchableSelect';
 import {
   ArrowLeft, GitBranch, X, Image as ImageIcon, FileText,
-  AlertCircle, MessageSquare, Pencil, Lock, Send, FolderOpen, FileCode
+  AlertCircle, MessageSquare, Pencil, Lock, Send, FolderOpen, FileCode, Download
 } from 'lucide-react';
 import { HIERARKI_UNIT } from '@/lib/constants';
 import type { BpmnCanvasApi } from '@/components/BPMNModeler';
+import type { BpmnViewerExport } from '@/components/BPMNViewer';
+import ShareButton from '@/components/ShareButton';
 
 const Modeler = dynamic(() => import('@/components/BPMNModeler'), {
   ssr: false,
@@ -88,13 +92,21 @@ function BPMNStudioContent() {
   const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
   const [showUnsavedModal, setShowUnsavedModal] = useState(false);
   const [isEditingDocInfo, setIsEditingDocInfo] = useState(false);
+  const [editConflict, setEditConflict] = useState<{username: string; nama_lengkap: string}[]>([]);
   const { isDarkMode } = useAppContext();
+
+  // Lacak sesi editing agar user lain tahu dokumen ini sedang diedit
+  // (tidak aktif di mode lihat agar tidak memblokir editor lain)
+  useEditingPresence('bpmn', isViewOnly ? null : (currentModel?.id ?? null), token);
 
   const [currentXml, setCurrentXml] = useState<string>("");
   const [currentSvg, setCurrentSvg] = useState<string>("");
   // API kanvas imperatif (impor .bpmn) + input file tersembunyi utk "Buka .bpmn".
   const canvasApiRef = useRef<BpmnCanvasApi | null>(null);
   const bpmnFileInputRef = useRef<HTMLInputElement | null>(null);
+  // Ekspor SVG dari VIEWER (mode baca) — didaftarkan oleh <Viewer> saat siap.
+  const viewerExportRef = useRef<BpmnViewerExport | null>(null);
+  const [preparingExport, setPreparingExport] = useState(false);
   // SVG tiap plane Sub-Proses yang sudah punya isi — untuk pilihan "sertakan sub-proses" saat unduh.
   const [subPlaneSvgs, setSubPlaneSvgs] = useState<{ id: string; name: string; svg: string; depth?: number; path?: string[] }[]>([]);
   const [exportChecked, setExportChecked] = useState<Record<string, boolean>>({});
@@ -107,6 +119,15 @@ function BPMNStudioContent() {
   // Tracks the ID of a document just saved for the first time so we can skip
   // the redundant re-fetch triggered by router.replace('/bpmn/studio?id=...')
   const justSavedIdRef = useRef<number | null>(null);
+
+  // AUTO-SAVE: patokan XML terakhir yang tersimpan + jam simpan terakhir.
+  const lastSavedXmlRef = useRef<string | null>(null);
+  const [autoSavedAt, setAutoSavedAt] = useState<string | null>(null);
+  // Ref cermin agar timer auto-save membaca nilai terbaru tanpa memicu ulang interval.
+  const currentModelRef = useRef(currentModel); currentModelRef.current = currentModel;
+  const dirtyRef = useRef(hasUnsavedChanges); dirtyRef.current = hasUnsavedChanges;
+  const isViewOnlyRef = useRef(isViewOnly); isViewOnlyRef.current = isViewOnly;
+  const tokenRef = useRef(token); tokenRef.current = token;
 
   const [unitTree, setUnitTree] = useState<{id: string; nama: string; children: {id: string; nama: string; children: unknown[]}[]}[]>([]);
   const l1Options = unitTree.length ? unitTree.map(n => n.nama) : Object.keys(HIERARKI_UNIT);
@@ -173,8 +194,20 @@ function BPMNStudioContent() {
             klasifikasiProses: data.klasifikasi_proses || '',
           });
           setHasUnsavedChanges(false);
-          // Usulan (baru dilanjutkan) → tampilkan modal info dulu sebelum menyusun.
           if (data.status === 'usulan') setShowConfigModal(true);
+          // Cek apakah perangkat lain sedang mengedit dokumen ini (termasuk akun sama beda perangkat).
+          // Mode lihat tidak perlu peringatan — pembaca tidak menimbulkan konflik.
+          if (mode !== 'view' && !['penetapan', 'approved'].includes(data.status))
+          fetch(`/e-sop-atrbpn/api/editing-sessions/bpmn`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
+            .then(r => r.ok ? r.json() : [])
+            .then((sessions: {model_id: number; user_id: number; client_id: string; username: string; nama_lengkap: string}[]) => {
+              const me = JSON.parse(localStorage.getItem('user') || '{}');
+              const others = sessions
+                .filter(s => s.model_id === data.id && s.client_id !== getClientId())
+                .map(s => s.user_id === me.id ? { ...s, nama_lengkap: `${s.nama_lengkap || s.username} (perangkat lain, akun sama)` } : s);
+              if (others.length) setEditConflict(others);
+            })
+            .catch(() => {});
         })
         .catch(err => {
           console.error(err);
@@ -248,8 +281,35 @@ function BPMNStudioContent() {
   const checkedSubPlanes = subPlaneSvgs.filter(s => exportChecked[s.id]);
   const slugName = (s: string) => s.trim().replace(/[^\w\s-]/g, '').replace(/\s+/g, '-') || 'Sub-Proses';
 
-  const handleDownloadSVG = async () => {
-    if (!currentSvg) return alert('Data SVG kosong.');
+  // Mode baca: minta SVG (utama + sub-proses) dari viewer, isi state ekspor, lalu
+  // buka pilihan sub-proses (bila ada) atau langsung unduh. Kembalikan datanya agar
+  // pemanggil bisa langsung mengunduh tanpa menunggu state (yang async).
+  const prepareViewExport = async (): Promise<{ svg: string; subs: typeof subPlaneSvgs } | null> => {
+    const api = viewerExportRef.current;
+    if (!api) { alert('Diagram belum siap. Coba lagi sebentar.'); return null; }
+    setPreparingExport(true);
+    try {
+      const { svg, subSvgs } = await api();
+      if (!svg) { alert('Data SVG kosong.'); return null; }
+      setCurrentSvg(svg);
+      setSubPlaneSvgs(subSvgs);
+      setExportChecked(Object.fromEntries(subSvgs.map(s => [s.id, true])));
+      return { svg, subs: subSvgs };
+    } catch (e) { console.error(e); alert('Gagal menyiapkan ekspor diagram.'); return null; }
+    finally { setPreparingExport(false); }
+  };
+
+  // Klik unduh di mode baca: siapkan SVG dulu, lalu pilih sub-proses / unduh langsung.
+  const handleViewDownload = async (kind: 'pdf' | 'svg') => {
+    const r = await prepareViewExport();
+    if (!r) return;
+    if (r.subs.length > 0) { setExportPick(kind); return; }
+    if (kind === 'pdf') await handleDownloadPDF(r.svg); else await handleDownloadSVG(r.svg);
+  };
+
+  const handleDownloadSVG = async (overrideSvg?: string) => {
+    const mainSvg = overrideSvg || currentSvg;
+    if (!mainSvg) return alert('Data SVG kosong.');
     const baseName = config.processKey || config.processTitle || 'BPMN';
     const downloadOne = (svg: string, filename: string) => {
       const blob = new Blob([svg], { type: 'image/svg+xml' });
@@ -257,7 +317,7 @@ function BPMNStudioContent() {
       const a = document.createElement('a'); a.href = url; a.download = filename; a.click();
       setTimeout(() => URL.revokeObjectURL(url), 5000);
     };
-    downloadOne(currentSvg, `${baseName}.svg`);
+    downloadOne(mainSvg, `${baseName}.svg`);
     for (const sub of checkedSubPlanes) {
       // Jeda kecil agar browser tidak menggabungkan/memblokir unduhan beruntun.
       await new Promise(r => setTimeout(r, 400));
@@ -297,12 +357,13 @@ function BPMNStudioContent() {
   // PDF VEKTOR: SVG dikirim ke server (Chrome headless) supaya teks tetap bisa
   // diseleksi/di-blok — bukan lagi raster PNG. Header rapi & diagram menempel di
   // bawah header (tidak lagi terpusat vertikal yang menyisakan jarak besar).
-  const handleDownloadPDF = async () => {
-    if (!currentSvg) return alert('Data SVG kosong.');
+  const handleDownloadPDF = async (overrideSvg?: string) => {
+    const mainSvg = overrideSvg || currentSvg;
+    if (!mainSvg) return alert('Data SVG kosong.');
     try {
       const title = config.processTitle || 'Dokumen BPMN';
       const pages = [
-        { svg: currentSvg, label: 'PROSES BISNIS', judul: title },
+        { svg: mainSvg, label: 'PROSES BISNIS', judul: title },
         ...checkedSubPlanes.map(s => {
           // depth 0 = sub-proses; depth ≥ 1 = sub-proses di dalam sub-proses (berjenjang).
           const level = (s.depth || 0) + 1;
@@ -383,6 +444,7 @@ function BPMNStudioContent() {
       setCurrentModel(savedBpmn);
       setShowSaveModal(false);
       setHasUnsavedChanges(false);
+      lastSavedXmlRef.current = modelData.bpmn_xml; // selaraskan patokan auto-save
       alert(`Sukses! Dokumen disimpan sebagai ${targetStatus.toUpperCase()}`);
 
       if (!documentId) {
@@ -431,11 +493,77 @@ function BPMNStudioContent() {
     }
   };
 
+  // AUTO-SAVE BPMN tiap 30 detik. Hanya berjalan setelah dokumen tersimpan pertama
+  // kali (currentModel.id ada) & bukan mode lihat. Menyimpan diagram diam-diam ke
+  // route /autosave (tanpa naikkan versi / ubah status). Bandingkan XML dengan patokan
+  // agar hanya menyimpan bila benar-benar ada perubahan.
+  useEffect(() => {
+    const timer = setInterval(async () => {
+      if (isViewOnlyRef.current) return;
+      const id = currentModelRef.current?.id;
+      if (!id) return;                 // dokumen belum pernah disimpan → belum auto-save
+      if (!dirtyRef.current) return;    // tak ada perubahan sejak simpan terakhir
+      const api = canvasApiRef.current;
+      if (!api?.exportSilent) return;
+      try {
+        const data = await api.exportSilent();
+        if (!data || !data.xml) return;
+        if (data.xml === lastSavedXmlRef.current) return; // identik → lewati
+        const res = await apiFetch(`/bpmn/models/${id}/autosave`, tokenRef.current, {
+          method: 'PUT',
+          body: JSON.stringify({ bpmn_xml: data.xml, svg_xml: data.svg }),
+        });
+        if (!res.ok) return;
+        lastSavedXmlRef.current = data.xml;
+        setCurrentXml(data.xml);
+        setCurrentSvg(data.svg);
+        setAutoSavedAt(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }));
+      } catch { /* diamkan — coba lagi tick berikutnya */ }
+    }, 30000);
+    return () => clearInterval(timer);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   if (!token || !currentUser) return null;
 
   return (
     /* h-[calc(100vh-4rem)] = viewport minus shared header (h-16 = 4rem) */
     <div className={`flex flex-col h-[calc(100vh-4rem)] font-sans overflow-hidden ${isDarkMode ? 'bg-[#0B1121] text-slate-200' : 'bg-[#f3f4f6] text-slate-800'}`}>
+
+      {/* Peringatan konflik editing */}
+      {editConflict.length > 0 && (
+        <div className="absolute inset-0 z-300 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+          <div className={`rounded-2xl p-6 max-w-sm w-full mx-4 shadow-2xl ${isDarkMode ? 'bg-slate-800 text-slate-100' : 'bg-white text-slate-800'}`}>
+            <div className="flex flex-col gap-4">
+              <div className="flex items-start gap-3">
+                <div className="w-10 h-10 rounded-full bg-amber-100 flex items-center justify-center shrink-0">
+                  <AlertCircle className="w-5 h-5 text-amber-600" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-base">Dokumen Sedang Diedit</h3>
+                  <p className={`text-sm mt-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                    {editConflict.map(u => u.nama_lengkap || u.username).join(', ')} sedang mengedit dokumen ini. Hubungi rekan/tim Anda yang sedang mengerjakan dokumen ini untuk berkoordinasi sebelum melanjutkan.
+                  </p>
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => { setEditConflict([]); router.replace(`/bpmn/studio?id=${currentModel?.id}&mode=view`); }}
+                  className={`flex-1 py-2.5 rounded-xl text-sm font-medium border transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                >
+                  Buka Mode Lihat
+                </button>
+                <button
+                  onClick={() => { setEditConflict([]); router.push('/bpmn'); }}
+                  className="flex-1 py-2.5 rounded-xl text-sm font-medium bg-amber-500 text-white hover:bg-amber-600 transition-colors"
+                >
+                  Kembali ke Daftar
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Studio toolbar */}
       <div className="h-14 border-b flex items-center justify-between px-4 z-10 shrink-0 overflow-hidden" style={{ backgroundColor: isDarkMode ? '#151F32' : '#ffffff', borderColor: isDarkMode ? '#1e293b' : '#e5e7eb' }}>
@@ -444,6 +572,12 @@ function BPMNStudioContent() {
             <ArrowLeft className="w-4 h-4" /> Kembali
             {hasUnsavedChanges && <span className="w-2 h-2 rounded-full bg-orange-400" title="Ada perubahan belum disimpan" />}
           </button>
+          {autoSavedAt && !isViewOnly && (
+            <span className="hidden sm:flex items-center gap-1 text-[11px] font-semibold text-emerald-600 shrink-0" title="Dokumen disimpan otomatis secara berkala">
+              <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
+              Tersimpan otomatis {autoSavedAt}
+            </span>
+          )}
 
           <div className="h-6 w-px bg-slate-300 mx-2"></div>
 
@@ -489,13 +623,36 @@ function BPMNStudioContent() {
           )}
         </div>
 
+        {/* Mode baca: unduh PDF/SVG + Bagikan (view-only, tanpa perlu login) */}
+        {isViewOnly && currentModel?.id && (
+          <div className="flex items-center gap-2 shrink-0">
+            <button
+              onClick={() => handleViewDownload('pdf')}
+              disabled={preparingExport}
+              title="Unduh diagram sebagai PDF (F4)"
+              className={`py-2.5 px-3 rounded-lg text-sm font-bold flex items-center gap-2 border transition-colors disabled:opacity-60 ${isDarkMode ? 'border-red-800 text-red-300 hover:bg-red-900/30' : 'border-red-200 text-red-600 hover:bg-red-50'}`}
+            >
+              <FileText className="w-4 h-4" /> <span className="hidden sm:inline">PDF</span>
+            </button>
+            <button
+              onClick={() => handleViewDownload('svg')}
+              disabled={preparingExport}
+              title="Unduh diagram sebagai SVG"
+              className={`py-2.5 px-3 rounded-lg text-sm font-bold flex items-center gap-2 border transition-colors disabled:opacity-60 ${isDarkMode ? 'border-orange-800 text-orange-300 hover:bg-orange-900/30' : 'border-orange-200 text-orange-600 hover:bg-orange-50'}`}
+            >
+              {preparingExport ? <Download className="w-4 h-4 animate-pulse" /> : <ImageIcon className="w-4 h-4" />} <span className="hidden sm:inline">SVG</span>
+            </button>
+            <ShareButton kind="bpmn" modelId={currentModel.id} token={token} isDarkMode={isDarkMode} variant="button" />
+          </div>
+        )}
+
       </div>
 
       {/* Canvas area */}
       <div className="flex flex-1 overflow-hidden relative">
         <div className="flex-1 w-full h-full bg-white relative">
             {!isLoadingDocument && isViewOnly && currentModel && (
-                <Viewer xml={initialXml} />
+                <Viewer xml={initialXml} registerExportApi={(fn) => { viewerExportRef.current = fn; }} />
             )}
             {!isLoadingDocument && !isViewOnly && (currentModel || (config.processTitle && !documentId)) && (
                 <Modeler

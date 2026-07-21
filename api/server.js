@@ -44,7 +44,7 @@ const pool = new Pool({
 // ============ RATE LIMITING ============
 const loginLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: 10,
+  max: 50,
   message: { error: 'Terlalu banyak percobaan login. Coba lagi dalam 15 menit.' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -147,6 +147,7 @@ const initDatabase = async () => {
         token TEXT,
         expires_at TIMESTAMP,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         ip_address VARCHAR(50),
         user_agent TEXT
       );
@@ -215,6 +216,10 @@ const initDatabase = async () => {
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
 
+      /* Aktivitas terakhir sesi — sesi idle > batas idle-timeout dibersihkan otomatis
+         agar tidak memblokir slot login akun shared (maks 4 perangkat). */
+      ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+
       /* Tautan sub-process → peta turunan (untuk DB yang sudah ada). */
       ALTER TABLE process_map_models ADD COLUMN IF NOT EXISTS parent_element_id VARCHAR(100);
       /* auto_layout: TRUE = kanvas hasil generate sinkronisasi (boleh di-regenerate);
@@ -259,6 +264,22 @@ const initDatabase = async () => {
       ALTER TABLE sop_models ADD COLUMN IF NOT EXISTS tanggapan TEXT;
       ALTER TABLE sp_models ADD COLUMN IF NOT EXISTS catatan_at TIMESTAMP;
       ALTER TABLE sp_models ADD COLUMN IF NOT EXISTS tanggapan TEXT;
+
+      /* Notifikasi header: for_role 'admin' (admin+superadmin) atau 'user'
+         (dibatasi unit_l1 bila terisi). Terbaca dilacak via users.notif_seen_at. */
+      CREATE TABLE IF NOT EXISTS notifications (
+        id SERIAL PRIMARY KEY,
+        kind VARCHAR(10) NOT NULL,
+        model_id INTEGER,
+        judul TEXT,
+        event VARCHAR(30) NOT NULL,
+        pesan TEXT NOT NULL,
+        for_role VARCHAR(10) NOT NULL,
+        unit_l1 TEXT,
+        actor VARCHAR(100),
+        created_at TIMESTAMP DEFAULT NOW()
+      );
+      ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_seen_at TIMESTAMP;
 
       CREATE TABLE IF NOT EXISTS manual_files (
         id SERIAL PRIMARY KEY,
@@ -346,7 +367,7 @@ const initDatabase = async () => {
       );
     `);
 
-    // MIGRASI KOLOM UNIT KERJA KE TABEL USER
+    // MIGRASI KOLOM UNIT KERJA & PLAIN_PASSWORD KE TABEL USER
     await client.query(`
       DO $$
       BEGIN
@@ -355,6 +376,9 @@ const initDatabase = async () => {
         EXCEPTION WHEN duplicate_column THEN NULL; END;
         BEGIN
             ALTER TABLE users ADD COLUMN unit_l2 VARCHAR(255);
+        EXCEPTION WHEN duplicate_column THEN NULL; END;
+        BEGIN
+            ALTER TABLE users ADD COLUMN plain_password TEXT;
         EXCEPTION WHEN duplicate_column THEN NULL; END;
       END $$;
     `);
@@ -369,14 +393,14 @@ const initDatabase = async () => {
       END $$;
     `);
 
-    // MIGRASI: tambah UNIQUE constraint pada sessions.user_id agar ON CONFLICT (user_id) berfungsi
+    // MIGRASI: hapus UNIQUE constraint sessions.user_id (izinkan multi-sesi untuk role 'user', maks 4)
     await client.query(`
       DO $$
       BEGIN
-        IF NOT EXISTS (
+        IF EXISTS (
           SELECT 1 FROM pg_constraint WHERE conname = 'sessions_user_id_key'
         ) THEN
-          ALTER TABLE sessions ADD CONSTRAINT sessions_user_id_key UNIQUE (user_id);
+          ALTER TABLE sessions DROP CONSTRAINT sessions_user_id_key;
         END IF;
       END $$;
     `);
@@ -411,6 +435,60 @@ const initDatabase = async () => {
         uploaded_by INTEGER REFERENCES users(id),
         uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+    `);
+
+    // Riwayat/log aktivitas dokumen BPMN & SOP: tercatat di tiap transisi status.
+    // Catatan review Ortala TERSIMPAN PERMANEN di sini (kolom catatan di model
+    // dibersihkan saat kirim ulang — riwayat inilah pengingatnya).
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS doc_history (
+        id SERIAL PRIMARY KEY,
+        model_type VARCHAR(10) NOT NULL,
+        model_id INTEGER NOT NULL,
+        user_id INTEGER,
+        user_role VARCHAR(30),
+        unit VARCHAR(255),
+        action VARCHAR(30) NOT NULL,
+        detail TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS doc_history_model_idx ON doc_history (model_type, model_id);
+    `);
+
+    await client.query(`
+      CREATE TABLE IF NOT EXISTS editing_sessions (
+        model_type VARCHAR(10) NOT NULL,
+        model_id   INTEGER NOT NULL,
+        user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        client_id  TEXT NOT NULL,
+        started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        last_ping  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (model_type, model_id, client_id)
+      );
+    `);
+
+    // MIGRASI: presence per-PERANGKAT (client_id), bukan per-user — akun shared (1 akun
+    // dipakai ≤4 orang) harus tetap saling melihat "sedang diedit". Tabel lama (tanpa
+    // client_id) di-drop dan dibuat ulang; isinya ephemeral (heartbeat), aman dibuang.
+    await client.query(`
+      DO $$
+      BEGIN
+        IF NOT EXISTS (
+          SELECT 1 FROM information_schema.columns
+          WHERE table_name = 'editing_sessions' AND column_name = 'client_id'
+        ) THEN
+          DROP TABLE editing_sessions;
+          CREATE TABLE editing_sessions (
+            model_type VARCHAR(10) NOT NULL,
+            model_id   INTEGER NOT NULL,
+            user_id    INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+            client_id  TEXT NOT NULL,
+            started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            last_ping  TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            PRIMARY KEY (model_type, model_id, client_id)
+          );
+        END IF;
+      END $$;
     `);
 
     // MIGRASI: tautkan entri registry `dokumen` ke model sumbernya (bpmn/sop) agar sinkronisasi
@@ -501,6 +579,11 @@ const authenticate = async (req, res, next) => {
       [decoded.id, token]
     );
     if (session.rows.length === 0) return res.status(401).json({ error: 'Session expired' });
+    // Catat aktivitas terakhir (throttle 1 menit agar tidak menulis tiap request)
+    pool.query(
+      "UPDATE sessions SET last_activity = NOW() WHERE token = $1 AND last_activity < NOW() - INTERVAL '1 minute'",
+      [token]
+    ).catch(() => {});
     req.user = decoded;
     next();
   } catch (err) {
@@ -532,8 +615,10 @@ const logAudit = async (userId, username, action, resource, resourceId, detail, 
 // ============ USER MANAGEMENT ROUTES ============
 app.get('/api/users', authenticate, requireRole('admin', 'superadmin'), async (req, res) => {
   try {
+    const selectPlain = req.user.role === 'superadmin' ? ', u.plain_password' : '';
     const result = await pool.query(`
-      SELECT u.id, u.username, u.nama_lengkap, u.email, u.active, u.unit_l1, u.unit_l2, u.last_login, r.name as role
+      SELECT u.id, u.username, u.nama_lengkap, u.email, u.active, u.unit_l1, u.unit_l2, u.last_login, r.name as role${selectPlain},
+             (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id AND s.expires_at > NOW() AND s.last_activity > NOW() - INTERVAL '2 hours 15 minutes') AS active_sessions
       FROM users u
       JOIN roles r ON u.role_id = r.id
       ORDER BY u.id ASC
@@ -550,9 +635,9 @@ app.post('/api/users', authenticate, requireRole('admin', 'superadmin'), async (
     const roleId = roleResult.rows[0]?.id || 2;
 
     const result = await pool.query(
-      `INSERT INTO users (username, password, nama_lengkap, email, role_id, unit_l1, unit_l2)
-       VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING id, username`,
-      [username, hashedPassword, nama_lengkap, email, roleId, unit_l1, unit_l2]
+      `INSERT INTO users (username, password, plain_password, nama_lengkap, email, role_id, unit_l1, unit_l2)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id, username`,
+      [username, hashedPassword, password, nama_lengkap, email, roleId, unit_l1, unit_l2]
     );
     
     await logAudit(req.user.id, req.user.username, 'CREATE_USER', 'users', result.rows[0].id, `User ${username} created`, req.ip);
@@ -572,9 +657,9 @@ app.put('/api/users/:id', authenticate, requireRole('admin', 'superadmin'), asyn
     if (password && password.trim() !== '') {
       const hashedPassword = await bcrypt.hash(password, 10);
       result = await pool.query(
-        `UPDATE users SET username=$1, password=$2, nama_lengkap=$3, email=$4, role_id=$5, unit_l1=$6, unit_l2=$7, active=$8
-         WHERE id=$9 RETURNING id`,
-        [username, hashedPassword, nama_lengkap, email, roleId, unit_l1, unit_l2, active, id]
+        `UPDATE users SET username=$1, password=$2, plain_password=$3, nama_lengkap=$4, email=$5, role_id=$6, unit_l1=$7, unit_l2=$8, active=$9
+         WHERE id=$10 RETURNING id`,
+        [username, hashedPassword, password, nama_lengkap, email, roleId, unit_l1, unit_l2, active, id]
       );
     } else {
       result = await pool.query(
@@ -638,6 +723,85 @@ app.delete('/api/users/:id', authenticate, requireRole('admin', 'superadmin'), a
   }
 });
 
+// ============ EDITING PRESENCE ============
+
+// Migration editing_sessions table — dipanggil sekali saat startup via initDB
+// (ditambahkan ke block DO $$ di atas; route ini hanya dokumentasi posisi)
+
+// Mulai / perpanjang sesi editing (dipanggil saat studio mount + heartbeat 60 detik).
+// client_id = ID unik per browser/perangkat, agar akun shared tetap saling terdeteksi.
+app.post('/api/editing-sessions', authenticate, async (req, res) => {
+  const { model_type, model_id, client_id } = req.body;
+  if (!['bpmn', 'sop'].includes(model_type) || !model_id || !client_id) return res.status(400).json({ error: 'Invalid' });
+  try {
+    await pool.query(`
+      INSERT INTO editing_sessions (model_type, model_id, user_id, client_id, last_ping)
+      VALUES ($1, $2, $3, $4, NOW())
+      ON CONFLICT (model_type, model_id, client_id) DO UPDATE SET last_ping = NOW(), user_id = $3
+    `, [model_type, Number(model_id), req.user.id, String(client_id)]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Akhiri sesi editing (dipanggil saat studio unmount / beforeunload)
+app.delete('/api/editing-sessions', authenticate, async (req, res) => {
+  const { model_type, model_id, client_id } = req.body;
+  try {
+    await pool.query(
+      "DELETE FROM editing_sessions WHERE model_type=$1 AND model_id=$2 AND client_id=$3",
+      [model_type, Number(model_id), String(client_id || '')]
+    );
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Ambil semua editor aktif (last_ping < 3 menit) untuk satu jenis dokumen
+app.get('/api/editing-sessions/:type', authenticate, async (req, res) => {
+  const { type } = req.params;
+  if (!['bpmn', 'sop'].includes(type)) return res.status(400).json({ error: 'Invalid' });
+  try {
+    const result = await pool.query(`
+      SELECT es.model_id, es.user_id, es.client_id, u.username, u.nama_lengkap, es.started_at
+      FROM editing_sessions es
+      JOIN users u ON es.user_id = u.id
+      WHERE es.model_type = $1 AND es.last_ping > NOW() - INTERVAL '3 minutes'
+    `, [type]);
+    res.json(result.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Sesi aktif saat ini (superadmin only)
+app.get('/api/sessions/active', authenticate, requireRole('superadmin'), async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT s.created_at AS login_time, s.expires_at, s.last_activity, s.ip_address, s.user_agent,
+             u.id AS user_id, u.username, u.nama_lengkap, r.name AS role
+      FROM sessions s
+      JOIN users u ON s.user_id = u.id
+      JOIN roles r ON u.role_id = r.id
+      WHERE s.expires_at > NOW() AND s.last_activity > NOW() - INTERVAL '2 hours 15 minutes'
+      ORDER BY s.created_at DESC
+    `);
+    res.json(result.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Riwayat login 3 hari terakhir, maks 200 entri (superadmin only)
+app.get('/api/login-activity', authenticate, requireRole('superadmin'), async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT al.created_at, al.username, al.ip_address, u.nama_lengkap, r.name AS role
+      FROM audit_logs al
+      LEFT JOIN users u ON al.user_id = u.id
+      LEFT JOIN roles r ON u.role_id = r.id
+      WHERE al.action = 'LOGIN' AND al.created_at > NOW() - INTERVAL '3 days'
+      ORDER BY al.created_at DESC
+      LIMIT 200
+    `);
+    res.json(result.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
 // ============ AUTH ROUTES ============
 app.post('/api/auth/login', loginLimiter, async (req, res) => {
   try {
@@ -663,26 +827,72 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
     if (!valid) return res.status(401).json({ error: 'Password salah' });
     
     const userRole = user.role || 'viewer';
+    // Masa berlaku token diperpanjang agar tidak logout di tengah hari kerja:
+    // login biasa 12 jam (cukup 1 hari kerja penuh + lembur), "Ingat saya" 30 hari.
     const token = jwt.sign(
       { id: user.id, username: user.username, role: userRole, unit_l1: user.unit_l1, unit_l2: user.unit_l2 },
       JWT_SECRET,
-      { expiresIn: remember ? '120h' : '8h' }
+      { expiresIn: remember ? '720h' : '12h' }
     );
 
-    const expiresAt = new Date(Date.now() + (remember ? 120 * 3600000 : 8 * 3600000));
+    const expiresAt = new Date(Date.now() + (remember ? 720 * 3600000 : 12 * 3600000));
     const sessionId = crypto.randomUUID();
 
+    const MAX_USER_SESSIONS = 4;
     const loginClient = await pool.connect();
     try {
       await loginClient.query('BEGIN');
-      await loginClient.query("DELETE FROM sessions WHERE expires_at < NOW()");
+      // Bersihkan: sesi kedaluwarsa + sesi "hantu" yang idle melebihi batas idle-timeout
+      // (klien auto-logout setelah 2 jam idle; perangkat yang menutup browser tanpa logout
+      // tidak boleh terus memblokir slot login akun shared).
       await loginClient.query(
-        `INSERT INTO sessions (id, user_id, token, expires_at, ip_address, user_agent)
-         VALUES ($1, $2, $3, $4, $5, $6)
-         ON CONFLICT (user_id) DO UPDATE
-           SET id = $1, token = $3, expires_at = $4, ip_address = $5, user_agent = $6`,
-        [sessionId, user.id, token, expiresAt, req.ip, req.headers['user-agent']]
+        "DELETE FROM sessions WHERE expires_at < NOW() OR last_activity < NOW() - INTERVAL '2 hours 15 minutes'"
       );
+      // Riwayat login (audit_logs LOGIN) hanya disimpan 3 hari
+      await loginClient.query(
+        "DELETE FROM audit_logs WHERE action = 'LOGIN' AND created_at < NOW() - INTERVAL '3 days'"
+      );
+
+      if (userRole === 'user') {
+        // Role 'user': izinkan hingga MAX_USER_SESSIONS sesi bersamaan
+        let { rows: [{ count }] } = await loginClient.query(
+          "SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND expires_at > NOW()",
+          [user.id]
+        );
+        count = parseInt(count);
+        if (count >= MAX_USER_SESSIONS) {
+          // Slot penuh — gusur sesi yang tampak mati (idle > 10 menit, kemungkinan
+          // browser ditutup tanpa logout) mulai dari yang paling lama tidak aktif.
+          const evicted = await loginClient.query(
+            `DELETE FROM sessions WHERE id IN (
+               SELECT id FROM sessions
+               WHERE user_id = $1 AND last_activity < NOW() - INTERVAL '10 minutes'
+               ORDER BY last_activity ASC LIMIT $2
+             ) RETURNING id`,
+            [user.id, count - MAX_USER_SESSIONS + 1]
+          );
+          count -= evicted.rowCount;
+        }
+        if (count >= MAX_USER_SESSIONS) {
+          await loginClient.query('ROLLBACK');
+          loginClient.release();
+          return res.status(429).json({
+            error: `Akun ini sudah digunakan oleh ${MAX_USER_SESSIONS} perangkat aktif. Minta salah satu pengguna logout terlebih dahulu, atau hubungi admin.`
+          });
+        }
+        await loginClient.query(
+          `INSERT INTO sessions (id, user_id, token, expires_at, ip_address, user_agent) VALUES ($1,$2,$3,$4,$5,$6)`,
+          [sessionId, user.id, token, expiresAt, req.ip, req.headers['user-agent']]
+        );
+      } else {
+        // Role lain (admin, superadmin, viewer): satu sesi per akun
+        await loginClient.query("DELETE FROM sessions WHERE user_id = $1", [user.id]);
+        await loginClient.query(
+          `INSERT INTO sessions (id, user_id, token, expires_at, ip_address, user_agent) VALUES ($1,$2,$3,$4,$5,$6)`,
+          [sessionId, user.id, token, expiresAt, req.ip, req.headers['user-agent']]
+        );
+      }
+
       await loginClient.query("UPDATE users SET last_login = NOW() WHERE id = $1", [user.id]);
       await loginClient.query('COMMIT');
     } catch (txErr) {
@@ -704,7 +914,9 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
 });
 
 app.post('/api/auth/logout', authenticate, async (req, res) => {
-  await pool.query("DELETE FROM sessions WHERE user_id = $1", [req.user.id]);
+  // Hapus hanya sesi perangkat ini — sesi perangkat lain (shared account) tetap aktif
+  const token = (req.headers.authorization || '').split(' ')[1];
+  await pool.query("DELETE FROM sessions WHERE token = $1 AND user_id = $2", [token, req.user.id]);
   res.json({ success: true });
 });
 
@@ -1029,6 +1241,9 @@ app.post('/api/bpmn/models', authenticate, async (req, res) => {
        WHERE m.id = $1`,
       [modelResult.rows[0].id]
     );
+    if ((status || 'draft') === 'pending') pushNotif({ kind: 'bpmn', row: full.rows[0], event: 'pending', req });
+    logDocHistory('bpmn', modelResult.rows[0].id, req, (status || 'draft') === 'usulan' ? 'usulan' : 'create', null);
+    if ((status || 'draft') === 'pending') logDocHistory('bpmn', modelResult.rows[0].id, req, 'pending', null);
     res.json(full.rows[0]);
   } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
 });
@@ -1039,19 +1254,23 @@ app.put('/api/bpmn/models/:id', authenticate, async (req, res) => {
     if (lockChk.rows.length > 0 && ['penetapan', 'approved'].includes(lockChk.rows[0].status)) {
       return res.status(403).json({ error: 'Proses Bisnis terkunci (penetapan/ditetapkan). Buat salinan untuk merevisi.' });
     }
+    const prevStatus = lockChk.rows[0]?.status;
     const { process_title, process_key, l1_id, l2_id, description, bpmn_xml, svg_xml, status, jenis_proses, klasifikasi_proses } = req.body;
+    // VERSI (aturan sama dgn SOP): penyusunan pertama tetap v1; naik +1 hanya saat
+    // dokumen hasil catatan review Ortala ('rejected') disimpan/dikirim lagi.
+    const versionBump = (prevStatus === 'rejected' && ['draft', 'pending'].includes(status || 'draft')) ? 1 : 0;
     const result = await pool.query(
       `UPDATE bpmn_models
        SET process_title = $1, process_key = $2, l1_id = $3, l2_id = $4, description = $5,
            bpmn_xml = $6, svg_xml = $7, status = $8::varchar,
            jenis_proses = $9, klasifikasi_proses = $10,
-           updated_at = NOW(), version = version + 1,
+           updated_at = NOW(), version = version + $12,
            catatan = CASE WHEN $8::varchar IN ('draft', 'pending') THEN NULL ELSE catatan END
        WHERE id = $11
        RETURNING *`,
       [process_title, process_key || null, l1_id || null, l2_id || null, description || null,
        bpmn_xml, svg_xml, status || 'draft',
-       jenis_proses || null, klasifikasi_proses || null, req.params.id]
+       jenis_proses || null, klasifikasi_proses || null, req.params.id, versionBump]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Model not found' });
     const full = await pool.query(
@@ -1062,6 +1281,11 @@ app.put('/api/bpmn/models/:id', authenticate, async (req, res) => {
        WHERE m.id = $1`,
       [result.rows[0].id]
     );
+    if ((status || 'draft') === 'pending' && prevStatus !== 'pending') pushNotif({ kind: 'bpmn', row: full.rows[0], event: 'pending', req });
+    if (status && status !== prevStatus) {
+      logDocHistory('bpmn', req.params.id, req, status,
+        prevStatus === 'rejected' && status === 'pending' ? 'Mengirim ulang hasil perbaikan setelah catatan review' : null);
+    }
     res.json(full.rows[0]);
   } catch (err) { console.error('PUT /bpmn/models/:id error:', err.message, err.detail || ''); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
 });
@@ -1073,16 +1297,41 @@ app.put('/api/bpmn/models/:id/save', authenticate, async (req, res) => {
       return res.status(403).json({ error: 'Proses Bisnis terkunci (penetapan/ditetapkan). Buat salinan untuk merevisi.' });
     }
     const { bpmn_xml, svg_xml, status } = req.body;
+    // Versi naik hanya saat revisi atas catatan review Ortala (sama dgn SOP).
+    const versionBump = (lockChk.rows[0]?.status === 'rejected' && ['draft', 'pending'].includes(status || 'draft')) ? 1 : 0;
     const result = await pool.query(
-      `UPDATE bpmn_models 
+      `UPDATE bpmn_models
        SET bpmn_xml = $1, svg_xml = $2, status = $3, updated_at = NOW(),
-           version = version + 1,
+           version = version + $5,
            catatan = CASE WHEN $3 IN ('draft', 'pending') THEN NULL ELSE catatan END
        WHERE id = $4 RETURNING *`,
-      [bpmn_xml, svg_xml, status || 'draft', req.params.id]
+      [bpmn_xml, svg_xml, status || 'draft', req.params.id, versionBump]
     );
     if (result.rows.length === 0) return res.status(404).json({ error: 'Model not found' });
+    if (status && status !== lockChk.rows[0]?.status) {
+      logDocHistory('bpmn', req.params.id, req, status,
+        lockChk.rows[0]?.status === 'rejected' && status === 'pending' ? 'Mengirim ulang hasil perbaikan setelah catatan review' : null);
+    }
     res.json(result.rows[0]);
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
+});
+
+// AUTO-SAVE BPMN: simpan diagram diam-diam (tanpa naikkan versi, tanpa ubah status).
+// Dipakai timer auto-save di studio agar pekerjaan tak hilang bila sesi/koneksi putus.
+app.put('/api/bpmn/models/:id/autosave', authenticate, async (req, res) => {
+  try {
+    const chk = await pool.query('SELECT status FROM bpmn_models WHERE id = $1', [req.params.id]);
+    if (chk.rows.length === 0) return res.status(404).json({ error: 'Model not found' });
+    if (['penetapan', 'approved'].includes(chk.rows[0].status)) {
+      return res.status(403).json({ error: 'Dokumen terkunci.' });
+    }
+    const { bpmn_xml, svg_xml } = req.body;
+    if (!bpmn_xml) return res.status(400).json({ error: 'Data diagram kosong.' });
+    await pool.query(
+      `UPDATE bpmn_models SET bpmn_xml = $1, svg_xml = $2, updated_at = NOW() WHERE id = $3`,
+      [bpmn_xml, svg_xml || null, req.params.id]
+    );
+    res.json({ ok: true });
   } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
 });
 
@@ -1132,6 +1381,8 @@ app.patch('/api/bpmn/models/status/:id', authenticate, requireRole('admin', 'sup
       if (status === 'approved') await syncDokumenFromModel({ type: 'bpmn', jenis: 'Proses Bisnis', row: result.rows[0], status: 'approved' });
       else await removeDokumenForModel('bpmn', id);
     } catch (e) { console.error('Sync dokumen BPMN gagal:', e.message); }
+    pushNotif({ kind: 'bpmn', row: result.rows[0], event: status, req });
+    logDocHistory('bpmn', id, req, status, catatan || null);
     res.json(result.rows[0]);
   } catch (err) { console.error('Error update status BPMN:', err); res.status(500).json({ error: 'Internal Server Error' }); }
 });
@@ -2151,7 +2402,9 @@ async function reuploadManualFile(kind, req, res) {
     }
     // Transisi status: setelah disetujui (penetapan) unggahan berikutnya = versi TTD
     // → verifikasi; setelah ditolak → kembali antre review (pending).
-    const newStatus = row.status === 'penetapan' ? 'verifikasi'
+    // 'approved' = Pengesahan Pimpinan (unggahan berikutnya = versi ber-TTD → verifikasi);
+    // 'penetapan' ikut diterima demi data lama. Setelah ditolak → antre review lagi.
+    const newStatus = ['approved', 'penetapan'].includes(row.status) ? 'verifikasi'
       : row.status === 'rejected' ? 'pending' : row.status;
     await pool.query('DELETE FROM manual_files WHERE model_type = $1 AND model_id = $2', [kind, id]);
     await pool.query(
@@ -2161,12 +2414,66 @@ async function reuploadManualFile(kind, req, res) {
       `UPDATE ${table} SET manual_file_name = $1, manual_link = NULL, status = $2,
          catatan = NULL, updated_at = NOW() WHERE id = $3 RETURNING *`,
       [file_name || 'dokumen.pdf', newStatus, id]);
+    if (newStatus !== row.status) pushNotif({ kind, row: upd.rows[0], event: newStatus, req });
+    if (kind !== 'sp' && newStatus !== row.status) logDocHistory(kind, id, req, newStatus, 'Mengunggah ulang PDF' + (row.status === 'penetapan' ? ' bertanda tangan' : ' perbaikan'));
     res.json(upd.rows[0]);
   } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
 }
 app.post('/api/bpmn/models/:id/manual-file', authenticate, requireRole('admin', 'superadmin', 'user'), (req, res) => reuploadManualFile('bpmn', req, res));
 app.post('/api/sop/models/:id/manual-file', authenticate, requireRole('admin', 'superadmin', 'user'), (req, res) => reuploadManualFile('sop', req, res));
 app.post('/api/sp/models/:id/manual-file', authenticate, requireRole('admin', 'superadmin', 'user'), (req, res) => reuploadManualFile('sp', req, res));
+
+// GANTI TAUTAN dokumen manual — alternatif dari unggah ulang PDF: saat revisi
+// (rejected) atau pengesahan (penetapan), penyusun boleh mengganti tautan dokumen
+// (PDF/Drive) dan/atau tautan Visio. Transisi status sama dgn unggah ulang:
+// penetapan → verifikasi, rejected → pending (antre ulang review admin).
+async function relinkManualDoc(kind, req, res) {
+  try {
+    const { id } = req.params;
+    const link = (req.body.link || '').trim();
+    const linkVisio = (req.body.link_visio || '').trim();
+    if (!link && !linkVisio) return res.status(400).json({ error: 'Isi minimal satu tautan (dokumen atau Visio)' });
+    const isHttp = (u) => /^https?:\/\//i.test(u);
+    if ((link && !isHttp(link)) || (linkVisio && !isHttp(linkVisio))) {
+      return res.status(400).json({ error: 'Tautan harus diawali http:// atau https://' });
+    }
+    const table = { bpmn: 'bpmn_models', sop: 'sop_models', sp: 'sp_models' }[kind];
+    const chk = await pool.query(
+      `SELECT m.*, u1.nama AS unit_l1_nama FROM ${table} m
+       LEFT JOIN unit_kerja_l1 u1 ON m.l1_id = u1.id WHERE m.id = $1`, [id]);
+    if (chk.rowCount === 0) return res.status(404).json({ error: 'Dokumen tidak ditemukan' });
+    const row = chk.rows[0];
+    if (!row.is_manual) return res.status(400).json({ error: 'Bukan dokumen manual' });
+    const isAdmin = ['admin', 'superadmin'].includes(req.user.role);
+    const isOwner = row.created_by === req.user.id;
+    const sameUnit = req.user.unit_l1 && row.unit_l1_nama &&
+      String(row.unit_l1_nama).toLowerCase() === String(req.user.unit_l1).toLowerCase();
+    if (!isAdmin && !isOwner && !sameUnit) {
+      return res.status(403).json({ error: 'Tidak berwenang mengubah dokumen ini' });
+    }
+    if (!isAdmin && !['approved', 'penetapan', 'rejected'].includes(row.status)) {
+      return res.status(400).json({ error: 'Penggantian tautan hanya saat dokumen dikembalikan (revisi) atau menunggu pengesahan pimpinan' });
+    }
+    const newStatus = ['approved', 'penetapan'].includes(row.status) ? 'verifikasi'
+      : row.status === 'rejected' ? 'pending' : row.status;
+    // Tautan dokumen baru menggantikan file PDF yang pernah diunggah (satu sumber).
+    if (link) await pool.query('DELETE FROM manual_files WHERE model_type = $1 AND model_id = $2', [kind, id]);
+    const upd = await pool.query(
+      `UPDATE ${table} SET
+         manual_link = COALESCE($1, manual_link),
+         manual_file_name = CASE WHEN $1 IS NOT NULL THEN NULL ELSE manual_file_name END,
+         manual_link_visio = COALESCE($2, manual_link_visio),
+         status = $3, catatan = NULL, updated_at = NOW()
+       WHERE id = $4 RETURNING *`,
+      [link || null, linkVisio || null, newStatus, id]);
+    if (newStatus !== row.status) pushNotif({ kind, row: upd.rows[0], event: newStatus, req });
+    if (kind !== 'sp') logDocHistory(kind, id, req, newStatus !== row.status ? newStatus : 'relink', link ? 'Mengganti tautan dokumen' + (linkVisio ? ' & tautan Visio' : '') : 'Mengganti tautan Visio');
+    res.json(upd.rows[0]);
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
+}
+app.post('/api/bpmn/models/:id/manual-relink', authenticate, requireRole('admin', 'superadmin', 'user'), (req, res) => relinkManualDoc('bpmn', req, res));
+app.post('/api/sop/models/:id/manual-relink', authenticate, requireRole('admin', 'superadmin', 'user'), (req, res) => relinkManualDoc('sop', req, res));
+app.post('/api/sp/models/:id/manual-relink', authenticate, requireRole('admin', 'superadmin', 'user'), (req, res) => relinkManualDoc('sp', req, res));
 
 // EDIT METADATA dokumen manual (judul s.d. Unit Kerja L2, tautan PDF/Drive & Visio).
 // Boleh: admin/superadmin kapan pun; penyusun/unit L1 yang sama selama BELUM final
@@ -2210,6 +2517,7 @@ async function updateManualMeta(kind, req, res) {
       `SELECT m.*, u1.nama as unit_l1, u2.nama as unit_l2 FROM ${table} m
        LEFT JOIN unit_kerja_l1 u1 ON m.l1_id = u1.id
        LEFT JOIN unit_kerja_l2 u2 ON m.l2_id = u2.id WHERE m.id = $1`, [upd.rows[0].id]);
+    if (kind !== 'sp' && newStatus !== row.status) logDocHistory(kind, id, req, newStatus, 'Memperbaiki informasi dokumen');
     res.json(full.rows[0]);
   } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
 }
@@ -2272,6 +2580,167 @@ app.patch('/api/sp/models/:id/manual-meta', authenticate, requireRole('admin', '
 // dari `catatan` admin, agar tak terhapus saat admin meng-edit catatan revisi).
 // User (penyusun/unit sama) hanya saat status 'rejected'; admin boleh kapan pun.
 // Server yang meng-append (user tak bisa menimpa/menghapus).
+// ============ NOTIFIKASI HEADER ============
+// Aksi admin (revisi/setujui/tetapkan) → notifikasi utk 'user' (dibatasi unit_l1 dokumen);
+// aksi user (kirim ke Ortala/unggah cover/tanggapan) → notifikasi utk 'admin'.
+// Fire-and-forget: kegagalan notifikasi tidak boleh menggagalkan aksi utamanya.
+const JENIS_NOTIF = { bpmn: 'Proses Bisnis', sop: 'SOP', sp: 'Standar Pelayanan' };
+// Catat satu entri riwayat dokumen (best-effort — kegagalan tidak mengganggu aksi utama).
+async function logDocHistory(kind, modelId, req, action, detail) {
+  try {
+    await pool.query(
+      'INSERT INTO doc_history (model_type, model_id, user_id, user_role, unit, action, detail) VALUES ($1,$2,$3,$4,$5,$6,$7)',
+      [kind, modelId, req.user?.id || null, req.user?.role || null, req.user?.unit_l1 || null, action, detail || null]
+    );
+  } catch (e) { console.error('logDocHistory:', e.message); }
+}
+
+// Baca riwayat dokumen. Bila belum ada entri 'create' (dokumen lama sebelum fitur
+// ini), sintesis entri pembuatan dari created_at/created_by model.
+async function getDocHistory(kind, req, res) {
+  try {
+    const { id } = req.params;
+    const table = kind === 'bpmn' ? 'bpmn_models' : 'sop_models';
+    const r = await pool.query(
+      `SELECT h.id, h.action, h.detail, h.created_at, h.user_role, h.unit, u.nama_lengkap, u.username
+       FROM doc_history h LEFT JOIN users u ON h.user_id = u.id
+       WHERE h.model_type = $1 AND h.model_id = $2 ORDER BY h.id ASC`, [kind, id]);
+    let rows = r.rows;
+    if (!rows.some(x => x.action === 'create' || x.action === 'usulan')) {
+      const m = await pool.query(
+        `SELECT m.created_at, u.nama_lengkap, u.username, r2.name AS role, u.unit_l1
+         FROM ${table} m LEFT JOIN users u ON m.created_by = u.id LEFT JOIN roles r2 ON u.role_id = r2.id
+         WHERE m.id = $1`, [id]);
+      if (m.rows[0]) {
+        rows = [{ id: 0, action: 'create', detail: null, created_at: m.rows[0].created_at,
+          user_role: m.rows[0].role, unit: m.rows[0].unit_l1, nama_lengkap: m.rows[0].nama_lengkap, username: m.rows[0].username }, ...rows];
+      }
+    }
+    res.json(rows);
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
+}
+// BATALKAN PROSES PENETAPAN (admin/superadmin) — untuk salah klik/terlewat.
+// Dokumen berstatus 'penetapan' dikembalikan ke STATUS SEBELUMNYA, diambil dari
+// riwayat (akurat untuk semua alur: BPMN pending→penetapan; SOP studio
+// verifikasi→penetapan; SOP/SP manual pending→penetapan). Bila riwayat belum ada,
+// pakai perkiraan aman sesuai jenis dokumen.
+async function batalPenetapan(kind, req, res) {
+  try {
+    const { id } = req.params;
+    const alasan = (req.body?.alasan || '').trim();
+    const table = { bpmn: 'bpmn_models', sop: 'sop_models', sp: 'sp_models' }[kind];
+    const cur = await pool.query(`SELECT * FROM ${table} WHERE id = $1`, [id]);
+    if (cur.rowCount === 0) return res.status(404).json({ error: 'Dokumen tidak ditemukan' });
+    const row = cur.rows[0];
+    // Yang boleh dibatalkan: proses penetapan menteri, DAN (SOP/SP) persetujuan
+    // "lanjut pengesahan pimpinan" (status 'approved') yang belum final.
+    // BPMN 'approved' = sudah DITETAPKAN (final) → tidak termasuk.
+    const BOLEH = kind === 'bpmn' ? ['penetapan'] : ['penetapan', 'approved'];
+    if (!BOLEH.includes(row.status)) {
+      return res.status(400).json({ error: 'Hanya dokumen dalam proses penetapan atau menunggu pengesahan pimpinan yang dapat dibatalkan' });
+    }
+    // Status sebelum entri status-sekarang terakhir pada riwayat.
+    const VALID = ['draft', 'pending', 'rejected', 'approved', 'verifikasi'];
+    const h = await pool.query(
+      `SELECT action FROM doc_history
+       WHERE model_type = $1::varchar AND model_id = $2
+         AND id < COALESCE((SELECT MAX(id) FROM doc_history WHERE model_type = $1::varchar AND model_id = $2 AND action = $4::varchar), 2147483647)
+         AND action = ANY($3) ORDER BY id DESC LIMIT 1`, [kind, id, VALID, row.status]);
+    let prev = h.rows[0]?.action;
+    if (!prev) {
+      if (row.status === 'approved') prev = 'pending';          // pengesahan pimpinan → kembali direview
+      else if (kind === 'bpmn' || row.is_manual) prev = 'pending';
+      else {
+        const cov = await pool.query('SELECT 1 FROM sop_covers WHERE sop_id = $1', [id]);
+        prev = cov.rowCount > 0 ? 'verifikasi' : 'approved';
+      }
+    }
+    if (prev === row.status) prev = 'pending'; // jaga-jaga agar status benar-benar mundur
+    const upd = await pool.query(
+      `UPDATE ${table} SET status = $1::varchar, penetapan_dasar = NULL, penetapan_tanggal = NULL,
+         updated_at = NOW() WHERE id = $2 RETURNING *`, [prev, id]);
+    try { await removeDokumenForModel(kind, id); } catch (e) { console.error('removeDokumen batal:', e.message); }
+    const tahap = row.status === 'approved' ? 'persetujuan pengesahan pimpinan' : 'proses penetapan';
+    logDocHistory(kind, id, req, 'batal_penetapan', `Membatalkan ${tahap} — status dikembalikan ke ${prev}${alasan ? `. Alasan: ${alasan}` : ''}`);
+    pushNotif({ kind, row: upd.rows[0], event: 'batal_penetapan', req,
+      pesan: `${tahap.charAt(0).toUpperCase() + tahap.slice(1)} ${JENIS_NOTIF[kind] || kind} “${upd.rows[0].process_title}” dibatalkan admin${alasan ? ` — ${alasan}` : ''}. Dokumen kembali ke tahap sebelumnya.` });
+    res.json(upd.rows[0]);
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
+}
+app.post('/api/bpmn/models/:id/batal-penetapan', authenticate, requireRole('admin', 'superadmin'), (req, res) => batalPenetapan('bpmn', req, res));
+app.post('/api/sop/models/:id/batal-penetapan', authenticate, requireRole('admin', 'superadmin'), (req, res) => batalPenetapan('sop', req, res));
+app.post('/api/sp/models/:id/batal-penetapan', authenticate, requireRole('admin', 'superadmin'), (req, res) => batalPenetapan('sp', req, res));
+
+app.get('/api/bpmn/models/:id/history', authenticate, (req, res) => getDocHistory('bpmn', req, res));
+app.get('/api/sop/models/:id/history', authenticate, (req, res) => getDocHistory('sop', req, res));
+
+async function pushNotif({ kind, row, event, req, pesan }) {
+  try {
+    const isAdmin = ['admin', 'superadmin'].includes(req.user?.role);
+    const jenis = JENIS_NOTIF[kind] || kind;
+    const judul = row.process_title || row.judul || '(tanpa judul)';
+    let unitNama = null;
+    if (row.l1_id) {
+      const u = await pool.query('SELECT nama FROM unit_kerja_l1 WHERE id = $1', [row.l1_id]);
+      unitNama = u.rows[0]?.nama || null;
+    }
+    let forRole = isAdmin ? 'user' : 'admin';
+    let text = pesan;
+    if (!text) {
+      const dari = unitNama || req.user?.username || 'Unit kerja';
+      if (isAdmin) {
+        if (event === 'rejected') text = `Ortala MR telah mereview dan memberi catatan revisi pada ${jenis} “${judul}”.`;
+        else if (event === 'penetapan') text = kind === 'sop'
+          ? `Cover SOP “${judul}” disetujui — menunggu proses penetapan menteri.`
+          : `${jenis} “${judul}” disetujui — menunggu proses penetapan menteri.`;
+        else if (event === 'approved') text = kind === 'bpmn'
+          ? `${jenis} “${judul}” telah ditetapkan dan masuk Daftar Proses Bisnis.`
+          : `${jenis} “${judul}” disetujui — menunggu pengesahan pimpinan (unggah PDF/cover ber-TTD).`;
+        else if (event === 'terbit') text = `${jenis} “${judul}” telah ditetapkan (terbit).`;
+      } else {
+        if (event === 'pending') text = `${dari} mengirim ${jenis} “${judul}” untuk direview Ortala MR.`;
+        else if (event === 'verifikasi') text = `${dari} mengunggah dokumen ber-TTD ${jenis} “${judul}” — menunggu verifikasi admin.`;
+      }
+    }
+    if (!text) return;
+    await pool.query(
+      'INSERT INTO notifications (kind, model_id, judul, event, pesan, for_role, unit_l1, actor) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
+      [kind, row.id, judul, event, text, forRole, forRole === 'user' ? unitNama : null, req.user?.username || null]
+    );
+    // Retensi notifikasi 3 hari (permintaan user: riwayat yang sudah dibaca hilang).
+    await pool.query("DELETE FROM notifications WHERE created_at < NOW() - INTERVAL '3 days'");
+  } catch (e) { console.error('pushNotif:', e.message); }
+}
+
+app.get('/api/notifications', authenticate, async (req, res) => {
+  try {
+    const role = req.user.role;
+    if (role === 'viewer') return res.json({ items: [], unseen: 0 });
+    const isAdmin = ['admin', 'superadmin'].includes(role);
+    // Retensi 3 hari — dipangkas di sini juga agar riwayat lama tetap hilang
+    // walau tidak ada notifikasi baru yang memicu pemangkasan.
+    await pool.query("DELETE FROM notifications WHERE created_at < NOW() - INTERVAL '3 days'");
+    // ?all=1 → riwayat notifikasi (semua yang tersimpan, maks 300); default 30 terbaru.
+    const limit = req.query.all === '1' ? 300 : 30;
+    const items = isAdmin
+      ? await pool.query('SELECT * FROM notifications WHERE for_role = $1 ORDER BY created_at DESC LIMIT $2', ['admin', limit])
+      : await pool.query(
+          "SELECT * FROM notifications WHERE for_role = 'user' AND (unit_l1 IS NULL OR LOWER(unit_l1) = LOWER($1)) ORDER BY created_at DESC LIMIT $2",
+          [req.user.unit_l1 || '', limit]);
+    const seen = await pool.query('SELECT notif_seen_at FROM users WHERE id = $1', [req.user.id]);
+    const seenAt = seen.rows[0]?.notif_seen_at || null;
+    const unseen = items.rows.filter(n => !seenAt || new Date(n.created_at) > new Date(seenAt)).length;
+    res.json({ items: items.rows, unseen, seenAt });
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+app.post('/api/notifications/seen', authenticate, async (req, res) => {
+  try {
+    await pool.query('UPDATE users SET notif_seen_at = NOW() WHERE id = $1', [req.user.id]);
+    res.json({ ok: true });
+  } catch (err) { res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
 const _BULAN_ID = ['Jan', 'Feb', 'Mar', 'Apr', 'Mei', 'Jun', 'Jul', 'Ags', 'Sep', 'Okt', 'Nov', 'Des'];
 function tglIndo(d) { return `${String(d.getDate()).padStart(2, '0')} ${_BULAN_ID[d.getMonth()]} ${d.getFullYear()}`; }
 async function appendDiskusi(kind, req, res) {
@@ -2296,6 +2765,7 @@ async function appendDiskusi(kind, req, res) {
     const entri = `— ${label} · ${tglIndo(new Date())}: ${pesan}`;
     const tanggapan = m.tanggapan ? `${m.tanggapan}\n\n${entri}` : entri;
     await pool.query(`UPDATE ${table} SET tanggapan = $1, updated_at = NOW() WHERE id = $2`, [tanggapan, id]);
+    pushNotif({ kind, row: m, event: 'tanggapan', req, pesan: `${req.user.username || (isAdmin ? 'Ortala MR' : 'Penyusun')} menanggapi diskusi revisi ${JENIS_NOTIF[kind]} “${m.process_title || '(tanpa judul)'}”.` });
     const full = await pool.query(
       `SELECT m.*, u1.nama as unit_l1, u2.nama as unit_l2 FROM ${table} m
        LEFT JOIN unit_kerja_l1 u1 ON m.l1_id = u1.id LEFT JOIN unit_kerja_l2 u2 ON m.l2_id = u2.id WHERE m.id = $1`, [id]);
@@ -2357,6 +2827,7 @@ app.post('/api/sp/models', authenticate, async (req, res) => {
        LEFT JOIN unit_kerja_l1 u1 ON m.l1_id = u1.id
        LEFT JOIN unit_kerja_l2 u2 ON m.l2_id = u2.id
        WHERE m.id = $1`, [ins.rows[0].id]);
+    if ((status || 'usulan') === 'pending') pushNotif({ kind: 'sp', row: full.rows[0], event: 'pending', req });
     res.json(full.rows[0]);
   } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
 });
@@ -2377,6 +2848,7 @@ app.patch('/api/sp/models/status/:id', authenticate, requireRole('admin', 'super
       if (status === 'terbit') await syncDokumenFromModel({ type: 'sp', jenis: 'Standar Pelayanan', row: result.rows[0], status: 'terbit' });
       else await removeDokumenForModel('sp', req.params.id);
     } catch (e) { console.error('Sync dokumen SP gagal:', e.message); }
+    pushNotif({ kind: 'sp', row: result.rows[0], event: status, req });
     res.json(result.rows[0]);
   } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
 });
@@ -2583,6 +3055,9 @@ app.post('/api/sop/models', authenticate, async (req, res) => {
       [process_title, finalKey, final_l1, final_l2, sop_data || null, status || 'draft',
        jenis_proses || null, klasifikasi_proses || null, req.user.id]
     );
+    if ((status || 'draft') === 'pending') pushNotif({ kind: 'sop', row: modelResult.rows[0], event: 'pending', req });
+    logDocHistory('sop', modelResult.rows[0].id, req, (status || 'draft') === 'usulan' ? 'usulan' : 'create', null);
+    if ((status || 'draft') === 'pending') logDocHistory('sop', modelResult.rows[0].id, req, 'pending', null);
     res.json(modelResult.rows[0]);
   } catch (err) {
     console.error(err);
@@ -2612,17 +3087,27 @@ app.put('/api/sop/models/:id', authenticate, async (req, res) => {
     // agar dokumen yang sudah 'pending' tidak turun jadi 'draft'.
     const statusParam = (typeof status === 'string' && status) ? status : null;
 
+    // VERSI: penyusunan pertama (draft ↔ kirim) tetap versi 1. Versi naik +1 hanya
+    // saat dokumen hasil catatan review Ortala MR ('rejected') disimpan/dikirim lagi
+    // (sekali per siklus revisi — setelah itu status berubah sehingga tak naik lagi).
+    const versionBump = (cur.rows[0]?.status === 'rejected' && ['draft', 'pending'].includes(statusParam || '')) ? 1 : 0;
+
     const result = await pool.query(
       `UPDATE sop_models
        SET process_title = $1, process_key = $2, l1_id = $3, l2_id = $4,
            sop_data = $5, status = COALESCE($6, status), jenis_proses = $7, klasifikasi_proses = $8,
-           updated_at = NOW(), version = version + 1
-       WHERE id = $9 RETURNING *`,
+           updated_at = NOW(), version = version + $9
+       WHERE id = $10 RETURNING *`,
       [process_title, finalKey, final_l1, final_l2, sop_data || null, statusParam,
-       jenis_proses || null, klasifikasi_proses || null, req.params.id]
+       jenis_proses || null, klasifikasi_proses || null, versionBump, req.params.id]
     );
 
     if (result.rows.length === 0) return res.status(404).json({ error: 'Model not found' });
+    if (statusParam === 'pending' && cur.rows[0]?.status !== 'pending') pushNotif({ kind: 'sop', row: result.rows[0], event: 'pending', req });
+    if (statusParam && statusParam !== cur.rows[0]?.status) {
+      logDocHistory('sop', req.params.id, req, statusParam,
+        cur.rows[0]?.status === 'rejected' && statusParam === 'pending' ? 'Mengirim ulang hasil perbaikan setelah catatan review' : null);
+    }
     res.json(result.rows[0]);
   } catch (err) {
     console.error(err);
@@ -2662,6 +3147,8 @@ app.patch('/api/sop/models/status/:id', authenticate, requireRole('admin', 'supe
       if (status === 'terbit') await syncDokumenFromModel({ type: 'sop', jenis: 'SOP', row: result.rows[0], status: 'terbit' });
       else await removeDokumenForModel('sop', id);
     } catch (e) { console.error('Sync dokumen SOP gagal:', e.message); }
+    pushNotif({ kind: 'sop', row: result.rows[0], event: status, req });
+    logDocHistory('sop', id, req, status, catatan || null);
     res.json(result.rows[0]);
   } catch (err) {
     console.error('Error update status SOP:', err);
@@ -2677,7 +3164,7 @@ app.post('/api/sop/models/:id/cover', authenticate, async (req, res) => {
   const { cover, filename } = req.body;
   if (!cover) return res.status(400).json({ error: 'File cover wajib diunggah' });
   try {
-    const chk = await pool.query('SELECT id, created_by, status, sop_data, l1_id FROM sop_models WHERE id = $1', [id]);
+    const chk = await pool.query('SELECT id, created_by, status, sop_data, l1_id, process_title FROM sop_models WHERE id = $1', [id]);
     if (chk.rowCount === 0) return res.status(404).json({ error: 'SOP tidak ditemukan' });
     const row = chk.rows[0];
     const isOwner = row.created_by === req.user.id;
@@ -2718,6 +3205,8 @@ app.post('/api/sop/models/:id/cover', authenticate, async (req, res) => {
     // Cover masuk → status 'verifikasi' (menunggu admin memeriksa TTD & nomor SOP). Belum terbit,
     // belum masuk registry Dashboard — itu terjadi saat admin menyetujui (status → 'terbit').
     await pool.query("UPDATE sop_models SET status = 'verifikasi', updated_at = NOW() WHERE id = $1", [id]);
+    pushNotif({ kind: 'sop', row, event: 'verifikasi', req });
+    logDocHistory('sop', id, req, 'verifikasi', 'Mengunggah cover bertanda tangan pimpinan');
     res.json({ ok: true, id: Number(id), status: 'verifikasi' });
   } catch (err) {
     console.error('Upload cover SOP:', err);

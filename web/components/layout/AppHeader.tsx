@@ -5,6 +5,7 @@ import { Menu, Sun, Moon, X, KeyRound, Eye, EyeOff, Building2, Save, LogOut, Use
 import { usePathname } from 'next/navigation';
 import { useAppContext } from '@/lib/app-context';
 import { HIERARKI_UNIT } from '@/lib/constants';
+import NotificationBell from './NotificationBell';
 
 const PAGE_TITLES: Record<string, { title: string; subtitle: string }> = {
   '/': { title: 'Dashboard Monitoring', subtitle: 'Rekapitulasi dokumen ketatalaksanaan seluruh unit kerja' },
@@ -131,7 +132,12 @@ export default function AppHeader({ onToggleSidebar, sidebarOpen }: Props) {
 
   return (
     <>
-      <header className={`h-16 border-b flex items-center gap-3 px-4 md:px-6 shrink-0 shadow-sm z-10 ${isDarkMode ? 'bg-[#0F172A] border-slate-700' : 'bg-white border-slate-200'}`}>
+      {/* relative + z-50: tanpa position, kelas z-10 tidak berlaku sehingga panel
+          notifikasi (anak header) bisa tertutup konten halaman yang ber-z-index
+          (mis. toolbar Studio SOP yang sticky). Dengan ini header & dropdown-nya
+          selalu di atas konten, tetapi modal halaman (z-50+, DOM setelah header)
+          tetap dapat menutupi header. */}
+      <header className={`relative z-50 h-16 border-b flex items-center gap-3 px-4 md:px-6 shrink-0 shadow-sm ${isDarkMode ? 'bg-[#0F172A] border-slate-700' : 'bg-white border-slate-200'}`}>
         <button onClick={onToggleSidebar} className={`p-2 rounded-lg transition-colors ${isDarkMode ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-500 hover:bg-slate-100'}`} aria-label="Toggle navigasi">
           <Menu className="w-5 h-5" />
         </button>
@@ -149,6 +155,8 @@ export default function AppHeader({ onToggleSidebar, sidebarOpen }: Props) {
             {page.subtitle}
           </p>
         </div>
+
+        <NotificationBell isDarkMode={isDarkMode} role={currentUser?.role} />
 
         <button
           onClick={() => setIsDarkMode(!isDarkMode)}

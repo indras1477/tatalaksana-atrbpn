@@ -271,7 +271,6 @@ function DashboardBPN() {
     if (searchParams.get('mode') === 'tambah' && currentUser?.role === 'admin') {
       resetFormTambah();
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [searchParams, currentUser]);
 
   const getEmbedUrl = (url: string) => {
@@ -328,13 +327,35 @@ function DashboardBPN() {
     return dokumenList.filter(d => parseInt(d.tahun) <= 2025);
   }, [dokumenList, dashboardTab]);
 
-  const totalProbis = dokumenByTab.filter(d => d.jenis === 'Proses Bisnis').length;
-  const totalSOP = dokumenByTab.filter(d => d.jenis === 'SOP').length;
-  const totalSP = dokumenByTab.filter(d => d.jenis === 'Standar Pelayanan').length;
+  // Pencarian & filter kini berlaku di SEMUA level dashboard (rekap unit maupun
+  // daftar dokumen), sehingga rekap ikut menyesuaikan apa yang dicari pengguna.
+  const cocokTahunCari = (d: Dokumen) => {
+    const kw = searchQuery.trim().toLowerCase();
+    const matchTahun = filterTahun === 'Semua' || d.tahun === filterTahun;
+    const matchSearch = !kw ||
+      d.nama.toLowerCase().includes(kw) || d.unitL1.toLowerCase().includes(kw) ||
+      d.unitL2.toLowerCase().includes(kw) || d.unitL3.toLowerCase().includes(kw) ||
+      (d.sumber || '').toLowerCase().includes(kw);
+    return matchTahun && matchSearch;
+  };
+  const dokumenScope = useMemo(
+    () => dokumenByTab.filter(d => cocokTahunCari(d) && (filterJenis === 'Semua' || d.jenis === filterJenis)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dokumenByTab, filterJenis, filterTahun, searchQuery]
+  );
+  // Kartu total: ikut pencarian & tahun, TIDAK ikut filter jenis (tiap kartu = jenisnya sendiri).
+  const dokumenKartu = useMemo(() => dokumenByTab.filter(cocokTahunCari),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [dokumenByTab, filterTahun, searchQuery]);
+  const adaFilterAktif = filterJenis !== 'Semua' || filterTahun !== 'Semua' || searchQuery.trim() !== '';
+
+  const totalProbis = dokumenKartu.filter(d => d.jenis === 'Proses Bisnis').length;
+  const totalSOP = dokumenKartu.filter(d => d.jenis === 'SOP').length;
+  const totalSP = dokumenKartu.filter(d => d.jenis === 'Standar Pelayanan').length;
 
   const rekapL1 = useMemo(() => {
     return listL1.map(unitL1 => {
-      const docs = dokumenByTab.filter(d => d.unitL1.toLowerCase() === unitL1.toLowerCase());
+      const docs = dokumenScope.filter(d => d.unitL1.toLowerCase() === unitL1.toLowerCase());
       return {
         nama: unitL1, 
         labelChart: CHART_LABELS[unitL1] || unitL1.substring(0, 5),
@@ -342,8 +363,10 @@ function DashboardBPN() {
         sop: docs.filter(d => d.jenis === 'SOP').length,
         sp: docs.filter(d => d.jenis === 'Standar Pelayanan').length,
       };
-    });
-  }, [dokumenByTab]);
+    // Saat ada pencarian/filter, tampilkan hanya unit yang punya hasil.
+    }).filter(r => !adaFilterAktif || (r.probis + r.sop + r.sp) > 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dokumenScope, adaFilterAktif]);
 
   const chartData = useMemo(() => {
     if (chartFilterSatker === 'Semua') return rekapL1;
@@ -353,19 +376,20 @@ function DashboardBPN() {
   const rekapL2 = useMemo(() => {
     if (!selectedL1) return [];
     return getListL2(selectedL1).map(unitL2 => {
-      const docs = dokumenByTab.filter(d => d.unitL1.toLowerCase() === selectedL1.toLowerCase() && d.unitL2 === unitL2);
+      const docs = dokumenScope.filter(d => d.unitL1.toLowerCase() === selectedL1.toLowerCase() && d.unitL2 === unitL2);
       return {
         nama: unitL2,
         probis: docs.filter(d => d.jenis === 'Proses Bisnis').length,
         sop: docs.filter(d => d.jenis === 'SOP').length,
         sp: docs.filter(d => d.jenis === 'Standar Pelayanan').length,
       };
-    });
-  }, [selectedL1, dokumenByTab]);
+    }).filter(r => !adaFilterAktif || (r.probis + r.sop + r.sp) > 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedL1, dokumenScope, adaFilterAktif]);
 
   const dokumenFiltered = useMemo(() => {
     const filtered = dokumenByTab.filter(d => {
-      const matchUnit = d.unitL1.toLowerCase() === selectedL1.toLowerCase() && (!selectedL2 || d.unitL2 === selectedL2);
+      const matchUnit = (!selectedL1 || d.unitL1.toLowerCase() === selectedL1.toLowerCase()) && (!selectedL2 || d.unitL2 === selectedL2);
       const matchJenis = filterJenis === 'Semua' || d.jenis === filterJenis;
       const matchTahun = filterTahun === 'Semua' || d.tahun === filterTahun;
 
@@ -1371,18 +1395,18 @@ function DashboardBPN() {
                 <h2 className={`text-2xl md:text-3xl xl:text-4xl font-extrabold tracking-tight transition-colors ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>
                   {level === 1
                     ? dashboardTab === '2026' ? 'Dashboard Monitoring 2026' : 'Arsip Probis & SOP 2023–2025'
-                    : level === 2 ? selectedL1 : (selectedL2 || 'Semua Dokumen')}
+                    : level === 2 ? selectedL1 : (selectedL2 || selectedL1 || `Semua Dokumen${filterJenis !== 'Semua' ? ` — ${filterJenis}` : ''}`)}
                 </h2>
                 <p className={`mt-2 font-medium transition-colors text-sm md:text-base ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                   {level === 1
                     ? dashboardTab === '2026'
                       ? 'Rekapitulasi Dokumen Ketatalaksanaan Tahun 2026'
                       : 'Dokumen Proses Bisnis dan SOP yang Telah Ditetapkan Tahun 2023–2025'
-                    : level === 2 ? 'Rincian Rekapitulasi per Unit Kerja' : (selectedL2 ? 'Daftar Dokumen Detail' : `Semua Dokumen di ${selectedL1}`)}
+                    : level === 2 ? 'Rincian Rekapitulasi per Unit Kerja' : (selectedL2 ? 'Daftar Dokumen Detail' : selectedL1 ? `Semua Dokumen di ${selectedL1}` : 'Seluruh unit kerja')}
                 </p>
               </div>
               <div className="flex items-center gap-3 shrink-0">
-                {level > 1 && <button onClick={() => { setLevel(level - 1); setFilterJenis('Semua'); setFilterTahun('Semua'); setSearchQuery(''); }} className={`flex items-center px-4 py-3 border rounded-xl shadow-sm transition-all font-semibold text-sm ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-slate-300 hover:bg-slate-800' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}><ArrowLeft className="w-4 h-4 mr-2" /> Kembali</button>}
+                {level > 1 && <button onClick={() => { setLevel(level === 3 && !selectedL1 ? 1 : level - 1); setFilterJenis('Semua'); setFilterTahun('Semua'); setSearchQuery(''); }} className={`flex items-center px-4 py-3 border rounded-xl shadow-sm transition-all font-semibold text-sm ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-slate-300 hover:bg-slate-800' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}><ArrowLeft className="w-4 h-4 mr-2" /> Kembali</button>}
                 {level === 1 && dashboardTab === '2026' && currentUser?.role === 'admin' && (
                   <button onClick={() => { setShowImportModal(true); setImportSource('2026'); setImportTab('excel'); }}
                     className={`flex items-center gap-2 px-5 py-3 rounded-xl font-bold text-sm shadow-md transition-all ${isDarkMode ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-[#002855] hover:bg-[#003580] text-white'}`}>
@@ -1401,18 +1425,18 @@ function DashboardBPN() {
             {level === 1 && (
               <>
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className={`p-6 rounded-2xl border shadow-sm transition-all flex items-center space-x-5 ${isDarkMode ? 'bg-[#151F32] border-slate-800 hover:border-slate-700' : 'bg-white border-slate-100 hover:shadow-md'}`}>
+                  <button onClick={() => { setFilterJenis('Proses Bisnis'); setSelectedL1(''); setSelectedL2(''); setCurrentPage(1); setLevel(3); }} title="Lihat seluruh dokumen Total Proses Bisnis" className={`text-left w-full p-6 rounded-2xl border shadow-sm transition-all flex items-center space-x-5 cursor-pointer hover:-translate-y-0.5 ${isDarkMode ? 'bg-[#151F32] border-slate-800 hover:border-slate-700' : 'bg-white border-slate-100 hover:shadow-md'}`}>
                     <div className={`p-4 rounded-2xl ${isDarkMode ? 'bg-blue-900/30 text-blue-400' : 'bg-blue-50 text-blue-600'}`}><Activity className="w-8 h-8" /></div>
                     <div><p className={`text-sm font-bold uppercase tracking-wider mb-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Total Proses Bisnis</p><p className={`text-4xl font-extrabold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{totalProbis}</p></div>
-                  </div>
-                  <div className={`p-6 rounded-2xl border shadow-sm transition-all flex items-center space-x-5 ${isDarkMode ? 'bg-[#151F32] border-slate-800 hover:border-slate-700' : 'bg-white border-slate-100 hover:shadow-md'}`}>
+                  </button>
+                  <button onClick={() => { setFilterJenis('SOP'); setSelectedL1(''); setSelectedL2(''); setCurrentPage(1); setLevel(3); }} title="Lihat seluruh dokumen Total SOP" className={`text-left w-full p-6 rounded-2xl border shadow-sm transition-all flex items-center space-x-5 cursor-pointer hover:-translate-y-0.5 ${isDarkMode ? 'bg-[#151F32] border-slate-800 hover:border-slate-700' : 'bg-white border-slate-100 hover:shadow-md'}`}>
                     <div className={`p-4 rounded-2xl ${isDarkMode ? 'bg-amber-900/30 text-amber-500' : 'bg-amber-50 text-[#A29061]'}`}><BookOpen className="w-8 h-8" /></div>
                     <div><p className={`text-sm font-bold uppercase tracking-wider mb-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Total SOP</p><p className={`text-4xl font-extrabold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{totalSOP}</p></div>
-                  </div>
-                  <div className={`p-6 rounded-2xl border shadow-sm transition-all flex items-center space-x-5 ${isDarkMode ? 'bg-[#151F32] border-slate-800 hover:border-slate-700' : 'bg-white border-slate-100 hover:shadow-md'}`}>
+                  </button>
+                  <button onClick={() => { setFilterJenis('Standar Pelayanan'); setSelectedL1(''); setSelectedL2(''); setCurrentPage(1); setLevel(3); }} title="Lihat seluruh dokumen Standar Pelayanan" className={`text-left w-full p-6 rounded-2xl border shadow-sm transition-all flex items-center space-x-5 cursor-pointer hover:-translate-y-0.5 ${isDarkMode ? 'bg-[#151F32] border-slate-800 hover:border-slate-700' : 'bg-white border-slate-100 hover:shadow-md'}`}>
                     <div className={`p-4 rounded-2xl ${isDarkMode ? 'bg-emerald-900/30 text-emerald-400' : 'bg-emerald-50 text-emerald-600'}`}><FileText className="w-8 h-8" /></div>
                     <div><p className={`text-sm font-bold uppercase tracking-wider mb-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Standar Pelayanan</p><p className={`text-4xl font-extrabold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{totalSP}</p></div>
-                  </div>
+                  </button>
                 </div>
 
                 <div className={`p-6 rounded-2xl border shadow-sm transition-all duration-300 ${isDarkMode ? 'bg-[#151F32] border-slate-800' : 'bg-white border-slate-100'}`}>
@@ -1432,14 +1456,14 @@ function DashboardBPN() {
 
             <div className={`rounded-2xl border shadow-sm overflow-hidden transition-colors ${isDarkMode ? 'bg-[#151F32] border-slate-800' : 'bg-white border-slate-100'}`}>
               <div className={`p-5 md:p-6 border-b flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 ${isDarkMode ? 'bg-[#151F32] border-slate-800' : 'bg-white border-slate-100'}`}>
-                <h3 className={`text-lg font-extrabold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{level === 1 ? 'Rekapitulasi Total Masing-Masing Unit Kerja' : level === 2 ? `Sub-Unit: ${selectedL1}` : `Data Detail: ${selectedL2 || 'Semua Unit'}`}</h3>
+                <h3 className={`text-lg font-extrabold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{level === 1 ? 'Rekapitulasi Total Masing-Masing Unit Kerja' : level === 2 ? `Sub-Unit: ${selectedL1}` : `Data Detail: ${selectedL2 || selectedL1 || 'Seluruh Unit Kerja'}`}</h3>
                 {level === 2 && <button onClick={() => { setLevel(3); setSelectedL2(''); }} className="flex items-center px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-xl transition shadow-md w-full sm:w-auto shrink-0"><Layers className="w-4 h-4 mr-2" /> Lihat Semua Dokumen</button>}
-                {level === 3 && (
+                {(
                   <div className="flex flex-col sm:flex-row items-center w-full xl:w-auto gap-3">
-                    <div className="relative w-full sm:w-72"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Search className="h-4 w-4 text-slate-400" /></div><input type="text" placeholder="Cari nama, unit, atau sumber..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className={`w-full pl-10 pr-4 py-2.5 border rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all ${isDarkMode ? 'bg-[#0F172A] border-slate-700 text-white focus:bg-[#151F32]' : 'bg-slate-50 border-slate-200 text-slate-800 focus:bg-white'}`} /></div>
+                    <div className="relative w-full sm:w-72"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Search className="h-4 w-4 text-slate-400" /></div><input type="text" placeholder="Cari nama dokumen, unit kerja, atau sumber..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className={`w-full pl-10 pr-4 py-2.5 border rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all ${isDarkMode ? 'bg-[#0F172A] border-slate-700 text-white focus:bg-[#151F32]' : 'bg-slate-50 border-slate-200 text-slate-800 focus:bg-white'}`} /></div>
                     <div className={`flex items-center border rounded-xl px-2 w-full sm:w-auto ${isDarkMode ? 'bg-[#0F172A] border-slate-700' : 'bg-slate-50 border-slate-200'}`}><Filter className="w-4 h-4 text-slate-400 ml-2" /><select value={filterJenis} onChange={(e) => setFilterJenis(e.target.value)} className={`w-full bg-transparent border-none text-sm font-medium focus:ring-0 outline-none py-2.5 pl-2 pr-6 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}><option value="Semua">Semua Jenis</option><option value="Proses Bisnis">Proses Bisnis</option><option value="SOP">SOP</option><option value="Standar Pelayanan">Standar Pelayanan</option></select></div>
                     <div className={`flex items-center border rounded-xl px-2 w-full sm:w-auto ${isDarkMode ? 'bg-[#0F172A] border-slate-700' : 'bg-slate-50 border-slate-200'}`}><select value={filterTahun} onChange={(e) => setFilterTahun(e.target.value)} className={`w-full bg-transparent border-none text-sm font-medium focus:ring-0 outline-none py-2.5 pl-2 pr-6 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}><option value="Semua">Semua Tahun</option>{uniqueTahunList.map(thn => <option key={thn} value={thn}>{thn}</option>)}</select></div>
-                    <button onClick={handleExportExcel} className="flex justify-center items-center px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl transition shadow-md w-full sm:w-auto shrink-0"><Download className="w-4 h-4 mr-2" /> Unduh Excel</button>
+                    {level === 3 && <button onClick={handleExportExcel} className="flex justify-center items-center px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl transition shadow-md w-full sm:w-auto shrink-0"><Download className="w-4 h-4 mr-2" /> Unduh Excel</button>}
                   </div>
                 )}
               </div>
@@ -1449,7 +1473,8 @@ function DashboardBPN() {
                   <thead className={`text-[11px] font-bold uppercase tracking-wider border-b ${isDarkMode ? 'bg-[#0F172A] text-slate-400 border-slate-800' : 'bg-slate-50 text-slate-400 border-slate-100'}`}>
                     <tr>
                       <th className="px-6 py-4 w-16 text-center">No</th>
-                      <th className="px-6 py-4">{level === 3 ? 'Nama Dokumen / Layanan' : 'Unit Kerja'}</th>
+                      <th className="px-6 py-4 min-w-56">{level === 3 ? 'Nama Dokumen / Layanan' : 'Unit Kerja'}</th>
+                      {level === 3 && !selectedL1 && <th className="px-6 py-4">Unit Kerja (Level 1)</th>}
                       {level === 3 && <th className="px-6 py-4">Unit Kerja (Level 2)</th>}
                       {level === 3 && <th className="px-6 py-4">Unit Kerja (Level 3)</th>}
                       <th className="px-6 py-4">{level === 3 ? 'Jenis Dokumen' : 'Probis'}</th>
@@ -1483,12 +1508,13 @@ function DashboardBPN() {
                     {level === 3 && currentItems.map((doc, idx) => (
                       <tr key={doc.id} className={`border-b transition-colors ${isDarkMode ? 'border-slate-800 hover:bg-blue-900/20' : 'border-slate-50 hover:bg-blue-50/30'}`}>
                         <td className="px-6 py-4 text-center text-slate-400 font-medium">{indexOfFirstItem + idx + 1}</td>
-                        <td className={`px-6 py-4 font-bold ${isDarkMode ? 'text-blue-100' : 'text-[#002855]'}`}><button onClick={async () => { const _lnk = doc.link || ''; if (doc.jenis === 'SOP' && _lnk.includes('/sop/studio')) { router.push(_lnk.replace(/^\/e-sop-atrbpn/, '')); return; } setViewDoc(doc); setPreviewSvg(""); if (doc.jenis === 'Proses Bisnis' && doc.link.includes('id=')) { try { const bpmnId = doc.link.split('id=')[1].split('&')[0]; const res = await apiFetch(`/bpmn/models/${bpmnId}`, token); if (!res.ok) throw new Error("Gagal"); const data = await res.json(); if (data && data.svg_xml) setPreviewSvg(data.svg_xml); else setPreviewSvg(`<div class="p-6 text-center text-red-500 font-bold border border-red-200 bg-red-50 rounded-xl m-4">Diagram kosong.</div>`); } catch { setPreviewSvg(`<div class="p-6 text-center text-amber-600 font-bold border border-amber-200 bg-amber-50 rounded-xl m-4">Gagal memuat diagram secara otomatis. Silakan klik "Buka di Tab Baru".</div>`); } } }} className={`hover:underline text-left line-clamp-2 ${isDarkMode ? 'hover:text-blue-400' : 'hover:text-blue-600'}`}>{doc.nama}</button></td>
+                        <td className={`px-6 py-4 font-bold ${isDarkMode ? 'text-blue-100' : 'text-[#002855]'}`}><button onClick={async () => { const _lnk = doc.link || ''; if (doc.jenis === 'SOP' && _lnk.includes('/sop/studio')) { router.push(_lnk.replace(/^\/e-sop-atrbpn/, '')); return; } setViewDoc(doc); setPreviewSvg(""); if (doc.jenis === 'Proses Bisnis' && doc.link.includes('id=')) { try { const bpmnId = doc.link.split('id=')[1].split('&')[0]; const res = await apiFetch(`/bpmn/models/${bpmnId}`, token); if (!res.ok) throw new Error("Gagal"); const data = await res.json(); if (data && data.svg_xml) setPreviewSvg(data.svg_xml); else setPreviewSvg(`<div class="p-6 text-center text-red-500 font-bold border border-red-200 bg-red-50 rounded-xl m-4">Diagram kosong.</div>`); } catch { setPreviewSvg(`<div class="p-6 text-center text-amber-600 font-bold border border-amber-200 bg-amber-50 rounded-xl m-4">Gagal memuat diagram secara otomatis. Silakan klik "Buka di Tab Baru".</div>`); } } }} className={`hover:underline text-left wrap-break-word ${isDarkMode ? 'hover:text-blue-400' : 'hover:text-blue-600'}`}>{doc.nama}</button></td>
+                        {!selectedL1 && <td className="px-6 py-4 text-slate-500">{doc.unitL1 || '-'}</td>}
                         <td className="px-6 py-4 text-slate-500">{doc.unitL2 || '-'}</td>
                         <td className="px-6 py-4 text-slate-500">{doc.unitL3 || '-'}</td>
                         <td className="px-6 py-4"><span className={`px-3 py-1 rounded-full text-[11px] font-extrabold uppercase tracking-wider ${doc.jenis === 'Proses Bisnis' ? (isDarkMode ? 'bg-blue-900/50 text-blue-300' : 'bg-blue-100 text-blue-700') : doc.jenis === 'SOP' ? (isDarkMode ? 'bg-amber-900/40 text-amber-400' : 'bg-amber-100 text-amber-700') : (isDarkMode ? 'bg-emerald-900/40 text-emerald-400' : 'bg-emerald-100 text-emerald-700')}`}>{doc.jenis}</span></td>
                         <td className="px-6 py-4 text-slate-500">{doc.tahun}</td>
-                        <td className="px-6 py-4 italic text-slate-400 truncate max-w-50">{doc.sumber}</td>
+                        <td className="px-6 py-4 italic text-slate-400 max-w-64 wrap-break-word">{doc.sumber}</td>
                         <td className="px-6 py-4 text-center">
                           {currentUser?.role === 'admin' ? (
                             <select value={doc.status || 'draft'} onChange={(e) => handleApproval(doc, e.target.value)} className={`px-2 py-1.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider cursor-pointer outline-none shadow-sm border transition-all ${doc.status === 'approved' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : doc.status === 'pending' ? 'bg-blue-100 text-blue-700 border-blue-200' : doc.status === 'rejected' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>

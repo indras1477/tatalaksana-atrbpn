@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle, useMemo } from 'react';
+import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle, useMemo, createContext, useContext } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
   Plus, Trash2, UserPlus, UserMinus, Save,
@@ -9,6 +9,7 @@ import {
   Edit2, FileDown, Loader2
 } from 'lucide-react';
 import { HIERARKI_UNIT } from '@/lib/constants';
+import ShareButton from '@/components/ShareButton';
 
 // Sumber tunggal (Titlecase) dari master unit; konsisten dengan modal konfigurasi SOP.
 const L1_OPTIONS = Object.keys(HIERARKI_UNIT);
@@ -31,6 +32,16 @@ const genStepId = () => `step-${Date.now()}-${(__stepIdSeq++).toString(36)}-${Ma
 // --- TIPE DATA ---
 type SOPFlowSymbol = 'start' | 'process' | 'decision' | 'connector' | 'end';
 
+// Cabang tambahan (ke-2, ke-3, dst) dari sebuah bentuk — cabang pertama tetap
+// memakai field legacy loopTarget/branchSide/branchText demi kompatibilitas data lama.
+interface BranchDef {
+  target: string;
+  targetCol?: number;
+  side?: 'left' | 'right';
+  text?: string;
+  textOffset?: { x: number; y: number };
+}
+
 interface ExtraShape {
   colIdx: number;
   symbol: SOPFlowSymbol;
@@ -42,14 +53,15 @@ interface ExtraShape {
   downTextOffset?: { x: number; y: number };
   branchText?: string;
   branchTextOffset?: { x: number; y: number };
+  extraBranches?: BranchDef[];
 }
 
 interface SOPStep {
   id: string;
   kegiatan: string;
-  pelaksanaCol: number; 
+  pelaksanaCol: number;
   symbol: SOPFlowSymbol;
-  arrowDown: boolean; 
+  arrowDown: boolean;
   loopTarget?: string;
   loopTargetCol?: number;
   branchSide?: 'left' | 'right';
@@ -57,6 +69,7 @@ interface SOPStep {
   downTextOffset?: { x: number; y: number };
   branchText?: string;
   branchTextOffset?: { x: number; y: number };
+  extraBranches?: BranchDef[];
   nomorOverride?: string;
   waktu: string;
   syarat: string;
@@ -88,6 +101,8 @@ export interface SOPBuilderProps {
   signedCoverUrl?: string | null;
   signedCoverMime?: string;
   hasSignedCover?: boolean;
+  // ID dokumen tersimpan — untuk tombol Bagikan (tautan view publik). Null = belum tersimpan.
+  shareModelId?: number | null;
 }
 
 // --- KOMPONEN LABEL TEKS BISA DIGESER & DIEDIT ---
@@ -373,53 +388,155 @@ const IncomingArrowLocal = ({
 };
 
 // --- KOMPONEN EDITABLE CELL ---
+// Mode baca-saja disebarkan ke seluruh EditableCell tanpa perlu meneruskan prop ke tiap sel.
+const ViewOnlyContext = createContext(false);
+
+// Prefix daftar: dukung penomoran BERTINGKAT dengan spasi awal sebagai level —
+// "11. ", "a. ", "1) ", "a) ", "- " (mis. level 2 = "   a. ", level 3 = "      1) ").
+const LIST_PREFIX_RE = /^(\s*)([0-9]+[.)]\s+|[a-zA-Z][.)]\s+|-\s+)/;
+
+// Format inline: **teks** → tebal, _teks_ → miring (disimpan sebagai penanda di teks).
+const inlineFmtHtml = (escaped: string) =>
+  escaped
+    .replace(/\*\*([^*]+?)\*\*/g, '<b>$1</b>')
+    .replace(/_([^_\n]+?)_/g, '<i>$1</i>');
+
+const escapeHtmlText = (text: string) => {
+  const map: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
+  return text.replace(/[&<>"']/g, (m) => map[m] || m);
+};
+
+// Serialisasi DOM contentEditable → teks + penanda format (kebalikan formatContent).
+// <b>/<strong>/span bold → **…**, <i>/<em>/span italic → _…_, div/p → baris baru.
+const serializeInlineNode = (node: Node): string => {
+  if (node.nodeType === Node.TEXT_NODE) return node.textContent || '';
+  if (!(node instanceof HTMLElement)) return '';
+  if (node.tagName === 'BR') return '\n';
+  const inner = Array.from(node.childNodes).map(serializeInlineNode).join('');
+  if (!inner) return '';
+  const marks: string[] = [];
+  if (node.tagName === 'B' || node.tagName === 'STRONG') marks.push('**');
+  else if (node.tagName === 'I' || node.tagName === 'EM') marks.push('_');
+  else {
+    const st = node.style;
+    if (st && (st.fontWeight === 'bold' || parseInt(st.fontWeight || '') >= 600)) marks.push('**');
+    if (st && st.fontStyle === 'italic') marks.push('_');
+  }
+  return marks.reduce((acc, mk) => mk + acc + mk, inner);
+};
+
+const domToText = (root: HTMLElement): string => {
+  const lines: string[] = [];
+  let cur: string | null = null;
+  root.childNodes.forEach((n) => {
+    const isBlock = n instanceof HTMLElement && (n.tagName === 'DIV' || n.tagName === 'P');
+    if (isBlock) {
+      if (cur !== null) { lines.push(cur); cur = null; }
+      // <br> di akhir div = penanda baris (div kosong "<div><br></div>" = baris kosong)
+      // — buang SATU \n penutup agar tidak jadi baris ganda.
+      lines.push(Array.from(n.childNodes).map(serializeInlineNode).join('').replace(/\n$/, ''));
+    } else {
+      cur = (cur ?? '') + serializeInlineNode(n);
+    }
+  });
+  if (cur !== null) lines.push(cur);
+  return lines.join('\n').replace(/\u00A0/g, ' ');
+};
+
 const EditableCell = ({ value, onChange, className, placeholder, center = false, justify = false }: { value: string, onChange: (val: string) => void, className?: string, placeholder?: string, center?: boolean, justify?: boolean }) => {
   const divRef = useRef<HTMLDivElement>(null);
+  const isViewOnly = useContext(ViewOnlyContext);
+  const [fmtMenu, setFmtMenu] = useState<{ x: number; y: number } | null>(null);
 
   const formatContent = (val: string) => {
     if (!divRef.current) return;
     if (!val) { divRef.current.innerHTML = ''; return; }
     const lines = val.split('\n');
-    const listPrefixRe = /^([0-9a-zA-Z]+\.\s+|-\s+)/;
-    const hasList = lines.some(line => listPrefixRe.test(line));
+    const hasList = lines.some(line => LIST_PREFIX_RE.test(line));
     if (hasList) {
-      // Samakan jarak indentasi semua butir bernomor: gunakan lebar prefix terpanjang
-      // (mis. "10. ") dalam satuan 'ch' agar baris lanjutan & butir yang wrap tersusun rapi sejajar.
-      const maxPrefix = lines.reduce((mx, line) => {
-        const m = line.match(listPrefixRe);
-        return m ? Math.max(mx, m[1].length) : mx;
-      }, 0);
-      // Lebar kolom nomor = panjang prefix terpanjang (satuan 'ch'). Karena '.' & spasi
-      // lebih sempit dari '0', ini sudah menyisakan jeda ~1ch antara nomor dan teks.
-      const indent = `${maxPrefix}ch`;
-      let inList = false;
-      const escapeHtml = (text: string) => {
-        const map: Record<string, string> = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#039;' };
-        return text.replace(/[&<>"']/g, (m) => map[m] || m);
+      // Penomoran BERTINGKAT otomatis: level ditentukan JENIS penanda —
+      // "1." level 0 → "a." level 1 → "1)" level 2 → "a)" level 3 ("-" ikut level 1).
+      // Spasi awal (Tab) menambah level. Tiap level menjorok ke kolom teks level
+      // di atasnya, dengan lebar kolom nomor per level (indentasi gantung ala Word).
+      const typeRank = (pfx: string): number => {
+        if (/^\d+\.\s/.test(pfx)) return 0;
+        if (/^[a-zA-Z]\.\s/.test(pfx)) return 1;
+        if (/^\d+\)\s/.test(pfx)) return 2;
+        if (/^[a-zA-Z]\)\s/.test(pfx)) return 3;
+        return 1; // "-"
       };
+      const levelOf = (m: RegExpMatchArray) => Math.min(6, Math.floor(m[1].length / 3) + typeRank(m[2]));
+      const colW: Record<number, number> = {};
+      let maxLevel = 0;
+      lines.forEach(line => {
+        const m = line.match(LIST_PREFIX_RE);
+        if (m) {
+          const lv = levelOf(m);
+          colW[lv] = Math.max(colW[lv] || 0, m[2].length);
+          maxLevel = Math.max(maxLevel, lv);
+        }
+      });
+      const indent: number[] = [0];
+      for (let lv = 1; lv <= maxLevel; lv++) indent[lv] = indent[lv - 1] + (colW[lv - 1] ?? 3);
+      let inList = false;
+      let lastIndent = 0;
       const formattedHTML = lines.map(line => {
-        const m = line.match(listPrefixRe);
+        const m = line.match(LIST_PREFIX_RE);
         if (m) {
           inList = true;
-          const pfx = escapeHtml(m[1]);
-          const rest = escapeHtml(line.slice(m[1].length));
-          // Nomor ditaruh di marker inline-block lebar-tetap (kolom nomor) + margin negatif:
-          // semua butir mulai teksnya di kolom yang sama, dan spasi setelah nomor TIDAK ikut
-          // diregang oleh justify (mirip penomoran Word).
-          return `<div style="padding-left: ${indent};"><span style="display: inline-block; width: ${indent}; margin-left: -${indent}; white-space: pre;">${pfx}</span>${rest}</div>`;
+          const lv = levelOf(m);
+          const col = colW[lv];
+          const total = indent[lv] + col;
+          lastIndent = total;
+          // Spasi awal disimpan tersembunyi (round-trip level via Tab); nomor di
+          // marker inline-block lebar-tetap + margin negatif → teks butir selevel
+          // mulai di kolom sama & spasi tak diregang justify.
+          const leadHidden = m[1] ? `<span style="display: none;">${escapeHtmlText(m[1])}</span>` : '';
+          const rest = inlineFmtHtml(escapeHtmlText(line.slice(m[0].length)));
+          return `<div style="padding-left: ${total}ch;">${leadHidden}<span style="display: inline-block; width: ${col}ch; margin-left: -${col}ch; white-space: pre;">${escapeHtmlText(m[2])}</span>${rest}</div>`;
         } else if (line.trim() === '') {
           inList = false; return `<div><br></div>`;
         } else {
-          return `<div style="${inList ? `padding-left: ${indent};` : ''}">${escapeHtml(line)}</div>`;
+          return `<div style="${inList ? `padding-left: ${lastIndent}ch;` : ''}">${inlineFmtHtml(escapeHtmlText(line))}</div>`;
         }
       }).join('');
       divRef.current.innerHTML = formattedHTML;
-    } else { divRef.current.innerText = val; }
+    } else {
+      divRef.current.innerHTML = lines.map(line => `<div>${inlineFmtHtml(escapeHtmlText(line)) || '<br>'}</div>`).join('');
+    }
   };
 
   useEffect(() => { if (divRef.current && document.activeElement !== divRef.current) formatContent(value); }, [value]);
-  const handleInput = (e: React.FormEvent<HTMLDivElement>) => onChange(e.currentTarget.innerText);
-  const handleBlur = () => formatContent(value);
+  const handleInput = (e: React.FormEvent<HTMLDivElement>) => { if (isViewOnly) return; onChange(domToText(e.currentTarget)); };
+  const handleBlur = () => { setFmtMenu(null); formatContent(value); };
+
+  // Terapkan tebal/miring pada teks terseleksi (menu klik-kanan / Ctrl+B / Ctrl+I).
+  const applyFormat = (cmd: 'bold' | 'italic') => {
+    if (isViewOnly || !divRef.current) return;
+    document.execCommand(cmd);
+    onChange(domToText(divRef.current));
+    setFmtMenu(null);
+  };
+
+  const handleContextMenu = (e: React.MouseEvent<HTMLDivElement>) => {
+    if (isViewOnly) return;
+    const sel = window.getSelection();
+    if (sel && !sel.isCollapsed && divRef.current && divRef.current.contains(sel.anchorNode)) {
+      e.preventDefault();
+      setFmtMenu({ x: e.clientX, y: e.clientY });
+    }
+  };
+
+  useEffect(() => {
+    if (!fmtMenu) return;
+    const close = (ev: Event) => {
+      if ((ev.target as HTMLElement)?.closest?.('[data-fmt-menu]')) return; // klik di menu — biarkan
+      setFmtMenu(null);
+    };
+    document.addEventListener('mousedown', close);
+    document.addEventListener('scroll', close, true);
+    return () => { document.removeEventListener('mousedown', close); document.removeEventListener('scroll', close, true); };
+  }, [fmtMenu]);
 
   // Ambil teks baris tempat kursor berada + isi setelah prefix (untuk auto-numbering).
   const getCurrentLine = (root: HTMLDivElement) => {
@@ -434,27 +551,73 @@ const EditableCell = ({ value, onChange, className, placeholder, center = false,
     return { lineEl, lineText: lineEl.textContent || '' };
   };
 
-  // Auto-numbering ala editor: Enter pada baris berdaftar → lanjut nomor/huruf/bullet berikutnya.
-  // Enter pada butir kosong → hentikan daftar (bersihkan prefix baris ini).
+  // Enter = lanjut nomor/huruf/bullet (dukung "1." maupun "1)", bertingkat via spasi awal);
+  // Enter pada butir kosong = keluar daftar; Tab / Shift+Tab = tambah/kurangi level indent;
+  // Ctrl/Cmd+B = tebal, Ctrl/Cmd+I = miring.
+  const INDENT_STEP = '   '; // 3 spasi per level
   const handleKeyDown = (e: React.KeyboardEvent<HTMLDivElement>) => {
+    if (isViewOnly || !divRef.current) return;
+
+    // — Format tebal/miring —
+    if ((e.ctrlKey || e.metaKey) && !e.altKey) {
+      const k = e.key.toLowerCase();
+      if (k === 'b' || k === 'i') {
+        e.preventDefault();
+        document.execCommand(k === 'b' ? 'bold' : 'italic');
+        onChange(domToText(divRef.current));
+        return;
+      }
+    }
+
+    // — Indentasi level daftar —
+    if (e.key === 'Tab') {
+      const info = getCurrentLine(divRef.current);
+      if (!info) return;
+      e.preventDefault();
+      const sel = window.getSelection();
+      if (!sel) return;
+      const saved = sel.rangeCount ? sel.getRangeAt(0).cloneRange() : null;
+      // Text node pertama pada baris (spasi awal/prefix berada di sana).
+      const firstText = info.lineEl.nodeType === Node.TEXT_NODE
+        ? info.lineEl
+        : document.createTreeWalker(info.lineEl, NodeFilter.SHOW_TEXT).nextNode();
+      if (e.shiftKey) {
+        const leadSpaces = ((firstText?.textContent || '').match(/^ {1,3}/) || [''])[0];
+        if (!firstText || !leadSpaces) return;
+        const r = document.createRange();
+        r.setStart(firstText, 0); r.setEnd(firstText, leadSpaces.length);
+        sel.removeAllRanges(); sel.addRange(r);
+        document.execCommand('delete');
+      } else {
+        const r = document.createRange();
+        if (firstText) { r.setStart(firstText, 0); r.setEnd(firstText, 0); }
+        else { r.setStart(info.lineEl, 0); r.setEnd(info.lineEl, 0); }
+        sel.removeAllRanges(); sel.addRange(r);
+        document.execCommand('insertText', false, INDENT_STEP);
+        if (saved) { try { sel.removeAllRanges(); sel.addRange(saved); } catch { /* posisi kursor berubah — biarkan */ } }
+      }
+      onChange(domToText(divRef.current));
+      return;
+    }
+
+    // — Auto-numbering —
     if (e.key !== 'Enter' || e.shiftKey || (e.nativeEvent as { isComposing?: boolean }).isComposing) return;
-    if (!divRef.current) return;
     const info = getCurrentLine(divRef.current);
     if (!info) return;
     const { lineText } = info;
 
     let prefix: string | null = null;
     let contentAfterLen = 0;
-    const numMatch = lineText.match(/^(\s*)(\d+)\.\s/);
-    const alphaMatch = lineText.match(/^(\s*)([a-zA-Z])\.\s/);
+    const numMatch = lineText.match(/^(\s*)(\d+)([.)])\s/);
+    const alphaMatch = lineText.match(/^(\s*)([a-zA-Z])([.)])\s/);
     const dashMatch = lineText.match(/^(\s*)-\s/);
     if (numMatch) {
-      prefix = `${numMatch[1]}${parseInt(numMatch[2], 10) + 1}. `;
+      prefix = `${numMatch[1]}${parseInt(numMatch[2], 10) + 1}${numMatch[3]} `;
       contentAfterLen = lineText.slice(numMatch[0].length).trim().length;
     } else if (alphaMatch) {
       const c = alphaMatch[2];
       const next = c === 'z' ? 'aa' : c === 'Z' ? 'AA' : String.fromCharCode(c.charCodeAt(0) + 1);
-      prefix = `${alphaMatch[1]}${next}. `;
+      prefix = `${alphaMatch[1]}${next}${alphaMatch[3]} `;
       contentAfterLen = lineText.slice(alphaMatch[0].length).trim().length;
     } else if (dashMatch) {
       prefix = `${dashMatch[1]}- `;
@@ -477,11 +640,24 @@ const EditableCell = ({ value, onChange, className, placeholder, center = false,
       document.execCommand('insertParagraph');
       document.execCommand('insertText', false, prefix);
     }
-    onChange(divRef.current.innerText);
+    onChange(domToText(divRef.current));
   };
 
   return (
-    <div ref={divRef} contentEditable suppressContentEditableWarning onInput={handleInput} onKeyDown={handleKeyDown} onBlur={handleBlur} className={`outline-none bg-transparent w-full min-h-6 empty:before:content-[attr(data-placeholder)] empty:before:text-slate-400 wrap-break-word whitespace-pre-wrap ${center ? 'text-center' : justify ? 'text-justify' : 'text-left'} ${className || ''}`} data-placeholder={placeholder} />
+    <>
+      <div ref={divRef} contentEditable={!isViewOnly} suppressContentEditableWarning onInput={handleInput} onKeyDown={handleKeyDown} onBlur={handleBlur} onContextMenu={handleContextMenu} className={`outline-none bg-transparent w-full min-h-6 empty:before:content-[attr(data-placeholder)] empty:before:text-slate-400 wrap-break-word whitespace-pre-wrap ${center ? 'text-center' : justify ? 'text-justify' : 'text-left'} ${className || ''}`} data-placeholder={placeholder} />
+      {fmtMenu && (
+        <div
+          data-fmt-menu
+          className="fixed z-50 bg-white border border-slate-200 rounded-xl shadow-xl p-1 flex gap-1 no-print font-sans"
+          style={{ left: fmtMenu.x, top: fmtMenu.y + 4 }}
+        >
+          {/* Aksi pada onMouseDown + preventDefault: seleksi teks tidak hilang & menu tidak keburu tertutup. */}
+          <button onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); applyFormat('bold'); }} title="Tebal (Ctrl+B)" className="px-3 py-1.5 rounded-lg hover:bg-slate-100 text-sm font-black text-slate-700">B</button>
+          <button onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); applyFormat('italic'); }} title="Miring (Ctrl+I)" className="px-3 py-1.5 rounded-lg hover:bg-slate-100 text-sm italic font-serif text-slate-700">I</button>
+        </div>
+      )}
+    </>
   );
 };
 
@@ -489,9 +665,13 @@ const EditableCell = ({ value, onChange, className, placeholder, center = false,
 const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   initialData, initialTitle, initialKey, initialL1, initialL2, initialJenis, initialKlasifikasi,
   isViewOnly = false, onSaveTrigger, onSubmitTrigger, onBackTrigger, onDownloadPdf,
-  signedCoverUrl = null, signedCoverMime = '', hasSignedCover = false
+  signedCoverUrl = null, signedCoverMime = '', hasSignedCover = false, shareModelId = null
 }, ref) => {
   const searchParams = useSearchParams();
+
+  // Token auth untuk tombol Bagikan (dibaca sekali di client).
+  const [authToken, setAuthToken] = useState('');
+  useEffect(() => { setAuthToken(localStorage.getItem('token') || ''); }, []);
 
   const parsedData = useMemo(() => {
     if (!initialData) return null;
@@ -529,7 +709,11 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     { id: genStepId(), kegiatan: '', pelaksanaCol: 0, symbol: 'start', arrowDown: true, waktu: '', syarat: '', output: '', ket: '' }
   ]);
 
-  const [coverBreaks, setCoverBreaks] = useState<{ [key: number]: boolean }>(parsedData?.coverBreaks || { 1: false, 2: false });
+  const [coverBreaks, setCoverBreaks] = useState<{ [key: string]: boolean }>(parsedData?.coverBreaks || { 1: false, 2: false });
+  // Tabel LANJUTAN per baris cover (mis. Dasar Hukum yang panjang dilanjutkan di
+  // halaman berikutnya). Key = id baris utama (1/2/3), value = daftar halaman
+  // lanjutan berisi teks kolom kiri & kanan.
+  const [coverCont, setCoverCont] = useState<Record<number, { left: string; right: string }[]>>(parsedData?.coverCont || {});
   const [activeTab, setActiveTab] = useState<'cover' | number>('cover');
   const [isSaveModalOpen, setIsSaveModalOpen] = useState<boolean>(false);
   const [showSubmitConfirm, setShowSubmitConfirm] = useState<boolean>(false);
@@ -569,10 +753,21 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     if (activeTab !== 'cover' || effectiveIsViewOnly) return;
     const F4_PX = 813; // 215mm @ 96dpi (border-box: sudah termasuk padding/margin 6mm)
     const t = setTimeout(() => {
-      // Susun ulang urutan potongan (chunk) id baris cover dari coverBreaks (id baris: 1,2,3).
-      const idChunks: number[][] = [];
-      let cur: number[] = [];
-      [1, 2, 3].forEach(id => { cur.push(id); if (coverBreaks[id]) { idChunks.push(cur); cur = []; } });
+      // Susun ulang urutan potongan (chunk) id baris cover dari coverBreaks.
+      // Baris lanjutan (id "1c0" dst) selalu memulai halaman baru sendiri.
+      const rowIds: (number | string)[] = [];
+      const forced = new Set<string>();
+      [1, 2, 3].forEach(id => {
+        rowIds.push(id);
+        (coverCont[id] || []).forEach((_, i) => { const cid = `${id}c${i}`; forced.add(cid); rowIds.push(cid); });
+      });
+      const idChunks: (number | string)[][] = [];
+      let cur: (number | string)[] = [];
+      rowIds.forEach(id => {
+        if (typeof id === 'string' && forced.has(id) && cur.length) { idChunks.push(cur); cur = []; }
+        cur.push(id);
+        if (coverBreaks[id]) { idChunks.push(cur); cur = []; }
+      });
       if (cur.length) idChunks.push(cur);
 
       const containers = Array.from(document.querySelectorAll<HTMLElement>('.cover-page-container'));
@@ -590,7 +785,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
       }
     }, 500);
     return () => clearTimeout(t);
-  }, [activeTab, effectiveIsViewOnly, coverBreaks, dasarHukum, kualifikasi, keterkaitan, peralatan, peringatan, pencatatan, colCount]);
+  }, [activeTab, effectiveIsViewOnly, coverBreaks, coverCont, dasarHukum, kualifikasi, keterkaitan, peralatan, peringatan, pencatatan, colCount]);
 
   const displayNumbers = useMemo(() => {
     let counter = 1;
@@ -605,13 +800,45 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     });
   }, [steps]);
 
+  // TOTAL WAKTU SOP: jumlah otomatis kolom Mutu Baku "Waktu" seluruh langkah.
+  // Pedoman: 1 HARI KERJA = 5,5 jam = 330 menit. Semua satuan dikonversi ke menit
+  // (jam ×60, hari ×330, minggu ×5 hari kerja, bulan ×22 hari kerja; angka polos =
+  // menit), lalu ditampilkan "X Menit / Y Hari Kerja" (Y = X ÷ 330).
+  const MENIT_PER_HARI_KERJA = 330;
+  const totalWaktuSOP = useMemo(() => {
+    let menit = 0;
+    const re = /(\d+(?:[.,]\d+)?)\s*(menit|mnt|jam|jm|hari|hr|minggu|mgg|bulan|bln)/g;
+    steps.forEach(s => {
+      const str = (s.waktu || '').toLowerCase();
+      if (!str.trim()) return;
+      let m: RegExpExecArray | null; let matched = false;
+      re.lastIndex = 0;
+      while ((m = re.exec(str))) {
+        matched = true;
+        const n = parseFloat(m[1].replace(',', '.'));
+        const u = m[2];
+        if (u === 'menit' || u === 'mnt') menit += n;
+        else if (u === 'jam' || u === 'jm') menit += n * 60;
+        else if (u === 'hari' || u === 'hr') menit += n * MENIT_PER_HARI_KERJA;
+        else if (u === 'minggu' || u === 'mgg') menit += n * 5 * MENIT_PER_HARI_KERJA;
+        else menit += n * 22 * MENIT_PER_HARI_KERJA; // bulan
+      }
+      if (!matched) { const n = parseFloat(str.replace(',', '.')); if (!isNaN(n)) menit += n; }
+    });
+    if (!menit) return null;
+    const fmt = (n: number) => (Math.round(n * 100) / 100).toLocaleString('id-ID');
+    // Hari kerja DIBULATKAN KE ATAS: sisa jam/menit dihitung sebagai hari berikutnya
+    // (mis. 2 hari lebih 2 jam → 3 hari kerja).
+    return { menit: fmt(menit), hari: Math.ceil(menit / MENIT_PER_HARI_KERJA) };
+  }, [steps]);
+
   const stepToChunkMap = useMemo(() => {
     const map = new Map<number, number>();
     let cIdx = 0; let cSize = 0;
     steps.forEach((step, idx) => {
       map.set(idx, cIdx);
       cSize++;
-      if (step.isPageBreak || cSize >= 6) { cIdx++; cSize = 0; }
+      if (step.isPageBreak || cSize >= 7) { cIdx++; cSize = 0; }
     });
     return map;
   }, [steps]);
@@ -637,9 +864,11 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
 
     steps.forEach((step, idx) => {
       if (step.loopTarget) addIncoming(idx, step.pelaksanaCol, step.loopTarget, step.branchSide || 'right', step.loopTargetCol ?? step.pelaksanaCol);
+      (step.extraBranches || []).forEach(b => addIncoming(idx, step.pelaksanaCol, b.target, b.side || 'right', b.targetCol ?? step.pelaksanaCol));
       if (step.extraShapes) {
         step.extraShapes.forEach(ex => {
           if (ex.loopTarget) addIncoming(idx, ex.colIdx, ex.loopTarget, ex.branchSide || 'right', ex.loopTargetCol ?? ex.colIdx);
+          (ex.extraBranches || []).forEach(b => addIncoming(idx, ex.colIdx, b.target, b.side || 'right', b.targetCol ?? ex.colIdx));
         });
       }
     });
@@ -702,6 +931,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
           if (pd.pencatatan) setPencatatan(pd.pencatatan);
           if (pd.steps) setSteps(pd.steps);
           if (pd.coverBreaks) setCoverBreaks(pd.coverBreaks);
+          if (pd.coverCont) setCoverCont(pd.coverCont);
         } catch (error) { console.error("Gagal meload data lokal", error); }
       }
     }
@@ -747,7 +977,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     return () => { document.head.removeChild(style); };
   }, []);
 
-  const getSOPData = () => JSON.stringify({ judul, nomor, unitKerja, subUnitKerja, jenisSOP, klasifikasiSOP, pelaksanaHeaders, jabatanPengesah, namaPengesah, nipPengesah, tglPembuatan, tglRevisi, tglEfektif, dasarHukum, kualifikasi, keterkaitan, peralatan, peringatan, pencatatan, steps, coverBreaks });
+  const getSOPData = (overrides?: Record<string, unknown>) => JSON.stringify({ judul, nomor, unitKerja, subUnitKerja, jenisSOP, klasifikasiSOP, pelaksanaHeaders, jabatanPengesah, namaPengesah, nipPengesah, tglPembuatan, tglRevisi, tglEfektif, dasarHukum, kualifikasi, keterkaitan, peralatan, peringatan, pencatatan, steps, coverBreaks, coverCont, ...(overrides || {}) });
 
   const handleSaveFlow = (silent = false) => {
     const data = getSOPData();
@@ -759,8 +989,17 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   };
 
   const handleSubmitOrtala = () => {
-    handleSaveFlow(true); 
-    if (onSubmitTrigger) onSubmitTrigger(getSOPData());
+    // Tanggal Pembuatan terisi OTOMATIS saat pertama kali dikirim ke Biro Ortala MR
+    // (tidak bisa diinput manual). Pengiriman berikutnya mempertahankan tanggal awal.
+    let overrides: Record<string, unknown> | undefined;
+    if (!tglPembuatan.trim()) {
+      const tgl = new Date().toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+      setTglPembuatan(tgl);
+      overrides = { tglPembuatan: tgl };
+    }
+    const data = getSOPData(overrides);
+    try { localStorage.setItem('e-sop-draft-local', data); } catch { /* abaikan */ }
+    if (onSubmitTrigger) onSubmitTrigger(data);
     else alert("Simulasi Terkirim! Data siap diluncurkan ke API Biro Ortala MR.");
   };
 
@@ -790,6 +1029,8 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
       }
     };
     const topHeaders = pelaksanaHeaders[0] || Array(colCount).fill('');
+    // Konversi penanda format (**tebal**, _miring_) → tag HTML agar tampil di Excel.
+    const xl = (s: string) => inlineFmtHtml(s).replace(/\n/g, '<br>');
     const html = `
       <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
       <head><meta charset="utf-8"><style>table { border-collapse: collapse; font-family: Arial, sans-serif; font-size: 11pt; table-layout: fixed; } th, td { border: 1px solid black; padding: 6px; vertical-align: top; white-space: normal; word-wrap: break-word; } .col-no { width: 40px; } .col-text { width: 362px; } .col-pelaksana { width: 80px; text-align: center; } .col-waktu { width: 100px; text-align: center; } th { background-color: #e2e8f0; font-weight: bold; text-align: center; vertical-align: middle; } td { mso-number-format: "\\@"; } br { mso-data-placement: same-cell; }</style></head>
@@ -801,7 +1042,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         let startIndex = 0; for(let i=0; i<chunkIdx; i++) startIndex += chunkedSteps[i].length;
         const chunkRows = chunk.map((step, localIdx) => {
           const absIdx = startIndex + localIdx;
-          return `<tr><td style="text-align: center; vertical-align: middle;">${displayNumbers[absIdx] || ""}</td><td>${step.kegiatan.replace(/\n/g, '<br>')}</td>${currentH.map((_, i) => `<td style="text-align: center; vertical-align: middle; font-size: 14pt;">${step.pelaksanaCol === i ? getExcelSymbol(step.symbol) : ''}</td>`).join('')}<td>${step.syarat.replace(/\n/g, '<br>')}</td><td style="text-align: center; vertical-align: middle;">${step.waktu.replace(/\n/g, '<br>')}</td><td>${step.output.replace(/\n/g, '<br>')}</td><td>${step.ket.replace(/\n/g, '<br>')}</td></tr>`;
+          return `<tr><td style="text-align: center; vertical-align: middle;">${displayNumbers[absIdx] || ""}</td><td>${xl(step.kegiatan)}</td>${currentH.map((_, i) => `<td style="text-align: center; vertical-align: middle; font-size: 14pt;">${step.pelaksanaCol === i ? getExcelSymbol(step.symbol) : ''}</td>`).join('')}<td>${xl(step.syarat)}</td><td style="text-align: center; vertical-align: middle;">${xl(step.waktu)}</td><td>${xl(step.output)}</td><td>${xl(step.ket)}</td></tr>`;
         }).join('');
         return (chunkIdx === 0 ? '' : `<tr><th colspan="2" style="background-color: #f8fafc; font-size: 9pt;">[Alur ${chunkIdx + 1}]</th>${currentH.map(h => `<th style="background-color: #f8fafc; font-size: 9pt;">${h || '-'}</th>`).join('')}<th colspan="4" style="background-color: #f8fafc;"></th></tr>`) + chunkRows;
       }).join('')}</tbody></table></body></html>`;
@@ -819,7 +1060,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     let currentChunk: SOPStep[] = [];
     steps.forEach((step) => {
       currentChunk.push(step);
-      if (step.isPageBreak || currentChunk.length >= 6) { chunks.push(currentChunk); currentChunk = []; }
+      if (step.isPageBreak || currentChunk.length >= 7) { chunks.push(currentChunk); currentChunk = []; }
     });
     if (currentChunk.length > 0) chunks.push(currentChunk);
     return chunks;
@@ -874,15 +1115,34 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
 
   const handleCellAction = (absIdx: number, colIdx: number, symbolToUse?: SOPFlowSymbol) => {
     if (connectingFrom !== null) {
-      const tgtId = steps[absIdx].id; 
+      const tgtId = steps[absIdx].id;
       if (connectingFrom.row !== absIdx || connectingFrom.col !== colIdx) {
-        if (connectingFrom.col === steps[connectingFrom.row].pelaksanaCol) {
-          updateStep(connectingFrom.row, { loopTarget: tgtId, loopTargetCol: colIdx });
+        const src = steps[connectingFrom.row];
+        if (connectingFrom.col === src.pelaksanaCol) {
+          if (!src.loopTarget) {
+            updateStep(connectingFrom.row, { loopTarget: tgtId, loopTargetCol: colIdx });
+          } else {
+            // Sudah punya cabang → tambah sebagai cabang berikutnya (multi-cabang).
+            const list = [...(src.extraBranches || [])];
+            if (!(src.loopTarget === tgtId && src.loopTargetCol === colIdx) && !list.some(b => b.target === tgtId && b.targetCol === colIdx)) {
+              list.push({ target: tgtId, targetCol: colIdx, side: src.branchSide === 'left' ? 'right' : 'left' });
+              updateStep(connectingFrom.row, { extraBranches: list });
+            }
+          }
         } else {
-          const ex = [...(steps[connectingFrom.row].extraShapes || [])];
+          const ex = [...(src.extraShapes || [])];
           const exIdx = ex.findIndex(s => s.colIdx === connectingFrom.col);
           if (exIdx !== -1) {
-            ex[exIdx] = { ...ex[exIdx], loopTarget: tgtId, loopTargetCol: colIdx };
+            const sh = ex[exIdx];
+            if (!sh.loopTarget) {
+              ex[exIdx] = { ...sh, loopTarget: tgtId, loopTargetCol: colIdx };
+            } else {
+              const list = [...(sh.extraBranches || [])];
+              if (!(sh.loopTarget === tgtId && sh.loopTargetCol === colIdx) && !list.some(b => b.target === tgtId && b.targetCol === colIdx)) {
+                list.push({ target: tgtId, targetCol: colIdx, side: sh.branchSide === 'left' ? 'right' : 'left' });
+              }
+              ex[exIdx] = { ...sh, extraBranches: list };
+            }
             updateStep(connectingFrom.row, { extraShapes: ex });
           }
         }
@@ -974,7 +1234,6 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     const isArrowDown = isMainShape ? step.arrowDown : extraShapeObj!.arrowDown;
     const showDownLine = isArrowDown && localIdx !== chunkLength - 1 && !(currentSymbol === 'connector' && localIdx !== 0);
 
-    let targetIdx = -1;
     const activeLoopTarget = isMainShape ? step.loopTarget : extraShapeObj!.loopTarget;
     const activeLoopTargetCol = isMainShape ? step.loopTargetCol : extraShapeObj!.loopTargetCol;
     const activeBranchSide = isMainShape ? step.branchSide : extraShapeObj!.branchSide;
@@ -982,12 +1241,41 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     const activeDownOffset = isMainShape ? step.downTextOffset : extraShapeObj!.downTextOffset;
     const activeBranchText = isMainShape ? step.branchText : extraShapeObj!.branchText;
     const activeBranchOffset = isMainShape ? step.branchTextOffset : extraShapeObj!.branchTextOffset;
+    const activeExtraBranches = (isMainShape ? step.extraBranches : extraShapeObj!.extraBranches) || [];
 
-    if (activeLoopTarget) {
-      targetIdx = steps.findIndex(s => s.id === activeLoopTarget);
-      if (targetIdx === -1) targetIdx = displayNumbers.findIndex((n: string) => n !== '' && n === activeLoopTarget);
-      if (targetIdx === -1 && !isNaN(parseInt(activeLoopTarget))) targetIdx = parseInt(activeLoopTarget) - 1;
-    }
+    const resolveTarget = (t: string): number => {
+      let ti = steps.findIndex(s => s.id === t);
+      if (ti === -1) ti = displayNumbers.findIndex((n: string) => n !== '' && n === t);
+      if (ti === -1 && !isNaN(parseInt(t))) ti = parseInt(t) - 1;
+      return ti;
+    };
+    const targetIdx = activeLoopTarget ? resolveTarget(activeLoopTarget) : -1;
+
+    // Ubah/hapus cabang tambahan (cabang ke-2 dst) pada bentuk ini.
+    const updateExtraBranch = (i: number, patch: Partial<BranchDef>) => {
+      if (isMainShape) {
+        const list = [...(step.extraBranches || [])];
+        list[i] = { ...list[i], ...patch };
+        updateStep(absIdx, { extraBranches: list });
+      } else {
+        const ex = [...step.extraShapes!];
+        const sIdx = ex.findIndex(x => x.colIdx === colIdx);
+        const list = [...(ex[sIdx].extraBranches || [])];
+        list[i] = { ...list[i], ...patch };
+        ex[sIdx] = { ...ex[sIdx], extraBranches: list };
+        updateStep(absIdx, { extraShapes: ex });
+      }
+    };
+    const removeExtraBranch = (i: number) => {
+      if (isMainShape) {
+        updateStep(absIdx, { extraBranches: (step.extraBranches || []).filter((_, x) => x !== i) });
+      } else {
+        const ex = [...step.extraShapes!];
+        const sIdx = ex.findIndex(x => x.colIdx === colIdx);
+        ex[sIdx] = { ...ex[sIdx], extraBranches: (ex[sIdx].extraBranches || []).filter((_, x) => x !== i) };
+        updateStep(absIdx, { extraShapes: ex });
+      }
+    };
 
     const incomingList = incomingArrowsMap.get(absIdx) || [];
     const isIncomingTarget = incomingList.some(inc => inc.targetCol === colIdx);
@@ -1085,6 +1373,25 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
             />
           )}
 
+          {/* Cabang tambahan (ke-2 dst) dari bentuk ini */}
+          {activeExtraBranches.map((b, bi) => {
+            const ti = resolveTarget(b.target);
+            if (ti === -1) return null;
+            return (
+              <BranchArrowLocal
+                key={`extra-branch-${bi}`}
+                sourceIdx={absIdx} targetIdx={ti}
+                sourceCol={colIdx} targetCol={b.targetCol ?? steps[ti]?.pelaksanaCol ?? -1}
+                sourceSide={b.side || 'right'} chunkStart={chunkStart} chunkEnd={chunkEnd} isPrinting={isPrinting}
+                updateTrigger={`${colCount}-${steps.length}-${colIdx}-${b.side}-xb${bi}`} isSourceMain={isMainShape}
+                branchText={b.text} branchTextOffset={b.textOffset}
+                onBranchTextChange={(v) => updateExtraBranch(bi, { text: v })}
+                onBranchOffsetChange={(v) => updateExtraBranch(bi, { textOffset: v })}
+                isViewOnly={effectiveIsViewOnly}
+              />
+            );
+          })}
+
           {isIncomingTarget && incomingList.filter(inc => inc.targetCol === colIdx).map(src => (
             <IncomingArrowLocal 
               key={`in-${src.srcRow}-${src.srcCol}-${absIdx}`} 
@@ -1144,14 +1451,24 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
 
               <div className="flex gap-1 pt-1 justify-center">
                 <button onClick={toggleArrowDown} className={`text-[9px] font-bold px-2 py-1 rounded transition-colors ${isArrowDown ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-400'}`}>TURUN</button>
-                <button onClick={(e) => { e.stopPropagation(); setConnectingFrom({ row: absIdx, col: colIdx }); }} className={`text-[9px] font-bold px-2 py-1 rounded transition-colors flex items-center gap-1 ${activeLoopTarget ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'}`}>🔗 Cabang</button>
+                <button onClick={(e) => { e.stopPropagation(); setConnectingFrom({ row: absIdx, col: colIdx }); }} title={activeLoopTarget ? 'Tambah cabang lagi ke tahapan lain' : 'Tarik garis cabang ke tahapan lain'} className={`text-[9px] font-bold px-2 py-1 rounded transition-colors flex items-center gap-1 ${activeLoopTarget ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'}`}>🔗 Cabang{activeLoopTarget ? ' +' : ''}</button>
                 {activeLoopTarget && (
                   <>
-                    <button onClick={toggleBranchSide} className="text-[9px] font-bold px-1.5 py-1 rounded bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors" title="Ubah Arah Panah Keluar">{activeBranchSide === 'left' ? 'Kiri' : 'Kanan'}</button>
-                    <button onClick={clearBranch} className="text-[9px] text-red-500 font-bold px-1 hover:bg-red-50 rounded"><X size={12}/></button>
+                    <button onClick={toggleBranchSide} className="text-[9px] font-bold px-1.5 py-1 rounded bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors" title="Ubah Arah Panah Keluar (cabang 1)">{activeBranchSide === 'left' ? 'Kiri' : 'Kanan'}</button>
+                    <button onClick={clearBranch} title="Hapus cabang 1" className="text-[9px] text-red-500 font-bold px-1 hover:bg-red-50 rounded"><X size={12}/></button>
                   </>
                 )}
               </div>
+              {activeExtraBranches.map((b, bi) => {
+                const ti = resolveTarget(b.target);
+                return (
+                  <div key={`xbm-${bi}`} className="flex gap-1 pt-1 justify-center items-center">
+                    <span className="text-[9px] font-bold text-slate-500 whitespace-nowrap">Cabang {bi + 2}{ti !== -1 && displayNumbers[ti] ? ` → ${displayNumbers[ti]}` : ''}</span>
+                    <button onClick={(e) => { e.stopPropagation(); updateExtraBranch(bi, { side: b.side === 'left' ? 'right' : 'left' }); }} className="text-[9px] font-bold px-1.5 py-1 rounded bg-slate-100 text-slate-600 hover:bg-slate-200 transition-colors" title={`Ubah arah panah keluar (cabang ${bi + 2})`}>{b.side === 'left' ? 'Kiri' : 'Kanan'}</button>
+                    <button onClick={(e) => { e.stopPropagation(); removeExtraBranch(bi); }} title={`Hapus cabang ${bi + 2}`} className="text-[9px] text-red-500 font-bold px-1 hover:bg-red-50 rounded"><X size={12}/></button>
+                  </div>
+                );
+              })}
               
               {!isMainShape && (
                 <div className="flex gap-1 pt-1 justify-center border-t border-slate-200 mt-1">
@@ -1165,23 +1482,61 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     );
   };
 
-  const coverRows = [
+  const baseCoverRows = [
     { id: 1, minH: "min-h-12", leftTitle: "Dasar Hukum:", leftVal: dasarHukum, leftSetter: setDasarHukum, rightTitle: "Kualifikasi Pelaksana:", rightVal: kualifikasi, rightSetter: setKualifikasi },
     { id: 2, minH: "min-h-12", leftTitle: "Keterkaitan:", leftVal: keterkaitan, leftSetter: setKeterkaitan, rightTitle: "Peralatan/Perlengkapan:", rightVal: peralatan, rightSetter: setPeralatan },
     { id: 3, minH: "min-h-12", leftTitle: "Peringatan:", leftVal: peringatan, leftSetter: setPeringatan, rightTitle: "Pencatatan dan Pendataan:", rightVal: pencatatan, rightSetter: setPencatatan }
   ];
 
-  const coverChunks: (typeof coverRows[0])[][] = [];
-  let currentCoverChunk: typeof coverRows[0][] = [];
+  type CoverRowDef = {
+    id: number | string; baseId: number; contIdx?: number; forceBreakBefore?: boolean;
+    minH: string;
+    leftTitle: string; leftVal: string; leftSetter: (v: string) => void;
+    rightTitle: string; rightVal: string; rightSetter: (v: string) => void;
+  };
+
+  // Tambah/hapus/ubah tabel lanjutan (halaman berikutnya) untuk sebuah baris cover.
+  const addCoverCont = (baseId: number) => {
+    setCoverCont(prev => ({ ...prev, [baseId]: [...(prev[baseId] || []), { left: '1. ', right: '1. ' }] }));
+  };
+  const removeCoverCont = (baseId: number, idx: number) => {
+    const entry = (coverCont[baseId] || [])[idx];
+    const hasContent = entry && ((entry.left || '').replace(/^1\.\s*/, '').trim() || (entry.right || '').replace(/^1\.\s*/, '').trim());
+    if (hasContent && !window.confirm('Tabel lanjutan ini berisi teks. Hapus tabel lanjutan beserta isinya?')) return;
+    setCoverCont(prev => ({ ...prev, [baseId]: (prev[baseId] || []).filter((_, i) => i !== idx) }));
+  };
+  const updateCoverCont = (baseId: number, idx: number, side: 'left' | 'right', v: string) => {
+    setCoverCont(prev => ({ ...prev, [baseId]: (prev[baseId] || []).map((e, i) => i === idx ? { ...e, [side]: v } : e) }));
+  };
+
+  const coverRows: CoverRowDef[] = [];
+  baseCoverRows.forEach(b => {
+    coverRows.push({ ...b, baseId: b.id });
+    (coverCont[b.id] || []).forEach((c, i) => {
+      coverRows.push({
+        id: `${b.id}c${i}`, baseId: b.id, contIdx: i, forceBreakBefore: true, minH: 'min-h-12',
+        leftTitle: b.leftTitle.replace(/:\s*$/, '') + ' (Lanjutan):',
+        rightTitle: b.rightTitle.replace(/:\s*$/, '') + ' (Lanjutan):',
+        leftVal: c.left, leftSetter: (v: string) => updateCoverCont(b.id, i, 'left', v),
+        rightVal: c.right, rightSetter: (v: string) => updateCoverCont(b.id, i, 'right', v),
+      });
+    });
+  });
+
+  const coverChunks: CoverRowDef[][] = [];
+  let currentCoverChunk: CoverRowDef[] = [];
   coverRows.forEach(row => {
+    // Baris lanjutan selalu memulai halaman baru
+    if (row.forceBreakBefore && currentCoverChunk.length > 0) { coverChunks.push(currentCoverChunk); currentCoverChunk = []; }
     currentCoverChunk.push(row);
     if (coverBreaks[row.id]) { coverChunks.push(currentCoverChunk); currentCoverChunk = []; }
   });
   if (currentCoverChunk.length > 0) coverChunks.push(currentCoverChunk);
 
   return (
+    <ViewOnlyContext.Provider value={effectiveIsViewOnly}>
     <div className="h-full overflow-auto bg-slate-200 pb-32 p-2 md:p-6 print:h-auto print:overflow-visible print:bg-white print:p-0 flex flex-col items-center font-bookman">
-      
+
       {/* MODE TARIK GARIS */}
       {connectingFrom !== null && (
         <div className="fixed top-6 left-1/2 -translate-x-1/2 bg-indigo-600 text-white px-6 py-3 rounded-full shadow-2xl z-50 flex items-center gap-4 animate-in slide-in-from-top-4 font-sans border-2 border-indigo-400 no-print">
@@ -1385,6 +1740,9 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
             )}
           </div>
           <div className="flex gap-2">
+            {shareModelId != null && authToken && (
+              <ShareButton kind="sop" modelId={shareModelId} token={authToken} variant="solid" />
+            )}
             <button onClick={handleExportExcel} className="px-3 py-1.5 bg-green-700 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95"><FileSpreadsheet size={16} /> Excel</button>
             <button onClick={handleDownloadPDF} disabled={isExporting} title="Unduh PDF vektor ukuran F4 (330×215mm) — teks bisa diseleksi, sesuai canvas. Dokumen disimpan lalu dirender di server, langsung terunduh (tanpa dialog cetak)." className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed">
               {isExporting ? <Loader2 size={16} className="animate-spin" /> : <FileDown size={16} />}
@@ -1451,7 +1809,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                     <td colSpan={6} className="border-2 border-black p-0 align-top">
                       <div className="flex flex-col h-full font-bold text-[12px]">
                         <div className="flex border-b-2 border-black p-1.5 items-center"><span className="w-32 shrink-0">Nomor SOP</span><span className="mx-1">:</span><input value={nomor} onChange={e => setNomor(e.target.value)} disabled={isViewOnly} className="flex-1 outline-none disabled:bg-transparent bg-transparent" /></div>
-                        <div className="flex border-b-2 border-black p-1.5 items-center"><span className="w-32 shrink-0">Tanggal Pembuatan</span><span className="mx-1">:</span><input value={tglPembuatan} onChange={e => setTglPembuatan(e.target.value)} disabled={isViewOnly} className="flex-1 outline-none disabled:bg-transparent bg-transparent" /></div>
+                        <div className="flex border-b-2 border-black p-1.5 items-center"><span className="w-32 shrink-0">Tanggal Pembuatan</span><span className="mx-1">:</span><input value={tglPembuatan} readOnly title="Terisi otomatis saat SOP pertama kali dikirim ke Biro Ortala MR" placeholder={effectiveIsViewOnly ? '' : '(otomatis saat dikirim ke Ortala MR)'} className="flex-1 outline-none bg-transparent cursor-default placeholder:text-slate-300 placeholder:font-normal placeholder:italic" /></div>
                         <div className="flex border-b-2 border-black p-1.5 items-center"><span className="w-32 shrink-0">Tanggal Revisi</span><span className="mx-1">:</span><input value={tglRevisi} onChange={e => setTglRevisi(e.target.value)} disabled={isViewOnly} className="flex-1 outline-none disabled:bg-transparent bg-transparent" /></div>
                         <div className="flex border-b-2 border-black p-1.5 items-center"><span className="w-32 shrink-0">Tanggal Efektif</span><span className="mx-1">:</span><input value={tglEfektif} onChange={e => setTglEfektif(e.target.value)} disabled={isViewOnly} className="flex-1 outline-none disabled:bg-transparent bg-transparent" /></div>
                         <div className="flex p-1.5 items-start border-b-2 border-black min-h-16">
@@ -1464,22 +1822,44 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                             </div>
                           </div>
                         </div>
-                        <div className="p-3 text-center bg-slate-50 flex flex-col justify-center flex-1 min-h-12">
-                          <p className="text-[11px] font-bold uppercase mb-0.5 tracking-widest">NAMA SOP :</p>
-                          <EditableCell value={judul} onChange={setJudul} center={true} placeholder="JUDUL..." className="text-sm font-black uppercase leading-tight" />
+                        <div className="px-3 py-2 text-center bg-slate-50 flex items-center justify-center flex-1 min-h-9">
+                          <div className="w-full"><EditableCell value={judul} onChange={setJudul} center={true} placeholder="JUDUL SOP..." className="min-h-0! text-[13px] font-bold uppercase leading-tight" /></div>
+                        </div>
+                        <div className="flex border-t-2 border-black bg-slate-50">
+                          <div className="flex-1 px-2.5 py-1.5 border-r-2 border-black flex items-center justify-center" title="Dihitung otomatis dari jumlah kolom Mutu Baku 'Waktu' seluruh langkah (1 Hari Kerja = 5,5 jam = 330 menit; sisa waktu dibulatkan ke hari berikutnya)">
+                            <p className="text-[11px] font-bold leading-tight text-center">Waktu SOP : {totalWaktuSOP ? `${totalWaktuSOP.menit} Menit / ${totalWaktuSOP.hari} Hari Kerja` : '-'}</p>
+                          </div>
+                          <div className="flex-1 px-2.5 py-1.5 flex items-center justify-center" title="Jumlah tahapan (baris kegiatan bernomor) pada alur SOP ini">
+                            <p className="text-[11px] font-bold leading-tight text-center">Total Tahapan : {displayNumbers.filter(n => n !== '').length} Tahapan</p>
+                          </div>
                         </div>
                       </div>
                     </td>
                   </tr>
                 )}
-                {chunk.map((row) => (
+                {chunk.map((row) => {
+                  const flatIdx = coverRows.findIndex(r => r.id === row.id);
+                  const nextRow = coverRows[flatIdx + 1];
+                  const conts = coverCont[row.baseId] || [];
+                  const isChainEnd = row.contIdx === undefined ? conts.length === 0 : row.contIdx === conts.length - 1;
+                  return (
                   <tr key={`cover-row-${row.id}`}>
                     <td colSpan={5} className="border-2 border-black align-top p-0 relative">
-                       <div className="p-1.5 bg-slate-100 font-bold uppercase text-[12px] border-b-2 border-black">{row.leftTitle}</div>
+                       <div className="relative p-1.5 bg-slate-100 font-bold uppercase text-[12px] border-b-2 border-black">
+                         {row.leftTitle}
+                         {!effectiveIsViewOnly && row.contIdx !== undefined && (
+                           <button onClick={() => removeCoverCont(row.baseId, row.contIdx as number)} title="Hapus tabel lanjutan ini" className="no-print font-sans normal-case absolute right-1.5 top-1/2 -translate-y-1/2 px-2 py-0.5 bg-red-50 hover:bg-red-500 hover:text-white text-red-600 text-[10px] font-bold rounded-full border border-red-200 transition-all leading-none">🗑 Hapus Lanjutan</button>
+                         )}
+                       </div>
                        <div className={`p-2 text-[12px] ${row.minH}`}><EditableCell value={row.leftVal} onChange={row.leftSetter} justify={true} /></div>
-                       {!effectiveIsViewOnly && !coverBreaks[row.id] && row.id !== 3 && (
+                       {!effectiveIsViewOnly && !coverBreaks[row.id] && nextRow && !nextRow.forceBreakBefore && (
                          <div className="absolute bottom-0 right-0 translate-x-1/2 translate-y-1/2 z-30 no-print font-sans pointer-events-auto">
                            <button onClick={() => setCoverBreaks({...coverBreaks, [row.id]: true})} className="px-3 py-1 bg-white hover:bg-slate-100 text-slate-600 text-[10px] font-bold rounded-full border border-slate-300 shadow-md transition-all active:scale-95 whitespace-nowrap">✂️ Pisah ke Halaman Baru</button>
+                         </div>
+                       )}
+                       {!effectiveIsViewOnly && isChainEnd && (
+                         <div className="absolute bottom-0 left-6 translate-y-1/2 z-30 no-print font-sans pointer-events-auto">
+                           <button onClick={() => addCoverCont(row.baseId)} title="Lanjutkan isi tabel ini pada halaman berikutnya" className="px-3 py-1 bg-emerald-50 hover:bg-emerald-500 hover:text-white text-emerald-700 text-[10px] font-bold rounded-full border border-emerald-300 shadow-md transition-all active:scale-95 whitespace-nowrap">➕ Tabel Lanjutan (hal. berikutnya)</button>
                          </div>
                        )}
                     </td>
@@ -1488,11 +1868,12 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                        <div className={`p-2 text-[12px] ${row.minH}`}><EditableCell value={row.rightVal} onChange={row.rightSetter} justify={true} /></div>
                     </td>
                   </tr>
-                ))}
+                  );
+                })}
               </tbody>
             </table>
           </div>
-          {!effectiveIsViewOnly && activeTab === 'cover' && chunkIdx < coverChunks.length - 1 && (
+          {!effectiveIsViewOnly && activeTab === 'cover' && chunkIdx < coverChunks.length - 1 && coverBreaks[chunk[chunk.length - 1].id] && (
              <div className="w-full max-w-[330mm] flex justify-center -mt-4 mb-8 relative z-10 print:hidden font-sans">
                <button onClick={() => { const lastRowId = chunk[chunk.length - 1].id; setCoverBreaks({...coverBreaks, [lastRowId]: false}); }} className="px-4 py-2 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-bold rounded-full border border-amber-300 shadow-md flex items-center gap-2 transition-all">🔗 Gabungkan Kembali Halaman</button>
              </div>
@@ -1505,7 +1886,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         const startAbsIdx = steps.findIndex(s => s.id === chunk[0].id);
         const endAbsIdx = startAbsIdx + chunk.length - 1;
         const isLastChunk = chunkIdx === chunkedSteps.length - 1;
-        const shouldStretch = !isLastChunk || chunk.length >= 6;
+        const shouldStretch = !isLastChunk || chunk.length >= 7;
         const currentHeaders = pelaksanaHeaders[chunkIdx] || Array(colCount).fill('');
 
         return (
@@ -1555,12 +1936,12 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                   {chunk.map((step, localIdx) => {
                     const absIdx = startAbsIdx + localIdx;
                     return (
-                      <tr key={step.id} className="overflow-visible relative" style={{ height: shouldStretch ? `${100 / Math.max(chunk.length, 1)}%` : '26.6mm' }}>
+                      <tr key={step.id} className="overflow-visible relative" style={{ height: shouldStretch ? `${100 / Math.max(chunk.length, 1)}%` : '22.8mm' /* 1/7 tinggi isi tabel — sama dgn baris halaman penuh agar konsisten */ }}>
                         <td className="border-r-2 border-black p-2 text-center font-normal relative h-px" title="Ketik 'auto' untuk mengembalikan ke urutan otomatis">
                           <EditableCell value={displayNumbers[absIdx]} onChange={(val) => updateStep(absIdx, { nomorOverride: val.trim().toLowerCase() === 'auto' ? undefined : val })} center={true} className="text-[13px] h-full" />
                         </td>
                         <td className="border-r-2 border-black p-2 px-1.5 font-normal leading-snug relative overflow-visible align-top h-px">
-                          <EditableCell value={step.kegiatan} onChange={(val) => updateStep(absIdx, { kegiatan: val })} placeholder="..." justify={true} className="text-[13px] h-full" />
+                          <EditableCell value={step.kegiatan} onChange={(val) => updateStep(absIdx, { kegiatan: val })} placeholder="..." justify={true} className="text-[12px] h-full" />
                         </td>
                         
                         {Array(colCount).fill(0).map((_, i) => (
@@ -1571,7 +1952,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
 
                         <td className="border-r-2 border-black p-2 px-1.5 font-normal leading-tight relative align-top h-px"><EditableCell value={step.syarat} onChange={(val) => updateStep(absIdx, { syarat: val })} className={`${getWaktuFontClass()} h-full`} /></td>
                         <td className={`border-r-2 border-black py-2 px-0.5 text-center font-normal leading-tight relative align-top h-px ${getWaktuFontClass()}`}><EditableCell value={step.waktu} onChange={(val) => updateStep(absIdx, { waktu: val })} center={true} className={`min-h-0! ${getWaktuFontClass()} h-full`} /></td>
-                        <td className="border-r-2 border-black p-2 px-1.5 font-normal leading-tight relative align-top italic h-px"><EditableCell value={step.output} onChange={(val) => updateStep(absIdx, { output: val })} className={`${getWaktuFontClass()} italic h-full`} /></td>
+                        <td className="border-r-2 border-black p-2 px-1.5 font-normal leading-tight relative align-top h-px"><EditableCell value={step.output} onChange={(val) => updateStep(absIdx, { output: val })} className={`${getWaktuFontClass()} h-full`} /></td>
                         <td className="border-r-2 border-black p-2 px-1.5 font-normal leading-tight relative align-top h-px"><EditableCell value={step.ket} onChange={(val) => updateStep(absIdx, { ket: val })} placeholder="..." justify={true} className={`${getWaktuFontClass()} h-full`} /></td>
                         
                         {!effectiveIsViewOnly && (
@@ -1593,6 +1974,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         );
       })}
     </div>
+    </ViewOnlyContext.Provider>
   );
 });
 
