@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import {
   Landmark, FilePlus, Search, Filter, Calendar,
   ChevronLeft, ChevronRight, Download, RefreshCw,
   Inbox, X, ExternalLink, FileText, Gavel, FolderOpen, FileCheck,
+  Folder, ArrowLeft,
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
 
@@ -99,25 +100,44 @@ export default function PeraturanPage() {
 
   const [viewDoc, setViewDoc] = useState<Peraturan | null>(null);
 
+  const DRIVE_ROOT = '1T4dQCI3CJYLOEJOCmC18Lsa9jjFRmGDP';
   const [showDrivePicker, setShowDrivePicker] = useState(false);
-  const [driveFiles, setDriveFiles] = useState<{ id: string; name: string; webViewLink: string }[]>([]);
+  const [driveStack, setDriveStack]     = useState<{ id: string; name: string }[]>([]);
+  const [driveFolders, setDriveFolders] = useState<{ id: string; name: string }[]>([]);
+  const [driveFiles, setDriveFiles]     = useState<{ id: string; name: string; webViewLink: string }[]>([]);
   const [driveLoading, setDriveLoading] = useState(false);
-  const [driveError, setDriveError] = useState('');
-  const [driveSearch, setDriveSearch] = useState('');
+  const [driveError, setDriveError]     = useState('');
 
-  const openDrivePicker = async () => {
-    setShowDrivePicker(true);
-    setDriveSearch('');
-    if (driveFiles.length > 0) return;
+  const fetchDriveFolder = useCallback(async (folderId: string) => {
     setDriveLoading(true);
     setDriveError('');
     try {
-      const res = await apiFetch('/peraturan/drive-files', token);
+      const res = await apiFetch(`/dokumen/drive-browse?folderId=${encodeURIComponent(folderId)}`, token);
       const data = await res.json();
-      if (res.ok) setDriveFiles(data);
-      else setDriveError(data.error || 'Gagal memuat daftar file.');
+      if (!res.ok) { setDriveError(data.error || 'Gagal memuat folder'); return; }
+      setDriveFolders(data.folders || []);
+      setDriveFiles(data.files || []);
     } catch { setDriveError('Tidak dapat terhubung ke server.'); }
     finally { setDriveLoading(false); }
+  }, [token]);
+
+  const openDrivePicker = () => {
+    setShowDrivePicker(true);
+    setDriveStack([]);
+    setDriveFolders([]);
+    setDriveFiles([]);
+    fetchDriveFolder(DRIVE_ROOT);
+  };
+
+  const driveNavigateTo = (folder: { id: string; name: string }) => {
+    setDriveStack(prev => [...prev, folder]);
+    fetchDriveFolder(folder.id);
+  };
+
+  const driveGoBack = () => {
+    const newStack = driveStack.slice(0, -1);
+    setDriveStack(newStack);
+    fetchDriveFolder(newStack.length > 0 ? newStack[newStack.length - 1].id : DRIVE_ROOT);
   };
 
   const selectDriveFile = (file: { id: string; name: string; webViewLink: string }) => {
@@ -565,54 +585,30 @@ export default function PeraturanPage() {
               {/* Pilih File dari Drive */}
               <div>
                 <label className={labelCls}>File Dokumen (Google Drive) <span className="text-red-500">*</span></label>
-
-                {/* Tombol buka folder Drive */}
-                <a
-                  href="https://drive.google.com/drive/folders/1T4dQCI3CJYLOEJOCmC18Lsa9jjFRmGDP?usp=drive_link"
-                  target="_blank"
-                  rel="noreferrer"
-                  className={`mt-1 w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed rounded-xl font-bold text-sm transition-all ${
+                {formData.link_drive ? (
+                  <div className={`flex items-center gap-3 p-3 rounded-xl border ${dm ? 'bg-emerald-900/20 border-emerald-700' : 'bg-emerald-50 border-emerald-200'}`}>
+                    <FileCheck className="w-5 h-5 text-emerald-500 shrink-0" />
+                    <div className="flex-1 min-w-0">
+                      <p className={`text-xs font-bold truncate ${dm ? 'text-emerald-400' : 'text-emerald-700'}`}>File terpilih</p>
+                      <p className={`text-xs truncate mt-0.5 ${dm ? 'text-slate-400' : 'text-slate-500'}`}>{formData.link_drive}</p>
+                    </div>
+                    <a href={formData.link_drive} target="_blank" rel="noreferrer" className="text-blue-400 hover:text-blue-600 shrink-0">
+                      <ExternalLink className="w-4 h-4" />
+                    </a>
+                    <button type="button" onClick={() => setFormData({ ...formData, link_drive: '' })} className="text-slate-400 hover:text-red-400 shrink-0 transition-colors"><X className="w-4 h-4" /></button>
+                  </div>
+                ) : null}
+                <button
+                  type="button"
+                  onClick={openDrivePicker}
+                  className={`mt-2 w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed rounded-xl font-bold text-sm transition-all ${
                     dm ? 'border-slate-600 text-slate-400 hover:border-blue-500 hover:text-blue-400 hover:bg-blue-900/10'
                        : 'border-slate-300 text-slate-500 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50'
                   }`}
                 >
                   <FolderOpen className="w-4 h-4" />
-                  Buka Folder Google Drive
-                </a>
-                <p className={`text-xs mt-1.5 mb-2 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>
-                  Salin link sharing file dari Google Drive, lalu tempel di bawah.
-                </p>
-
-                {/* Input paste link */}
-                <div className="relative">
-                  <input
-                    type="url"
-                    value={formData.link_drive}
-                    onChange={e => setFormData({ ...formData, link_drive: e.target.value.trim() })}
-                    placeholder="Tempel link Google Drive di sini (https://drive.google.com/...)"
-                    className={`${inputCls} pr-10 text-sm`}
-                  />
-                  {formData.link_drive && (
-                    <button
-                      type="button"
-                      onClick={() => setFormData({ ...formData, link_drive: '' })}
-                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-400 transition-colors"
-                    >
-                      <X className="w-4 h-4" />
-                    </button>
-                  )}
-                </div>
-
-                {/* Pratinjau link yang sudah diisi */}
-                {formData.link_drive && (
-                  <div className={`flex items-center gap-2 mt-2 p-2.5 rounded-xl border ${dm ? 'bg-emerald-900/20 border-emerald-700' : 'bg-emerald-50 border-emerald-200'}`}>
-                    <FileCheck className="w-4 h-4 text-emerald-500 shrink-0" />
-                    <p className={`text-xs font-medium truncate ${dm ? 'text-emerald-400' : 'text-emerald-700'}`}>Link terpilih</p>
-                    <a href={formData.link_drive} target="_blank" rel="noreferrer" className="ml-auto text-blue-500 hover:text-blue-700 shrink-0">
-                      <ExternalLink className="w-3.5 h-3.5" />
-                    </a>
-                  </div>
-                )}
+                  {formData.link_drive ? 'Ganti File dari Drive' : 'Pilih File dari Google Drive'}
+                </button>
               </div>
 
               {saveError && (
@@ -633,73 +629,96 @@ export default function PeraturanPage() {
           </div>
         </div>
       )}
-      {/* Modal Drive Picker */}
+      {/* Modal Drive Picker — navigasi folder seperti import data */}
       {showDrivePicker && (
         <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <div className={`w-full max-w-lg max-h-[80vh] flex flex-col rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 ${dm ? 'bg-[#151F32] border border-slate-700' : 'bg-white'}`}>
-            <div className={`flex items-center justify-between p-4 border-b shrink-0 ${dm ? 'border-slate-700 bg-[#0F172A]' : 'border-slate-100 bg-slate-50'}`}>
+          <div className={`w-full max-w-md max-h-[75vh] flex flex-col rounded-2xl shadow-2xl overflow-hidden animate-in zoom-in-95 duration-200 ${dm ? 'bg-[#151F32] border border-slate-700' : 'bg-white'}`}>
+
+            {/* Header */}
+            <div className={`flex items-center justify-between px-4 py-3 border-b shrink-0 ${dm ? 'border-slate-700 bg-[#0F172A]' : 'border-slate-100 bg-slate-50'}`}>
               <div className="flex items-center gap-2">
-                <FolderOpen className={`w-5 h-5 ${dm ? 'text-blue-400' : 'text-blue-600'}`} />
-                <h4 className={`font-extrabold text-sm ${dm ? 'text-white' : 'text-[#002855]'}`}>Pilih File dari Google Drive</h4>
+                <FolderOpen className={`w-4 h-4 ${dm ? 'text-blue-400' : 'text-blue-600'}`} />
+                <span className={`font-extrabold text-sm ${dm ? 'text-white' : 'text-[#002855]'}`}>Pilih File dari Google Drive</span>
               </div>
-              <button onClick={() => setShowDrivePicker(false)} className={`p-1.5 rounded-lg transition-colors ${dm ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-400'}`}><X className="w-4 h-4" /></button>
+              <button onClick={() => setShowDrivePicker(false)} className={`p-1.5 rounded-lg transition-colors ${dm ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-500'}`}>
+                <X className="w-4 h-4" />
+              </button>
             </div>
 
-            <div className={`px-4 pt-3 pb-2 shrink-0 ${dm ? 'bg-[#151F32]' : 'bg-white'}`}>
-              <div className="relative">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                <input
-                  type="text"
-                  placeholder="Cari nama file..."
-                  value={driveSearch}
-                  onChange={e => setDriveSearch(e.target.value)}
-                  className={`w-full pl-9 pr-4 py-2.5 border rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 ${dm ? 'bg-[#0F172A] border-slate-700 text-white' : 'bg-slate-50 border-slate-200 text-slate-800'}`}
-                />
-              </div>
+            {/* Breadcrumb */}
+            <div className={`flex items-center gap-1 px-4 py-2 text-xs font-medium border-b shrink-0 flex-wrap ${dm ? 'border-slate-800 text-slate-400 bg-[#0F172A]' : 'border-slate-100 text-slate-500 bg-slate-50'}`}>
+              <button onClick={() => { setDriveStack([]); fetchDriveFolder(DRIVE_ROOT); }} className="hover:underline font-bold shrink-0">
+                Drive
+              </button>
+              {driveStack.map((f, i) => (
+                <React.Fragment key={f.id}>
+                  <ChevronRight className="w-3 h-3 opacity-40 shrink-0" />
+                  <button onClick={() => {
+                    const newStack = driveStack.slice(0, i + 1);
+                    setDriveStack(newStack);
+                    fetchDriveFolder(f.id);
+                  }} className="hover:underline truncate max-w-[120px]">{f.name}</button>
+                </React.Fragment>
+              ))}
             </div>
 
-            <div className="flex-1 overflow-y-auto px-4 pb-4">
-              {driveLoading ? (
+            {/* Tombol Kembali */}
+            {driveStack.length > 0 && (
+              <button onClick={driveGoBack} className={`flex items-center gap-2 px-4 py-2 text-xs font-bold border-b shrink-0 transition-colors ${dm ? 'border-slate-800 text-slate-400 hover:bg-slate-800' : 'border-slate-100 text-slate-500 hover:bg-slate-50'}`}>
+                <ArrowLeft className="w-3 h-3" /> Kembali
+              </button>
+            )}
+
+            {/* Konten folder */}
+            <div className="flex-1 overflow-y-auto">
+              {driveLoading && (
                 <div className="flex items-center justify-center py-12 gap-2 text-slate-400">
-                  <RefreshCw className="w-5 h-5 animate-spin" /><span className="text-sm">Memuat file dari Drive...</span>
+                  <RefreshCw className="w-5 h-5 animate-spin" />
+                  <span className="text-sm">Memuat dari Google Drive...</span>
                 </div>
-              ) : driveError ? (
-                <div className={`mt-3 p-4 rounded-xl border ${dm ? 'bg-amber-900/20 border-amber-700' : 'bg-amber-50 border-amber-200'}`}>
-                  <p className={`text-sm font-bold mb-1 ${dm ? 'text-amber-400' : 'text-amber-700'}`}>Tidak dapat memuat file</p>
-                  <p className={`text-xs ${dm ? 'text-amber-500' : 'text-amber-600'}`}>{driveError}</p>
-                  {driveError.includes('GOOGLE_DRIVE_API_KEY') && (
-                    <p className={`text-xs mt-2 ${dm ? 'text-slate-400' : 'text-slate-500'}`}>
-                      Tambahkan <code className="font-mono bg-black/20 px-1 rounded">GOOGLE_DRIVE_API_KEY=...</code> ke file <code className="font-mono bg-black/20 px-1 rounded">api/.env</code> lalu restart esop-api.
-                    </p>
+              )}
+              {driveError && !driveLoading && (
+                <div className="p-4">
+                  <div className={`p-4 rounded-xl flex gap-3 items-start ${dm ? 'bg-red-900/20 text-red-400' : 'bg-red-50 text-red-600'}`}>
+                    <span className="font-bold text-sm">{driveError}</span>
+                    <button onClick={() => fetchDriveFolder(driveStack.length > 0 ? driveStack[driveStack.length - 1].id : DRIVE_ROOT)} className="text-xs underline ml-auto shrink-0">Coba lagi</button>
+                  </div>
+                </div>
+              )}
+              {!driveLoading && !driveError && (
+                <>
+                  {/* Folder */}
+                  {driveFolders.map(f => (
+                    <button key={f.id} type="button" onClick={() => driveNavigateTo(f)}
+                      className={`w-full flex items-center gap-3 px-4 py-3 text-sm font-medium border-b transition-colors ${dm ? 'border-slate-800 text-slate-300 hover:bg-slate-800' : 'border-slate-50 text-slate-700 hover:bg-slate-50'}`}>
+                      <Folder className="w-4 h-4 text-yellow-500 shrink-0" />
+                      <span className="truncate text-left flex-1">{f.name}</span>
+                      <ChevronRight className="w-4 h-4 text-slate-400 shrink-0" />
+                    </button>
+                  ))}
+                  {/* File */}
+                  {driveFiles.map(f => (
+                    <button key={f.id} type="button" onClick={() => selectDriveFile(f)}
+                      className={`w-full flex items-center gap-3 px-4 py-3 text-sm border-b transition-colors ${
+                        formData.link_drive === f.webViewLink
+                          ? dm ? 'bg-blue-700/30 text-blue-300 font-bold' : 'bg-blue-50 text-blue-700 font-bold'
+                          : dm ? 'border-slate-800 text-slate-300 hover:bg-slate-800 font-medium' : 'border-slate-50 text-slate-700 hover:bg-slate-50 font-medium'
+                      }`}>
+                      <FileText className="w-4 h-4 text-red-400 shrink-0" />
+                      <span className="truncate text-left flex-1">{f.name}</span>
+                      {formData.link_drive === f.webViewLink
+                        ? <FileCheck className="w-4 h-4 text-blue-500 shrink-0" />
+                        : <span className={`text-[10px] font-black px-1.5 py-0.5 rounded uppercase shrink-0 ${dm ? 'bg-red-900/40 text-red-400' : 'bg-red-100 text-red-600'}`}>PDF</span>
+                      }
+                    </button>
+                  ))}
+                  {driveFolders.length === 0 && driveFiles.length === 0 && (
+                    <div className="flex flex-col items-center justify-center py-12 text-slate-400">
+                      <Inbox className="w-10 h-10 mb-2 opacity-30" />
+                      <p className="text-sm">Folder kosong.</p>
+                    </div>
                   )}
-                </div>
-              ) : driveFiles.length === 0 ? (
-                <div className="flex flex-col items-center justify-center py-12 text-slate-400">
-                  <Inbox className="w-10 h-10 mb-2" />
-                  <p className="text-sm">Folder kosong atau tidak ada file.</p>
-                </div>
-              ) : (
-                <ul className="mt-2 space-y-1">
-                  {driveFiles
-                    .filter(f => f.name.toLowerCase().includes(driveSearch.toLowerCase()))
-                    .map(file => (
-                      <li key={file.id}>
-                        <button
-                          type="button"
-                          onClick={() => selectDriveFile(file)}
-                          className={`w-full text-left px-3 py-2.5 rounded-xl text-sm font-medium transition-all flex items-center gap-3 ${
-                            formData.link_drive === file.webViewLink
-                              ? 'bg-blue-600 text-white'
-                              : dm ? 'text-slate-300 hover:bg-slate-700' : 'text-slate-700 hover:bg-slate-50'
-                          }`}
-                        >
-                          <FileText className="w-4 h-4 shrink-0 opacity-60" />
-                          <span className="truncate">{file.name}</span>
-                          {formData.link_drive === file.webViewLink && <FileCheck className="w-4 h-4 shrink-0 ml-auto" />}
-                        </button>
-                      </li>
-                    ))}
-                </ul>
+                </>
               )}
             </div>
           </div>
