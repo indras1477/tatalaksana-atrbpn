@@ -565,27 +565,54 @@ export default function PeraturanPage() {
               {/* Pilih File dari Drive */}
               <div>
                 <label className={labelCls}>File Dokumen (Google Drive) <span className="text-red-500">*</span></label>
-                {formData.link_drive ? (
-                  <div className={`flex items-center gap-3 p-3 rounded-xl border ${dm ? 'bg-emerald-900/20 border-emerald-700' : 'bg-emerald-50 border-emerald-200'}`}>
-                    <FileCheck className="w-5 h-5 text-emerald-500 shrink-0" />
-                    <div className="flex-1 min-w-0">
-                      <p className={`text-xs font-bold truncate ${dm ? 'text-emerald-400' : 'text-emerald-700'}`}>File terpilih</p>
-                      <p className={`text-xs truncate mt-0.5 ${dm ? 'text-slate-400' : 'text-slate-500'}`}>{formData.link_drive}</p>
-                    </div>
-                    <button type="button" onClick={() => setFormData({ ...formData, link_drive: '' })} className="text-slate-400 hover:text-red-400 shrink-0 transition-colors"><X className="w-4 h-4" /></button>
-                  </div>
-                ) : null}
-                <button
-                  type="button"
-                  onClick={openDrivePicker}
-                  className={`mt-2 w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed rounded-xl font-bold text-sm transition-all ${
+
+                {/* Tombol buka folder Drive */}
+                <a
+                  href="https://drive.google.com/drive/folders/1T4dQCI3CJYLOEJOCmC18Lsa9jjFRmGDP?usp=drive_link"
+                  target="_blank"
+                  rel="noreferrer"
+                  className={`mt-1 w-full flex items-center justify-center gap-2 px-4 py-3 border-2 border-dashed rounded-xl font-bold text-sm transition-all ${
                     dm ? 'border-slate-600 text-slate-400 hover:border-blue-500 hover:text-blue-400 hover:bg-blue-900/10'
                        : 'border-slate-300 text-slate-500 hover:border-blue-400 hover:text-blue-600 hover:bg-blue-50'
                   }`}
                 >
                   <FolderOpen className="w-4 h-4" />
-                  {formData.link_drive ? 'Ganti File dari Drive' : 'Pilih File dari Google Drive'}
-                </button>
+                  Buka Folder Google Drive
+                </a>
+                <p className={`text-xs mt-1.5 mb-2 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>
+                  Salin link sharing file dari Google Drive, lalu tempel di bawah.
+                </p>
+
+                {/* Input paste link */}
+                <div className="relative">
+                  <input
+                    type="url"
+                    value={formData.link_drive}
+                    onChange={e => setFormData({ ...formData, link_drive: e.target.value.trim() })}
+                    placeholder="Tempel link Google Drive di sini (https://drive.google.com/...)"
+                    className={`${inputCls} pr-10 text-sm`}
+                  />
+                  {formData.link_drive && (
+                    <button
+                      type="button"
+                      onClick={() => setFormData({ ...formData, link_drive: '' })}
+                      className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-red-400 transition-colors"
+                    >
+                      <X className="w-4 h-4" />
+                    </button>
+                  )}
+                </div>
+
+                {/* Pratinjau link yang sudah diisi */}
+                {formData.link_drive && (
+                  <div className={`flex items-center gap-2 mt-2 p-2.5 rounded-xl border ${dm ? 'bg-emerald-900/20 border-emerald-700' : 'bg-emerald-50 border-emerald-200'}`}>
+                    <FileCheck className="w-4 h-4 text-emerald-500 shrink-0" />
+                    <p className={`text-xs font-medium truncate ${dm ? 'text-emerald-400' : 'text-emerald-700'}`}>Link terpilih</p>
+                    <a href={formData.link_drive} target="_blank" rel="noreferrer" className="ml-auto text-blue-500 hover:text-blue-700 shrink-0">
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
+                  </div>
+                )}
               </div>
 
               {saveError && (
