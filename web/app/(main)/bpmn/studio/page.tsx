@@ -123,6 +123,7 @@ function BPMNStudioContent() {
   // AUTO-SAVE: patokan XML terakhir yang tersimpan + jam simpan terakhir.
   const lastSavedXmlRef = useRef<string | null>(null);
   const [autoSavedAt, setAutoSavedAt] = useState<string | null>(null);
+  const [autoSaveError, setAutoSaveError] = useState(false);
   // Ref cermin agar timer auto-save membaca nilai terbaru tanpa memicu ulang interval.
   const currentModelRef = useRef(currentModel); currentModelRef.current = currentModel;
   const dirtyRef = useRef(hasUnsavedChanges); dirtyRef.current = hasUnsavedChanges;
@@ -211,7 +212,11 @@ function BPMNStudioContent() {
         })
         .catch(err => {
           console.error(err);
-          alert("Dokumen tidak ditemukan atau Anda tidak memiliki akses.");
+          // Sesi berakhir → apiFetch sudah me-redirect ke /login; jangan tampilkan
+          // pesan "tidak ditemukan" yang menyesatkan di atasnya.
+          const msg = err instanceof Error ? err.message : '';
+          if (msg.includes('Sesi berakhir')) return;
+          alert(msg.includes('unit kerja lain') ? 'Dokumen milik unit kerja lain — Anda tidak memiliki akses.' : 'Gagal memuat dokumen (tidak ditemukan, tanpa akses, atau gangguan jaringan).');
           router.replace('/bpmn');
         })
         .finally(() => setIsLoadingDocument(false));
@@ -229,7 +234,12 @@ function BPMNStudioContent() {
       setIsLoadingDocument(false);
       if (!isViewOnly) setShowConfigModal(true);
     }
-  }, [token, documentId, router, isViewOnly, currentUser]);
+    // isViewOnly SENGAJA tidak masuk deps: nilainya turunan dari currentModel.status yang
+    // di-set oleh effect ini sendiri → memasukkannya membuat dokumen terkunci di-fetch DUA
+    // kali (kanvas berkedip/remount). Cabang yang memakainya hanya jalan utk dokumen baru
+    // (tanpa documentId), di mana isViewOnly praktis = mode==='view' (stabil).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [token, documentId, router, currentUser]);
 
   useEffect(() => {
     if (config.orgUnitL1) {
@@ -478,8 +488,11 @@ function BPMNStudioContent() {
           description: config.description || null,
           jenis_proses: config.jenisProses || null,
           klasifikasi_proses: config.klasifikasiProses || null,
-          bpmn_xml: currentModel.bpmn_xml || '',
-          svg_xml: currentModel.svg_xml || '',
+          // PENTING: pakai XML TERKINI (currentXml diperbarui oleh autosave & simpan manual).
+          // currentModel.bpmn_xml adalah snapshot saat halaman dimuat — memakainya di sini
+          // pernah me-rollback seluruh hasil autosave sesi berjalan.
+          bpmn_xml: currentXml || currentModel.bpmn_xml || '',
+          svg_xml: currentSvg || currentModel.svg_xml || '',
           status: currentModel.status || 'draft',
         }),
       });
@@ -498,13 +511,16 @@ function BPMNStudioContent() {
   // route /autosave (tanpa naikkan versi / ubah status). Bandingkan XML dengan patokan
   // agar hanya menyimpan bila benar-benar ada perubahan.
   useEffect(() => {
+    const busyRef = { current: false }; // guard lokal: jangan tumpang-tindih request autosave
     const timer = setInterval(async () => {
       if (isViewOnlyRef.current) return;
       const id = currentModelRef.current?.id;
       if (!id) return;                 // dokumen belum pernah disimpan → belum auto-save
       if (!dirtyRef.current) return;    // tak ada perubahan sejak simpan terakhir
+      if (busyRef.current) return;      // request sebelumnya masih berjalan
       const api = canvasApiRef.current;
       if (!api?.exportSilent) return;
+      busyRef.current = true;
       try {
         const data = await api.exportSilent();
         if (!data || !data.xml) return;
@@ -513,12 +529,18 @@ function BPMNStudioContent() {
           method: 'PUT',
           body: JSON.stringify({ bpmn_xml: data.xml, svg_xml: data.svg }),
         });
-        if (!res.ok) return;
+        if (!res.ok) { setAutoSaveError(true); return; }
         lastSavedXmlRef.current = data.xml;
         setCurrentXml(data.xml);
         setCurrentSvg(data.svg);
         setAutoSavedAt(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }));
-      } catch { /* diamkan — coba lagi tick berikutnya */ }
+        setAutoSaveError(false);
+        setHasUnsavedChanges(false); // perubahan SUDAH aman di server — jangan tuduh "belum disimpan"
+      } catch {
+        setAutoSaveError(true); // tunjukkan ke user — jangan diam saat gagal
+      } finally {
+        busyRef.current = false;
+      }
     }, 30000);
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -572,7 +594,11 @@ function BPMNStudioContent() {
             <ArrowLeft className="w-4 h-4" /> Kembali
             {hasUnsavedChanges && <span className="w-2 h-2 rounded-full bg-orange-400" title="Ada perubahan belum disimpan" />}
           </button>
-          {autoSavedAt && !isViewOnly && (
+          {autoSaveError && !isViewOnly ? (
+            <span className="hidden sm:flex items-center gap-1 text-[11px] font-bold text-red-600 shrink-0" title="Simpan otomatis gagal — periksa koneksi, lalu simpan manual untuk memastikan pekerjaan aman">
+              <AlertCircle className="w-3.5 h-3.5" /> Gagal simpan otomatis — simpan manual!
+            </span>
+          ) : autoSavedAt && !isViewOnly && (
             <span className="hidden sm:flex items-center gap-1 text-[11px] font-semibold text-emerald-600 shrink-0" title="Dokumen disimpan otomatis secara berkala">
               <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
               Tersimpan otomatis {autoSavedAt}

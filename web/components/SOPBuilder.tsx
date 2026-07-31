@@ -6,7 +6,7 @@ import {
   Plus, Trash2, UserPlus, UserMinus, Save,
   Circle, Square, Diamond, Shield,
   FileSpreadsheet, ArrowDownToLine, Send, ArrowLeft, Info, MousePointer2, X, ChevronLeft, ChevronRight,
-  Edit2, FileDown, Loader2
+  Edit2, FileDown, Loader2, ChevronDown
 } from 'lucide-react';
 import { HIERARKI_UNIT } from '@/lib/constants';
 import ShareButton from '@/components/ShareButton';
@@ -46,6 +46,9 @@ interface ExtraShape {
   colIdx: number;
   symbol: SOPFlowSymbol;
   arrowDown?: boolean;
+  arrowUp?: boolean;
+  upText?: string;
+  upTextOffset?: { x: number; y: number };
   loopTarget?: string;
   loopTargetCol?: number;
   branchSide?: 'left' | 'right';
@@ -62,6 +65,9 @@ interface SOPStep {
   pelaksanaCol: number;
   symbol: SOPFlowSymbol;
   arrowDown: boolean;
+  arrowUp?: boolean;
+  upText?: string;
+  upTextOffset?: { x: number; y: number };
   loopTarget?: string;
   loopTargetCol?: number;
   branchSide?: 'left' | 'right';
@@ -87,6 +93,8 @@ export interface SOPBuilderRef {
 
 export interface SOPBuilderProps {
   initialData?: string | null;
+  /** Izinkan memuat draft lokal (localStorage) bila initialData kosong — HANYA untuk dokumen baru. */
+  allowLocalDraft?: boolean;
   initialTitle?: string;
   initialKey?: string;
   initialL1?: string;
@@ -664,7 +672,7 @@ const EditableCell = ({ value, onChange, className, placeholder, center = false,
 // --- KOMPONEN UTAMA (SOP BUILDER) ---
 const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   initialData, initialTitle, initialKey, initialL1, initialL2, initialJenis, initialKlasifikasi,
-  isViewOnly = false, onSaveTrigger, onSubmitTrigger, onBackTrigger, onDownloadPdf,
+  isViewOnly = false, allowLocalDraft = true, onSaveTrigger, onSubmitTrigger, onBackTrigger, onDownloadPdf,
   signedCoverUrl = null, signedCoverMime = '', hasSignedCover = false, shareModelId = null
 }, ref) => {
   const searchParams = useSearchParams();
@@ -719,8 +727,10 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   const [showSubmitConfirm, setShowSubmitConfirm] = useState<boolean>(false);
   const [isPrinting, setIsPrinting] = useState(false);
   const [isExporting, setIsExporting] = useState(false);
+  const [showUnduhMenu, setShowUnduhMenu] = useState(false);
+  const unduhMenuRef = useRef<HTMLDivElement>(null);
   const [showInfoModal, setShowInfoModal] = useState(false);
-  const [infoForm, setInfoForm] = useState({ judul: '', nomor: '', unitKerja: '', subUnitKerja: '', jenisSOP: '', klasifikasiSOP: '' });
+  const [infoForm, setInfoForm] = useState({ judul: '', nomor: '', unitKerja: '', subUnitKerja: '', jenisSOP: '', klasifikasiSOP: '', jabatanPengesah: '', namaPengesah: '', nipPengesah: '' });
   
   const [activeTool, setActiveTool] = useState<SOPFlowSymbol | null>(null);
   const [connectingFrom, setConnectingFrom] = useState<{ row: number, col: number } | null>(null);
@@ -730,6 +740,14 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   // Posisi vertikal palet "Bentuk Ekstra" menyesuaikan tinggi toolbar (yang membungkus di
   // layar kecil) agar tidak pernah menabrak tombol toolbar di atasnya.
   const toolbarRef = useRef<HTMLDivElement>(null);
+
+  // Tutup popup Unduh saat klik di luar area tombolnya.
+  useEffect(() => {
+    if (!showUnduhMenu) return;
+    const h = (e: MouseEvent) => { if (unduhMenuRef.current && !unduhMenuRef.current.contains(e.target as Node)) setShowUnduhMenu(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, [showUnduhMenu]);
   const [paletteTopPx, setPaletteTopPx] = useState<number>(112);
   useEffect(() => {
     const el = toolbarRef.current;
@@ -905,7 +923,10 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   }, [openShapeMenu]);
 
   useEffect(() => {
-    if (!initialData && typeof window !== 'undefined') {
+    // Draft lokal hanya untuk DOKUMEN BARU. Dokumen lama yang gagal dimuat / belum punya
+    // sop_data (usulan) TIDAK boleh diisi draft lokal milik dokumen lain — pernah menyebabkan
+    // isi SOP lain ter-autosave ke dokumen yang salah.
+    if (!initialData && allowLocalDraft && typeof window !== 'undefined') {
       const savedData = localStorage.getItem('e-sop-draft-local');
       if (savedData) {
         try {
@@ -935,7 +956,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         } catch (error) { console.error("Gagal meload data lokal", error); }
       }
     }
-  }, [initialData]);
+  }, [initialData, allowLocalDraft]);
 
   useEffect(() => {
     const style = document.createElement('style');
@@ -983,9 +1004,14 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     const data = getSOPData();
     try {
       localStorage.setItem('e-sop-draft-local', data);
-      if (onSaveTrigger) onSaveTrigger(data);
-      if (!silent) alert("SOP berhasil disimpan!");
-    } catch { if (!silent) alert("Gagal menyimpan SOP."); }
+    } catch { /* localStorage penuh — bukan penghalang simpan ke server */ }
+    if (onSaveTrigger) {
+      // Jangan tampilkan alert sukses di sini — pemanggil (studio) yang menampilkan
+      // sukses/gagal SETELAH request server selesai (hindari "sukses palsu").
+      onSaveTrigger(data);
+    } else if (!silent) {
+      alert("SOP berhasil disimpan (lokal)!");
+    }
   };
 
   const handleSubmitOrtala = () => {
@@ -1047,7 +1073,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         return (chunkIdx === 0 ? '' : `<tr><th colspan="2" style="background-color: #f8fafc; font-size: 9pt;">[Alur ${chunkIdx + 1}]</th>${currentH.map(h => `<th style="background-color: #f8fafc; font-size: 9pt;">${h || '-'}</th>`).join('')}<th colspan="4" style="background-color: #f8fafc;"></th></tr>`) + chunkRows;
       }).join('')}</tbody></table></body></html>`;
     const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
-    const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `SOP_${judul || 'Draft'}.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link);
+    const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `SOP_${judul || 'Draft'}.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link); setTimeout(() => URL.revokeObjectURL(url), 4000);
   };
 
   const handleGoBack = () => {
@@ -1234,6 +1260,13 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     const isArrowDown = isMainShape ? step.arrowDown : extraShapeObj!.arrowDown;
     const showDownLine = isArrowDown && localIdx !== chunkLength - 1 && !(currentSymbol === 'connector' && localIdx !== 0);
 
+    // Panah NAIK: kembali ke kegiatan tepat di atasnya (loop-back). Hanya bila ada baris
+    // di atas pada halaman yang sama (localIdx > 0).
+    const isArrowUp = isMainShape ? step.arrowUp : extraShapeObj!.arrowUp;
+    const showUpLine = !!isArrowUp && localIdx > 0;
+    const activeUpText = isMainShape ? step.upText : extraShapeObj!.upText;
+    const activeUpOffset = isMainShape ? step.upTextOffset : extraShapeObj!.upTextOffset;
+
     const activeLoopTarget = isMainShape ? step.loopTarget : extraShapeObj!.loopTarget;
     const activeLoopTargetCol = isMainShape ? step.loopTargetCol : extraShapeObj!.loopTargetCol;
     const activeBranchSide = isMainShape ? step.branchSide : extraShapeObj!.branchSide;
@@ -1288,6 +1321,35 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         const sIdx = ex.findIndex(x => x.colIdx === colIdx);
         ex[sIdx] = { ...ex[sIdx], arrowDown: !ex[sIdx].arrowDown };
         updateStep(absIdx, { extraShapes: ex });
+      }
+    };
+
+    const toggleArrowUp = (e: React.MouseEvent) => {
+      e.stopPropagation();
+      if (isMainShape) updateStep(absIdx, { arrowUp: !step.arrowUp });
+      else {
+        const ex = [...step.extraShapes!];
+        const sIdx = ex.findIndex(x => x.colIdx === colIdx);
+        ex[sIdx] = { ...ex[sIdx], arrowUp: !ex[sIdx].arrowUp };
+        updateStep(absIdx, { extraShapes: ex });
+      }
+    };
+
+    const handleUpTextChange = (val: string) => {
+      if (isMainShape) updateStep(absIdx, { upText: val });
+      else {
+        const ex = [...step.extraShapes!];
+        const t = ex.find(s => s.colIdx === colIdx);
+        if (t) { t.upText = val; updateStep(absIdx, { extraShapes: ex }); }
+      }
+    };
+
+    const handleUpOffsetChange = (val: {x:number, y:number}) => {
+      if (isMainShape) updateStep(absIdx, { upTextOffset: val });
+      else {
+        const ex = [...step.extraShapes!];
+        const t = ex.find(s => s.colIdx === colIdx);
+        if (t) { t.upTextOffset = val; updateStep(absIdx, { extraShapes: ex }); }
       }
     };
 
@@ -1420,12 +1482,27 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
           {showDownLine && (
             <div className="absolute bottom-0 left-[calc(50%-0.75px)] w-[1.5px] pointer-events-none z-20" style={{ height: `calc(50% - ${offsetH}px)` }}><svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="0" y2="100%" stroke="black" strokeWidth="2" shapeRendering="crispEdges" /></svg></div>
           )}
+          {/* Panah NAIK: garis lurus di TENGAH dari bentuk ini kembali ke bentuk tepat di atasnya.
+              Kepala panah di atas. Posisi sama seperti panah TURUN. */}
+          {showUpLine && (
+            <div className="absolute left-[calc(50%-0.75px)] w-[1.5px] pointer-events-none z-20" style={{ top: `calc(-50% + ${offsetH}px)`, height: `calc(100% - ${offsetH * 2}px)` }}>
+              <svg className="w-full h-full overflow-visible" preserveAspectRatio="none"><line x1="0" y1="0" x2="0" y2="100%" stroke="black" strokeWidth="2" shapeRendering="crispEdges" /></svg>
+              <div className="absolute top-0 left-0 -translate-x-1/2 z-20" style={{ width: 0, height: 0, borderLeft: '4.5px solid transparent', borderRight: '4.5px solid transparent', borderBottom: '9px solid black' }} />
+            </div>
+          )}
         </div>
 
         {showDownLine && currentSymbol === 'decision' && (
-          <DraggableLabel 
+          <DraggableLabel
             value={activeDownText} defaultValue="Ya" offset={activeDownOffset} onTextChange={handleDownTextChange} onOffsetChange={handleDownOffsetChange} isViewOnly={effectiveIsViewOnly}
             baseStyle={{ left: 'calc(50% + 4px)', top: `calc(50% + ${offsetH + 2}px)` }}
+          />
+        )}
+
+        {showUpLine && currentSymbol === 'decision' && (
+          <DraggableLabel
+            value={activeUpText} defaultValue="Tidak" offset={activeUpOffset} onTextChange={handleUpTextChange} onOffsetChange={handleUpOffsetChange} isViewOnly={effectiveIsViewOnly}
+            baseStyle={{ left: 'calc(50% + 4px)', top: `calc(50% - ${offsetH + 16}px)` }}
           />
         )}
 
@@ -1451,6 +1528,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
 
               <div className="flex gap-1 pt-1 justify-center">
                 <button onClick={toggleArrowDown} className={`text-[9px] font-bold px-2 py-1 rounded transition-colors ${isArrowDown ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-400'}`}>TURUN</button>
+                {localIdx > 0 && <button onClick={toggleArrowUp} title="Panah kembali ke kegiatan tepat di atasnya" className={`text-[9px] font-bold px-2 py-1 rounded transition-colors ${isArrowUp ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-400'}`}>NAIK</button>}
                 <button onClick={(e) => { e.stopPropagation(); setConnectingFrom({ row: absIdx, col: colIdx }); }} title={activeLoopTarget ? 'Tambah cabang lagi ke tahapan lain' : 'Tarik garis cabang ke tahapan lain'} className={`text-[9px] font-bold px-2 py-1 rounded transition-colors flex items-center gap-1 ${activeLoopTarget ? 'bg-amber-100 text-amber-700' : 'bg-indigo-100 text-indigo-700 hover:bg-indigo-200'}`}>🔗 Cabang{activeLoopTarget ? ' +' : ''}</button>
                 {activeLoopTarget && (
                   <>
@@ -1646,6 +1724,27 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                   })()}
                 </select>
               </div>
+
+              {/* Disahkan Oleh — hanya bisa diubah di sini (sel cover dikunci). */}
+              <div className="pt-1 border-t border-slate-100">
+                <p className="text-xs font-bold text-slate-500 uppercase tracking-wider mb-2 mt-3">Disahkan Oleh</p>
+                <div className="space-y-3">
+                  <div>
+                    <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Jabatan Pengesah</label>
+                    <input type="text" value={infoForm.jabatanPengesah} onChange={e => setInfoForm({ ...infoForm, jabatanPengesah: e.target.value })} className="w-full px-4 py-2.5 text-sm border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50 text-slate-900" placeholder="Contoh: Direktur Pengaturan dan Penetapan Hak Atas Tanah dan Ruang" />
+                  </div>
+                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">Nama Lengkap</label>
+                      <input type="text" value={infoForm.namaPengesah} onChange={e => setInfoForm({ ...infoForm, namaPengesah: e.target.value })} className="w-full px-4 py-2.5 text-sm border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50 text-slate-900" placeholder="Nama lengkap & gelar" />
+                    </div>
+                    <div>
+                      <label className="block text-[11px] font-bold text-slate-400 uppercase tracking-wider mb-1">NIP</label>
+                      <input type="text" value={infoForm.nipPengesah} onChange={e => setInfoForm({ ...infoForm, nipPengesah: e.target.value })} className="w-full px-4 py-2.5 text-sm border border-slate-300 rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 bg-slate-50 text-slate-900 font-mono" placeholder="19xxxxxxxxxxxxxxxx" />
+                    </div>
+                  </div>
+                </div>
+              </div>
             </div>
             <div className="p-5 border-t border-slate-100 flex justify-end gap-3">
               <button onClick={() => setShowInfoModal(false)} className="px-5 py-2.5 text-sm font-bold border border-slate-200 text-slate-600 hover:bg-slate-50 rounded-xl transition-colors">Batal</button>
@@ -1659,6 +1758,9 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                   setSubUnitKerja(infoForm.subUnitKerja);
                   setJenisSOP(infoForm.jenisSOP);
                   setKlasifikasiSOP(infoForm.klasifikasiSOP);
+                  setJabatanPengesah(infoForm.jabatanPengesah);
+                  setNamaPengesah(infoForm.namaPengesah);
+                  setNipPengesah(infoForm.nipPengesah);
                   setShowInfoModal(false);
                 }}
                 className="px-6 py-2.5 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-md transition-all flex items-center gap-2 active:scale-95"
@@ -1724,7 +1826,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
               <>
                 <button
                   onClick={() => {
-                    setInfoForm({ judul, nomor, unitKerja, subUnitKerja, jenisSOP, klasifikasiSOP });
+                    setInfoForm({ judul, nomor, unitKerja, subUnitKerja, jenisSOP, klasifikasiSOP, jabatanPengesah, namaPengesah, nipPengesah });
                     setShowInfoModal(true);
                   }}
                   className="px-3 py-1.5 bg-slate-700 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95"
@@ -1743,11 +1845,27 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
             {shareModelId != null && authToken && (
               <ShareButton kind="sop" modelId={shareModelId} token={authToken} variant="solid" />
             )}
-            <button onClick={handleExportExcel} className="px-3 py-1.5 bg-green-700 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95"><FileSpreadsheet size={16} /> Excel</button>
-            <button onClick={handleDownloadPDF} disabled={isExporting} title="Unduh PDF vektor ukuran F4 (330×215mm) — teks bisa diseleksi, sesuai canvas. Dokumen disimpan lalu dirender di server, langsung terunduh (tanpa dialog cetak)." className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed">
-              {isExporting ? <Loader2 size={16} className="animate-spin" /> : <FileDown size={16} />}
-              {isExporting ? 'Menyiapkan PDF…' : 'Unduh PDF (F4)'}
-            </button>
+            {/* Satu tombol Unduh → popup pilih format (Excel / PDF F4) agar bar tidak penuh tombol. */}
+            <div className="relative" ref={unduhMenuRef}>
+              <button onClick={() => setShowUnduhMenu(v => !v)} disabled={isExporting} className="px-3 py-1.5 bg-rose-600 hover:bg-rose-700 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed">
+                {isExporting ? <Loader2 size={16} className="animate-spin" /> : <FileDown size={16} />}
+                {isExporting ? 'Menyiapkan…' : 'Unduh'}
+                {!isExporting && <ChevronDown size={14} className={`transition-transform ${showUnduhMenu ? 'rotate-180' : ''}`} />}
+              </button>
+              {showUnduhMenu && !isExporting && (
+                <div className="absolute right-0 top-full mt-1.5 w-56 bg-white border border-slate-200 rounded-xl shadow-2xl overflow-hidden z-50 animate-in fade-in zoom-in-95 duration-150">
+                  <p className="px-3 py-2 text-[10px] font-black uppercase tracking-wider text-slate-400 border-b border-slate-100">Pilih Format Unduhan</p>
+                  <button onClick={() => { setShowUnduhMenu(false); handleDownloadPDF(); }} className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-slate-700 hover:bg-rose-50 hover:text-rose-700 transition-colors">
+                    <span className="p-1.5 rounded-lg bg-rose-100 text-rose-600"><FileDown size={16} /></span>
+                    <span className="text-left leading-tight">Format PDF (F4)<br /><span className="text-[10px] font-normal text-slate-400">Vektor 330×215mm, siap cetak</span></span>
+                  </button>
+                  <button onClick={() => { setShowUnduhMenu(false); handleExportExcel(); }} className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-slate-700 hover:bg-green-50 hover:text-green-700 transition-colors border-t border-slate-100">
+                    <span className="p-1.5 rounded-lg bg-green-100 text-green-700"><FileSpreadsheet size={16} /></span>
+                    <span className="text-left leading-tight">Format Excel<br /><span className="text-[10px] font-normal text-slate-400">Tabel alur untuk diolah lagi</span></span>
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
         <div className="flex flex-wrap justify-center bg-slate-100 p-1 rounded-xl shadow-inner w-full">
@@ -1815,22 +1933,27 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                         <div className="flex p-1.5 items-start border-b-2 border-black min-h-16">
                           <span className="w-32 mt-1 shrink-0">Disahkan Oleh</span><span className="mx-1 mt-1 shrink-0">:</span>
                           <div className="flex-1 flex flex-col justify-between pt-1 pb-1 h-full">
-                            <div className="w-11/12"><EditableCell value={jabatanPengesah} onChange={setJabatanPengesah} placeholder="Jabatan..." className="font-bold leading-tight text-[12px]" /></div>
+                            {/* Dikunci — ubah lewat tombol "Edit Info" (diisi sejak awal pembuatan SOP). */}
+                            <div className="w-11/12" title={effectiveIsViewOnly ? undefined : 'Ubah melalui tombol Edit Info'}><p className="font-bold leading-tight text-[12px] whitespace-pre-wrap wrap-break-word">{jabatanPengesah || <span className="text-slate-300 font-normal italic">{effectiveIsViewOnly ? '' : 'Jabatan… (isi via Edit Info)'}</span>}</p></div>
                             <div className="mt-8 w-10/12">
-                              <input value={namaPengesah} onChange={e => setNamaPengesah(e.target.value)} disabled={isViewOnly} placeholder="Nama Lengkap" className="w-full outline-none font-bold underline text-[13px] bg-transparent disabled:bg-transparent" />
-                              <div className="flex items-center gap-1"><span>NIP</span><input value={nipPengesah} onChange={e => setNipPengesah(e.target.value)} disabled={isViewOnly} className="flex-1 outline-none font-bold bg-transparent disabled:bg-transparent" /></div>
+                              <p className="w-full font-bold underline text-[13px] wrap-break-word">{namaPengesah || <span className="text-slate-300 font-normal italic no-underline">{effectiveIsViewOnly ? '' : 'Nama Lengkap (Edit Info)'}</span>}</p>
+                              <div className="flex items-center gap-1"><span>NIP</span><span className="flex-1 font-bold wrap-break-word">{nipPengesah}</span></div>
                             </div>
                           </div>
                         </div>
-                        <div className="px-3 py-2 text-center bg-slate-50 flex items-center justify-center flex-1 min-h-9">
-                          <div className="w-full"><EditableCell value={judul} onChange={setJudul} center={true} placeholder="JUDUL SOP..." className="min-h-0! text-[13px] font-bold uppercase leading-tight" /></div>
+                        <div className="flex flex-1 p-1.5 items-center min-h-9 border-b-2 border-black">
+                          <span className="w-32 shrink-0 self-start mt-0.5">Nama SOP</span><span className="mx-1 self-start mt-0.5">:</span>
+                          {/* Dikunci — ubah lewat tombol "Edit Info". */}
+                          <div className="flex-1" title={effectiveIsViewOnly ? undefined : 'Ubah melalui tombol Edit Info'}><p className="text-[12px] font-bold uppercase leading-tight text-justify wrap-break-word">{judul || <span className="text-slate-300 font-normal normal-case italic">{effectiveIsViewOnly ? '' : 'Nama SOP… (isi via Edit Info)'}</span>}</p></div>
                         </div>
-                        <div className="flex border-t-2 border-black bg-slate-50">
-                          <div className="flex-1 px-2.5 py-1.5 border-r-2 border-black flex items-center justify-center" title="Dihitung otomatis dari jumlah kolom Mutu Baku 'Waktu' seluruh langkah (1 Hari Kerja = 5,5 jam = 330 menit; sisa waktu dibulatkan ke hari berikutnya)">
-                            <p className="text-[11px] font-bold leading-tight text-center">Waktu SOP : {totalWaktuSOP ? `${totalWaktuSOP.menit} Menit / ${totalWaktuSOP.hari} Hari Kerja` : '-'}</p>
+                        <div className="flex">
+                          <div className="flex-1 flex p-1.5 items-center border-r-2 border-black" title="Dihitung otomatis dari jumlah kolom Mutu Baku 'Waktu' seluruh langkah (1 Hari Kerja = 5,5 jam = 330 menit; sisa waktu dibulatkan ke hari berikutnya)">
+                            <span className="w-32 shrink-0">Waktu SOP</span><span className="mx-1">:</span>
+                            <span className="flex-1">{totalWaktuSOP ? `${totalWaktuSOP.menit} Menit / ${totalWaktuSOP.hari} Hari Kerja` : '-'}</span>
                           </div>
-                          <div className="flex-1 px-2.5 py-1.5 flex items-center justify-center" title="Jumlah tahapan (baris kegiatan bernomor) pada alur SOP ini">
-                            <p className="text-[11px] font-bold leading-tight text-center">Total Tahapan : {displayNumbers.filter(n => n !== '').length} Tahapan</p>
+                          <div className="flex-1 flex p-1.5 items-center" title="Jumlah tahapan (baris kegiatan bernomor) pada alur SOP ini">
+                            <span className="shrink-0">Total Tahapan</span><span className="mx-1">:</span>
+                            <span className="flex-1">{displayNumbers.filter(n => n !== '').length} Tahapan</span>
                           </div>
                         </div>
                       </div>
@@ -1891,16 +2014,14 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
 
         return (
           <div key={chunkIdx} className={`print-page-target paper-f4-landscape shadow-2xl p-[6mm] border border-slate-300 text-black flex-col page-container ${isLastChunk ? 'last-print-page' : ''} ${activeTab === chunkIdx || isPrinting ? 'flex' : 'hidden print:flex'} font-bookman`}>
-            <div className="flex justify-between items-end mb-3 border-b-4 border-black pb-1 shrink-0">
-              <div>
-                <h2 className="text-[15px] font-black uppercase leading-tight">{judul || 'JUDUL SOP'}</h2>
-                {(jenisSOP || klasifikasiSOP) && (
-                  <div className="flex gap-2 mt-1 no-print font-sans">
-                    {jenisSOP && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200">{jenisSOP}</span>}
-                    {klasifikasiSOP && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-teal-100 text-teal-700 border border-teal-200">{klasifikasiSOP}</span>}
-                  </div>
-                )}
-              </div>
+            <div className="flex justify-between items-start gap-3 mb-3 border-b-4 border-black pb-1 shrink-0">
+              <h2 className="text-[15px] font-black uppercase leading-tight min-w-0">{judul || 'JUDUL SOP'}</h2>
+              {(jenisSOP || klasifikasiSOP) && (
+                <div className="flex flex-row items-center gap-2 mt-0.5 no-print font-sans shrink-0">
+                  {jenisSOP && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-violet-100 text-violet-700 border border-violet-200 whitespace-nowrap">{jenisSOP}</span>}
+                  {klasifikasiSOP && <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-teal-100 text-teal-700 border border-teal-200 whitespace-nowrap">{klasifikasiSOP}</span>}
+                </div>
+              )}
             </div>
             
             <div className={`overflow-visible flex flex-col min-h-0 relative ${shouldStretch ? 'flex-1' : 'mb-auto'}`}>

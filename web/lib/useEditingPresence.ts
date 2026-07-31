@@ -25,7 +25,12 @@ export function useEditingPresence(
     });
 
     const ping = () =>
-      fetch(BASE, { method: 'POST', headers: headers(), body }).catch(() => {});
+      fetch(BASE, { method: 'POST', headers: headers(), body })
+        .then(r => {
+          // Sesi mati — hentikan heartbeat (percuma terus mengirim POST yang ditolak).
+          if (r.status === 401 && timerRef.current) clearInterval(timerRef.current);
+        })
+        .catch(() => {});
 
     const end = () =>
       fetch(BASE, { method: 'DELETE', headers: headers(), body, keepalive: true }).catch(() => {});

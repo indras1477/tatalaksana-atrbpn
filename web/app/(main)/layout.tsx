@@ -177,7 +177,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
         >
           Dibuat oleh{' '}
           <a
-            href="https://www.linkedin.com/in/nanda-ferdiansyah-77640b121"
+            href="https://nanda-portfolio-flax.vercel.app"
             target="_blank"
             rel="noopener noreferrer"
             className="text-blue-500 hover:underline font-medium"

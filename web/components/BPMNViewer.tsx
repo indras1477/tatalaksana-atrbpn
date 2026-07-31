@@ -123,6 +123,7 @@ export default function BPMNViewer({ xml, registerExportApi }: BPMNViewerProps) 
   const navStackRef = useRef<BreadcrumbItem[]>([]);
   const canvasRef = useRef<BpmnCanvas | null>(null);
   const destroyedRef = useRef(false);
+  const restackGroupsRef = useRef<(() => void) | null>(null);
 
   // Combined into one object to avoid multiple synchronous setState calls in effect body
   const [viewerState, setViewerState] = useState<{
@@ -193,6 +194,31 @@ export default function BPMNViewer({ xml, registerExportApi }: BPMNViewerProps) 
         const canvas = viewer.get('canvas') as BpmnCanvas;
         canvasRef.current = canvas;
 
+        // Turunkan lapisan tiap Pool (bpmn:Group) ke DASAR container plane-nya agar
+        // elemen di dalamnya selalu tergambar DI ATAS pool. Tanpa ini, di mode baca
+        // (yang tak punya GroupOrderingProvider editor) pool bisa menutupi elemen →
+        // teks jadi abu-abu / "berada di bawah pool". Dipanggil setelah import DAN
+        // saat drill-in sub-proses (plane baru dirender belakangan).
+        const reg = viewer.get('elementRegistry') as unknown as {
+          forEach: (fn: (el: { type?: string; parent?: { type?: string } }) => void) => void;
+          getGraphics: (el: unknown) => SVGElement | undefined;
+        };
+        const restackGroups = () => {
+          try {
+            reg.forEach((el) => {
+              if (el.type !== 'bpmn:Group') return;
+              if (!el.parent || el.parent.type === 'bpmn:Group') return;
+              const gfx = reg.getGraphics(el);
+              const wrapper = gfx?.parentNode as SVGElement | null;
+              const container = wrapper?.parentNode as SVGElement | null;
+              if (wrapper && container && container.firstChild !== wrapper) {
+                container.insertBefore(wrapper, container.firstChild);
+              }
+            });
+          } catch { /* abaikan */ }
+        };
+        restackGroupsRef.current = restackGroups;
+
         // Hide built-in bjs-breadcrumbs to avoid duplication with our React UI
         const bjsCrumbs = canvas.getContainer().querySelector('.bjs-breadcrumbs');
         if (bjsCrumbs) (bjsCrumbs as HTMLElement).style.display = 'none';
@@ -212,6 +238,7 @@ export default function BPMNViewer({ xml, registerExportApi }: BPMNViewerProps) 
         };
         navStackRef.current = [rootItem];
         setViewerState({ breadcrumbs: [rootItem], isLoading: false, isEmpty: false });
+        restackGroups();
 
         // Ekspor SVG on-demand: proses utama + tiap plane sub-proses (berjenjang),
         // dengan penamaan jalur breadcrumb. Meniru handleExport di BPMNModeler agar
@@ -266,6 +293,9 @@ export default function BPMNViewer({ xml, registerExportApi }: BPMNViewerProps) 
         // Any other element id = going back to a known ancestor.
         viewer.on('root.set', ({ element }: { element: { id: string; businessObject?: { name?: string } } }) => {
           if (destroyedRef.current) return;
+          // Plane (sub-proses) baru dirender saat drill-in → tata ulang lapisan pool
+          // pada plane tsb agar elemen tak tertutup pool (deferred agar DOM siap).
+          setTimeout(() => { if (!destroyedRef.current) restackGroupsRef.current?.(); }, 60);
           const stack = navStackRef.current;
           const existingIdx = stack.findIndex(b => b.id === element.id);
 

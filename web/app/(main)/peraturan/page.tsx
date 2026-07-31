@@ -657,7 +657,7 @@ export default function PeraturanPage() {
                     const newStack = driveStack.slice(0, i + 1);
                     setDriveStack(newStack);
                     fetchDriveFolder(f.id);
-                  }} className="hover:underline truncate max-w-[120px]">{f.name}</button>
+                  }} className="hover:underline truncate max-w-30">{f.name}</button>
                 </React.Fragment>
               ))}
             </div>

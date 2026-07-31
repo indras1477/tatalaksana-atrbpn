@@ -31,6 +31,12 @@ function SOPStudioContent() {
   const builderRef = useRef<SOPBuilderRef>(null);
   const lastSavedRef = useRef<string | null>(null);
   const [autoSavedAt, setAutoSavedAt] = useState<string | null>(null);
+  const [autoSaveError, setAutoSaveError] = useState(false);
+  const [loadError, setLoadError] = useState<string | null>(null);
+  // Autosave hanya boleh berjalan bila dokumen benar-benar termuat (cegah menimpa
+  // dokumen server dengan kanvas kosong saat fetch gagal).
+  const loadedOkRef = useRef(false);
+  const savingRef = useRef(false); // guard: jangan tumpang-tindih request autosave
 
   const [presenceToken, setPresenceToken] = useState('');
   useEffect(() => { setPresenceToken(localStorage.getItem('token') || ''); }, []);
@@ -66,13 +72,14 @@ function SOPStudioContent() {
     if (currentId) {
       apiFetch(`/sop/models/${currentId}`)
         .then(async (res) => {
-           if (!res.ok) throw new Error("Gagal");
+           if (!res.ok) throw new Error(`Gagal memuat dokumen (HTTP ${res.status})`);
            const text = await res.text();
-           try { return JSON.parse(text); } catch { return {}; }
+           try { return JSON.parse(text); } catch { throw new Error('Respons server tidak valid'); }
         })
         .then((data) => {
            if (data && data.sop_data) setInitialData(data.sop_data);
            if (data && data.status) setDocStatus(data.status);
+           loadedOkRef.current = true; // izinkan autosave HANYA setelah dokumen benar termuat
            // Cek apakah perangkat lain sedang mengedit dokumen ini (termasuk akun sama beda perangkat).
            // Mode lihat / dokumen terkunci tidak perlu peringatan — pembaca tidak menimbulkan konflik.
            if (currentId && mode !== 'view' && !['terbit', 'verifikasi', 'penetapan'].includes(data?.status || '')) {
@@ -89,8 +96,14 @@ function SOPStudioContent() {
                .catch(() => {});
            }
         })
-        .catch(() => {})
+        .catch((e) => {
+          // JANGAN diam-diam merender kanvas kosong: pernah menyebabkan autosave menimpa
+          // dokumen server dengan data kosong. Tampilkan error & blokir builder.
+          if (!(e instanceof Error && e.message.includes('Sesi berakhir'))) setLoadError(e instanceof Error ? e.message : 'Gagal memuat dokumen');
+        })
         .finally(() => setLoading(false));
+    } else {
+      loadedOkRef.current = true; // dokumen baru — tak ada yang perlu dimuat
     }
   }, [currentId]);
 
@@ -157,15 +170,23 @@ function SOPStudioContent() {
     if (isViewOnlySop) return;
     const timer = setInterval(async () => {
       if (!currentId || !builderRef.current) return;
+      if (!loadedOkRef.current) return;      // dokumen belum termuat benar — jangan simpan apa pun
+      if (savingRef.current) return;         // masih ada request berjalan — jangan tumpang tindih
       if (['terbit', 'verifikasi', 'penetapan'].includes(docStatus || '')) return;
       let data: string;
       try { data = builderRef.current.getSOPData(); } catch { return; }
       if (lastSavedRef.current === null) { lastSavedRef.current = data; return; } // patok baseline
       if (data === lastSavedRef.current) return; // tak ada perubahan
+      savingRef.current = true;
       try {
         await persist(data); // pertahankan status
         setAutoSavedAt(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }));
-      } catch { /* diamkan — coba lagi tick berikutnya */ }
+        setAutoSaveError(false);
+      } catch {
+        setAutoSaveError(true); // tunjukkan ke user — jangan bilang "aman" padahal gagal
+      } finally {
+        savingRef.current = false;
+      }
     }, 25000);
     return () => clearInterval(timer);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -266,7 +287,12 @@ function SOPStudioContent() {
       </div>
     )}
     {/* Indikator auto-save */}
-    {autoSavedAt && !isViewOnlySop && (
+    {autoSaveError && !isViewOnlySop ? (
+      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-100 px-3 py-1.5 rounded-full bg-red-600/95 text-white text-xs font-bold shadow-lg flex items-center gap-1.5 pointer-events-none">
+        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z" /></svg>
+        Gagal simpan otomatis — simpan manual!
+      </div>
+    ) : autoSavedAt && !isViewOnlySop && (
       <div className="fixed bottom-4 left-1/2 -translate-x-1/2 z-100 px-3 py-1.5 rounded-full bg-emerald-600/90 text-white text-xs font-semibold shadow-lg flex items-center gap-1.5 pointer-events-none">
         <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2.5} d="M5 13l4 4L19 7" /></svg>
         Tersimpan otomatis {autoSavedAt}

@@ -2,11 +2,10 @@
 import React, { Suspense, useState, useMemo, useEffect, useCallback } from 'react';
 import {
   ChevronRight, ArrowLeft, Download, FileText,
-  Activity, BookOpen, Filter, X, Eye, EyeOff, Search, ChevronLeft,
+  Activity, BookOpen, Filter, X, Search, ChevronLeft,
   RefreshCw, ExternalLink, FolderOpen, Layers,
   UploadCloud, Globe, Folder, Plus, CheckCircle2, AlertCircle, FileSpreadsheet,
 } from 'lucide-react';
-import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Legend } from 'recharts';
 import * as XLSX from 'xlsx';
 
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -199,8 +198,6 @@ function DashboardBPN() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [viewDoc, setViewDoc] = useState<Dokumen | null>(null);
   const [previewSvg, setPreviewSvg] = useState<string>("");
-  const [showChart, setShowChart] = useState(true);
-  const [chartFilterSatker, setChartFilterSatker] = useState('Semua');
 
   // === IMPORT MODAL (Excel + Crawl tabs) ===
   const [showImportModal, setShowImportModal] = useState(false);
@@ -368,10 +365,16 @@ function DashboardBPN() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [dokumenScope, adaFilterAktif]);
 
-  const chartData = useMemo(() => {
-    if (chartFilterSatker === 'Semua') return rekapL1;
-    return rekapL1.filter((item) => item.nama === chartFilterSatker);
-  }, [rekapL1, chartFilterSatker]);
+  // Di layar lebar (xl+) halaman dikunci setinggi viewport supaya TIDAK pernah muncul
+  // scroll halaman; bila isi tabel kepanjangan, yang bergulir hanya badan tabel.
+  // Level 1 & 2 barisnya sedikit (11 unit / belasan sub-unit) → dirapatkan agar muat utuh.
+  const barisRapat = level !== 3;
+
+  // Total kolom untuk baris kaki tabel rekapitulasi
+  const rekapTotal = useMemo(() => rekapL1.reduce(
+    (acc, r) => ({ probis: acc.probis + r.probis, sop: acc.sop + r.sop, sp: acc.sp + r.sp }),
+    { probis: 0, sop: 0, sp: 0 }
+  ), [rekapL1]);
 
   const rekapL2 = useMemo(() => {
     if (!selectedL1) return [];
@@ -1362,42 +1365,19 @@ function DashboardBPN() {
       )}
 
       {/* KONTEN UTAMA */}
-      <div className="overflow-auto p-4 md:p-6 lg:p-8 scroll-smooth h-full">
+      <div className="overflow-auto p-4 md:p-6 lg:p-8 xl:py-5 scroll-smooth h-full">
         {activeMenu === 'dashboard' && (
-          <div className="max-w-7xl mx-auto space-y-6 animate-in fade-in duration-500 pb-12">
+          <div className={"max-w-400 mx-auto space-y-6 animate-in fade-in duration-500 pb-12 xl:h-full xl:min-h-0 xl:flex xl:flex-col xl:space-y-3 xl:pb-0"}>
 
-            {/* Tab Switcher */}
-            <div className={`flex flex-wrap gap-1 p-1 rounded-2xl w-fit max-w-full ${isDarkMode ? 'bg-[#0F172A]' : 'bg-slate-100'}`}>
-              <button
-                onClick={() => setDashboardTab('2026')}
-                className={`px-5 py-3 rounded-xl text-sm font-extrabold transition-all duration-200 ${
-                  dashboardTab === '2026'
-                    ? isDarkMode ? 'bg-blue-600 text-white shadow-lg' : 'bg-[#002855] text-white shadow-md'
-                    : isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                2026 — Terbaru
-              </button>
-              <button
-                onClick={() => setDashboardTab('arsip')}
-                className={`px-5 py-3 rounded-xl text-sm font-extrabold transition-all duration-200 ${
-                  dashboardTab === 'arsip'
-                    ? isDarkMode ? 'bg-amber-600 text-white shadow-lg' : 'bg-[#A29061] text-white shadow-md'
-                    : isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-700'
-                }`}
-              >
-                2023 – 2025
-              </button>
-            </div>
-
-            <div className="flex flex-col sm:flex-row sm:justify-between sm:items-end gap-4 mb-8">
-              <div>
-                <h2 className={`text-2xl md:text-3xl xl:text-4xl font-extrabold tracking-tight transition-colors ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>
+            {/* Judul + tab tahun — sebaris di layar lebar agar hemat tinggi */}
+            <div className="flex flex-col xl:flex-row xl:items-center xl:justify-between gap-4 mb-8 xl:mb-0 shrink-0">
+              <div className="order-2 xl:order-1 min-w-0">
+                <h2 className={`text-2xl md:text-3xl font-extrabold tracking-tight transition-colors ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>
                   {level === 1
                     ? dashboardTab === '2026' ? 'Dashboard Monitoring 2026' : 'Arsip Probis & SOP 2023–2025'
                     : level === 2 ? selectedL1 : (selectedL2 || selectedL1 || `Semua Dokumen${filterJenis !== 'Semua' ? ` — ${filterJenis}` : ''}`)}
                 </h2>
-                <p className={`mt-2 font-medium transition-colors text-sm md:text-base ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                <p className={`mt-2 xl:mt-1 font-medium transition-colors text-sm md:text-base xl:hidden 2xl:block ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                   {level === 1
                     ? dashboardTab === '2026'
                       ? 'Rekapitulasi Dokumen Ketatalaksanaan Tahun 2026'
@@ -1405,104 +1385,108 @@ function DashboardBPN() {
                     : level === 2 ? 'Rincian Rekapitulasi per Unit Kerja' : (selectedL2 ? 'Daftar Dokumen Detail' : selectedL1 ? `Semua Dokumen di ${selectedL1}` : 'Seluruh unit kerja')}
                 </p>
               </div>
-              <div className="flex items-center gap-3 shrink-0">
-                {level > 1 && <button onClick={() => { setLevel(level === 3 && !selectedL1 ? 1 : level - 1); setFilterJenis('Semua'); setFilterTahun('Semua'); setSearchQuery(''); }} className={`flex items-center px-4 py-3 border rounded-xl shadow-sm transition-all font-semibold text-sm ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-slate-300 hover:bg-slate-800' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}><ArrowLeft className="w-4 h-4 mr-2" /> Kembali</button>}
-                {level === 1 && dashboardTab === '2026' && currentUser?.role === 'admin' && (
-                  <button onClick={() => { setShowImportModal(true); setImportSource('2026'); setImportTab('excel'); }}
-                    className={`flex items-center gap-2 px-5 py-3 rounded-xl font-bold text-sm shadow-md transition-all ${isDarkMode ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-[#002855] hover:bg-[#003580] text-white'}`}>
-                    <UploadCloud className="w-4 h-4" /> Import Data 2026
+              <div className="order-1 xl:order-2 flex flex-wrap items-center gap-3 shrink-0">
+                {level > 1 && <button onClick={() => { setLevel(level === 3 && !selectedL1 ? 1 : level - 1); setFilterJenis('Semua'); setFilterTahun('Semua'); setSearchQuery(''); }} className={`flex items-center px-4 py-2.5 border rounded-xl shadow-sm transition-all font-semibold text-sm ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-slate-300 hover:bg-slate-800' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}><ArrowLeft className="w-4 h-4 mr-2" /> Kembali</button>}
+                <div className={`flex flex-wrap gap-1 p-1 rounded-2xl w-fit max-w-full ${isDarkMode ? 'bg-[#0F172A]' : 'bg-slate-100'}`}>
+                  <button
+                    onClick={() => setDashboardTab('2026')}
+                    className={`px-5 py-3 xl:py-2 rounded-xl text-sm font-extrabold transition-all duration-200 ${
+                      dashboardTab === '2026'
+                        ? isDarkMode ? 'bg-blue-600 text-white shadow-lg' : 'bg-[#002855] text-white shadow-md'
+                        : isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    2026 — Terbaru
                   </button>
-                )}
-                {level === 1 && dashboardTab === 'arsip' && currentUser?.role === 'admin' && (
-                  <button onClick={() => { setShowImportModal(true); setImportSource('arsip'); setImportTab('excel'); }}
-                    className={`flex items-center gap-2 px-5 py-3 rounded-xl font-bold text-sm shadow-md transition-all ${isDarkMode ? 'bg-amber-600 hover:bg-amber-500 text-white' : 'bg-[#A29061] hover:bg-[#8c7a4b] text-white'}`}>
-                    <UploadCloud className="w-4 h-4" /> Import Data 2023–2025
+                  <button
+                    onClick={() => setDashboardTab('arsip')}
+                    className={`px-5 py-3 xl:py-2 rounded-xl text-sm font-extrabold transition-all duration-200 ${
+                      dashboardTab === 'arsip'
+                        ? isDarkMode ? 'bg-amber-600 text-white shadow-lg' : 'bg-[#A29061] text-white shadow-md'
+                        : isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-700'
+                    }`}
+                  >
+                    2023 – 2025
                   </button>
-                )}
+                </div>
               </div>
             </div>
 
-            {level === 1 && (
-              <>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <button onClick={() => { setFilterJenis('Proses Bisnis'); setSelectedL1(''); setSelectedL2(''); setCurrentPage(1); setLevel(3); }} title="Lihat seluruh dokumen Total Proses Bisnis" className={`text-left w-full p-6 rounded-2xl border shadow-sm transition-all flex items-center space-x-5 cursor-pointer hover:-translate-y-0.5 ${isDarkMode ? 'bg-[#151F32] border-slate-800 hover:border-slate-700' : 'bg-white border-slate-100 hover:shadow-md'}`}>
-                    <div className={`p-4 rounded-2xl ${isDarkMode ? 'bg-blue-900/30 text-blue-400' : 'bg-blue-50 text-blue-600'}`}><Activity className="w-8 h-8" /></div>
-                    <div><p className={`text-sm font-bold uppercase tracking-wider mb-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Total Proses Bisnis</p><p className={`text-4xl font-extrabold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{totalProbis}</p></div>
-                  </button>
-                  <button onClick={() => { setFilterJenis('SOP'); setSelectedL1(''); setSelectedL2(''); setCurrentPage(1); setLevel(3); }} title="Lihat seluruh dokumen Total SOP" className={`text-left w-full p-6 rounded-2xl border shadow-sm transition-all flex items-center space-x-5 cursor-pointer hover:-translate-y-0.5 ${isDarkMode ? 'bg-[#151F32] border-slate-800 hover:border-slate-700' : 'bg-white border-slate-100 hover:shadow-md'}`}>
-                    <div className={`p-4 rounded-2xl ${isDarkMode ? 'bg-amber-900/30 text-amber-500' : 'bg-amber-50 text-[#A29061]'}`}><BookOpen className="w-8 h-8" /></div>
-                    <div><p className={`text-sm font-bold uppercase tracking-wider mb-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Total SOP</p><p className={`text-4xl font-extrabold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{totalSOP}</p></div>
-                  </button>
-                  <button onClick={() => { setFilterJenis('Standar Pelayanan'); setSelectedL1(''); setSelectedL2(''); setCurrentPage(1); setLevel(3); }} title="Lihat seluruh dokumen Standar Pelayanan" className={`text-left w-full p-6 rounded-2xl border shadow-sm transition-all flex items-center space-x-5 cursor-pointer hover:-translate-y-0.5 ${isDarkMode ? 'bg-[#151F32] border-slate-800 hover:border-slate-700' : 'bg-white border-slate-100 hover:shadow-md'}`}>
-                    <div className={`p-4 rounded-2xl ${isDarkMode ? 'bg-emerald-900/30 text-emerald-400' : 'bg-emerald-50 text-emerald-600'}`}><FileText className="w-8 h-8" /></div>
-                    <div><p className={`text-sm font-bold uppercase tracking-wider mb-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Standar Pelayanan</p><p className={`text-4xl font-extrabold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{totalSP}</p></div>
-                  </button>
-                </div>
+            <div className={"flex flex-col xl:flex-row gap-5 items-start xl:items-stretch xl:flex-1 xl:min-h-0"}>
 
-                <div className={`p-6 rounded-2xl border shadow-sm transition-all duration-300 ${isDarkMode ? 'bg-[#151F32] border-slate-800' : 'bg-white border-slate-100'}`}>
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center mb-8">
-                    <h3 className={`text-xl font-extrabold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>Distribusi Dokumen</h3>
-                    <div className="flex items-center space-x-3 mt-4 sm:mt-0">
-                      {showChart && <div className={`flex items-center border rounded-xl px-3 shadow-sm transition-colors ${isDarkMode ? 'bg-[#0F172A] border-slate-700' : 'bg-slate-50 border-slate-200'}`}><Filter className="w-4 h-4 text-slate-400" /><select value={chartFilterSatker} onChange={(e) => setChartFilterSatker(e.target.value)} className={`bg-transparent border-none text-sm font-medium focus:ring-0 outline-none py-2.5 pl-2 pr-6 cursor-pointer max-w-50 truncate ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}><option value="Semua">Semua Unit Kerja</option>{listL1.map(unit => <option key={unit} value={unit}>{unit}</option>)}</select></div>}
-                      <button onClick={() => setShowChart(!showChart)} className={`flex items-center px-4 py-2 text-sm font-bold rounded-xl transition-colors ${isDarkMode ? 'bg-slate-800 text-slate-300 hover:bg-slate-700' : 'bg-slate-100 text-slate-700 hover:bg-slate-200'}`}>{showChart ? <><EyeOff className="w-4 h-4 mr-2"/> Sembunyikan</> : <><Eye className="w-4 h-4 mr-2"/> Tampilkan</>}</button>
-                    </div>
-                  </div>
-                  {showChart && <div className="h-72 w-full animate-in fade-in slide-in-from-top-4 duration-500"><ResponsiveContainer width="100%" height={288}><BarChart data={chartData} margin={{ top: 5, right: 0, left: -20, bottom: 5 }}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke={isDarkMode ? '#334155' : '#e2e8f0'} /><XAxis dataKey="labelChart" axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: isDarkMode ? '#94a3b8' : '#64748b', fontWeight: 500 }} /><YAxis axisLine={false} tickLine={false} tick={{ fontSize: 12, fill: isDarkMode ? '#94a3b8' : '#64748b' }} /><Tooltip cursor={{ fill: isDarkMode ? '#1e293b' : '#f8fafc' }} contentStyle={{ backgroundColor: isDarkMode ? '#0F172A' : '#ffffff', borderColor: isDarkMode ? '#334155' : '#e2e8f0', borderRadius: '12px', color: isDarkMode ? '#f8fafc' : '#002855' }}/><Legend wrapperStyle={{ paddingTop: '20px' }} iconType="circle"/><Bar dataKey="probis" fill="#3b82f6" name="Proses Bisnis" radius={[6, 6, 0, 0]} /><Bar dataKey="sop" fill="#A29061" name="SOP" radius={[6, 6, 0, 0]} /><Bar dataKey="sp" fill="#10b981" name="Standar Pelayanan" radius={[6, 6, 0, 0]} /></BarChart></ResponsiveContainer></div>}
-                </div>
-              </>
-            )}
+            {/* ── KOLOM KIRI: tabel rekapitulasi ── */}
+            <div className={"w-full min-w-0 flex-1 order-2 xl:order-1 space-y-4 xl:flex xl:flex-col xl:min-h-0 xl:space-y-3"}>
 
             {loading && <div className="flex items-center justify-center py-4 gap-2 text-slate-400"><RefreshCw className="w-4 h-4 animate-spin" /><span className="text-sm">Memuat data...</span></div>}
 
-            <div className={`rounded-2xl border shadow-sm overflow-hidden transition-colors ${isDarkMode ? 'bg-[#151F32] border-slate-800' : 'bg-white border-slate-100'}`}>
-              <div className={`p-5 md:p-6 border-b flex flex-col xl:flex-row justify-between items-start xl:items-center gap-4 ${isDarkMode ? 'bg-[#151F32] border-slate-800' : 'bg-white border-slate-100'}`}>
-                <h3 className={`text-lg font-extrabold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{level === 1 ? 'Rekapitulasi Total Masing-Masing Unit Kerja' : level === 2 ? `Sub-Unit: ${selectedL1}` : `Data Detail: ${selectedL2 || selectedL1 || 'Seluruh Unit Kerja'}`}</h3>
-                {level === 2 && <button onClick={() => { setLevel(3); setSelectedL2(''); }} className="flex items-center px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-xl transition shadow-md w-full sm:w-auto shrink-0"><Layers className="w-4 h-4 mr-2" /> Lihat Semua Dokumen</button>}
+            <div className={`rounded-2xl border shadow-sm overflow-hidden transition-colors xl:flex xl:flex-col xl:max-h-full xl:min-h-0 ${isDarkMode ? 'bg-[#151F32] border-slate-800' : 'bg-white border-slate-100'}`}>
+              <div className={`p-4 md:p-5 xl:p-4 border-b flex flex-col 2xl:flex-row justify-between items-stretch 2xl:items-center gap-3 xl:gap-2.5 shrink-0 ${isDarkMode ? 'bg-[#151F32] border-slate-800' : 'bg-white border-slate-100'}`}>
+                <h3 className={`text-base md:text-lg font-extrabold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{level === 1 ? 'Rekapitulasi Total Masing-Masing Unit Kerja' : level === 2 ? `Sub-Unit: ${selectedL1}` : `Data Detail: ${selectedL2 || selectedL1 || 'Seluruh Unit Kerja'}`}</h3>
                 {(
-                  <div className="flex flex-col sm:flex-row items-center w-full xl:w-auto gap-3">
-                    <div className="relative w-full sm:w-72"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Search className="h-4 w-4 text-slate-400" /></div><input type="text" placeholder="Cari nama dokumen, unit kerja, atau sumber..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className={`w-full pl-10 pr-4 py-2.5 border rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all ${isDarkMode ? 'bg-[#0F172A] border-slate-700 text-white focus:bg-[#151F32]' : 'bg-slate-50 border-slate-200 text-slate-800 focus:bg-white'}`} /></div>
+                  <div className="flex flex-col sm:flex-row items-stretch sm:items-center w-full 2xl:w-auto gap-2.5">
+                    <div className="relative w-full sm:flex-1 sm:min-w-48 2xl:w-72 2xl:flex-none"><div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Search className="h-4 w-4 text-slate-400" /></div><input type="text" placeholder="Cari nama dokumen, unit kerja, atau sumber..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className={`w-full pl-10 pr-4 py-2.5 border rounded-xl text-sm font-medium focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all ${isDarkMode ? 'bg-[#0F172A] border-slate-700 text-white focus:bg-[#151F32]' : 'bg-slate-50 border-slate-200 text-slate-800 focus:bg-white'}`} /></div>
                     <div className={`flex items-center border rounded-xl px-2 w-full sm:w-auto ${isDarkMode ? 'bg-[#0F172A] border-slate-700' : 'bg-slate-50 border-slate-200'}`}><Filter className="w-4 h-4 text-slate-400 ml-2" /><select value={filterJenis} onChange={(e) => setFilterJenis(e.target.value)} className={`w-full bg-transparent border-none text-sm font-medium focus:ring-0 outline-none py-2.5 pl-2 pr-6 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}><option value="Semua">Semua Jenis</option><option value="Proses Bisnis">Proses Bisnis</option><option value="SOP">SOP</option><option value="Standar Pelayanan">Standar Pelayanan</option></select></div>
                     <div className={`flex items-center border rounded-xl px-2 w-full sm:w-auto ${isDarkMode ? 'bg-[#0F172A] border-slate-700' : 'bg-slate-50 border-slate-200'}`}><select value={filterTahun} onChange={(e) => setFilterTahun(e.target.value)} className={`w-full bg-transparent border-none text-sm font-medium focus:ring-0 outline-none py-2.5 pl-2 pr-6 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}><option value="Semua">Semua Tahun</option>{uniqueTahunList.map(thn => <option key={thn} value={thn}>{thn}</option>)}</select></div>
-                    {level === 3 && <button onClick={handleExportExcel} className="flex justify-center items-center px-5 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl transition shadow-md w-full sm:w-auto shrink-0"><Download className="w-4 h-4 mr-2" /> Unduh Excel</button>}
+                    {level === 2 && <button onClick={() => { setLevel(3); setSelectedL2(''); }} className="flex justify-center items-center px-4 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-sm font-bold rounded-xl transition shadow-md w-full sm:w-auto shrink-0 whitespace-nowrap"><Layers className="w-4 h-4 mr-2" /> Lihat Semua Dokumen</button>}
+                    {level === 3 && <button onClick={handleExportExcel} className="flex justify-center items-center px-4 py-2.5 bg-emerald-600 hover:bg-emerald-700 text-white text-sm font-bold rounded-xl transition shadow-md w-full sm:w-auto shrink-0 whitespace-nowrap"><Download className="w-4 h-4 mr-2" /> Unduh Excel</button>}
+                    {level === 1 && currentUser?.role === 'admin' && (
+                      <button
+                        onClick={() => { setShowImportModal(true); setImportSource(dashboardTab === '2026' ? '2026' : 'arsip'); setImportTab('excel'); }}
+                        className={`flex justify-center items-center gap-2 px-5 py-2.5 rounded-xl text-sm font-bold transition shadow-md w-full sm:w-auto shrink-0 whitespace-nowrap ${dashboardTab === '2026'
+                          ? (isDarkMode ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-[#002855] hover:bg-[#003580] text-white')
+                          : (isDarkMode ? 'bg-amber-600 hover:bg-amber-500 text-white' : 'bg-[#A29061] hover:bg-[#8c7a4b] text-white')}`}>
+                        <UploadCloud className="w-4 h-4" /> {dashboardTab === '2026' ? 'Import Data 2026' : 'Import Data 2023–2025'}
+                      </button>
+                    )}
                   </div>
                 )}
               </div>
 
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-170 text-sm text-left">
-                  <thead className={`text-[11px] font-bold uppercase tracking-wider border-b ${isDarkMode ? 'bg-[#0F172A] text-slate-400 border-slate-800' : 'bg-slate-50 text-slate-400 border-slate-100'}`}>
+              <div className="overflow-x-auto xl:overflow-auto xl:min-h-0">
+                <table className={`w-full text-xs md:text-sm text-left max-md:[&_th]:px-3 max-md:[&_td]:px-3 max-md:[&_th]:py-3 max-md:[&_td]:py-3 max-md:[&_tfoot_td]:py-4 ${level === 3 ? 'min-w-200' : 'min-w-150'} ${barisRapat ? 'md:[&_th]:px-5 md:[&_td]:px-5 md:[&_th]:py-2.5 md:[&_td]:py-2.5 md:[&_tfoot_td]:py-4' : ''}`}>
+                  <thead className={`text-[10px] md:text-[11px] font-bold uppercase tracking-wider sticky top-0 z-20 [&_th]:bg-inherit ${isDarkMode ? 'bg-[#0F172A] text-slate-400 shadow-[inset_0_-1px_0_0_#1e293b]' : 'bg-slate-50 text-slate-400 shadow-[inset_0_-1px_0_0_#e2e8f0]'}`}>
                     <tr>
-                      <th className="px-6 py-4 w-16 text-center">No</th>
-                      <th className="px-6 py-4 min-w-56">{level === 3 ? 'Nama Dokumen / Layanan' : 'Unit Kerja'}</th>
+                      <th className="px-6 py-4 w-12 text-center">No</th>
+                      <th className="px-6 py-4 min-w-48">{level === 3 ? 'Nama Dokumen / Layanan' : 'Unit Kerja'}</th>
                       {level === 3 && !selectedL1 && <th className="px-6 py-4">Unit Kerja (Level 1)</th>}
                       {level === 3 && <th className="px-6 py-4">Unit Kerja (Level 2)</th>}
                       {level === 3 && <th className="px-6 py-4">Unit Kerja (Level 3)</th>}
-                      <th className="px-6 py-4">{level === 3 ? 'Jenis Dokumen' : 'Probis'}</th>
-                      <th className="px-6 py-4">{level === 3 ? 'Tahun' : 'SOP'}</th>
-                      <th className="px-6 py-4">{level === 3 ? 'Sumber Hukum' : 'Standar Pelayanan'}</th>
+                      <th className={`px-6 py-4 ${level === 3 ? '' : 'text-right w-20'}`}>{level === 3 ? 'Jenis Dokumen' : 'Probis'}</th>
+                      <th className={`px-6 py-4 ${level === 3 ? '' : 'text-right w-20'}`}>{level === 3 ? 'Tahun' : 'SOP'}</th>
+                      <th className={`px-6 py-4 ${level === 3 ? '' : 'text-right w-28'}`}>{level === 3 ? 'Sumber Hukum' : 'Standar Pelayanan'}</th>
                       {level === 3 && <th className="px-6 py-4 text-center">Status</th>}
                       <th className="px-6 py-4 text-center">Aksi</th>
                     </tr>
                   </thead>
                   <tbody>
                     {level === 1 && rekapL1.map((row, idx) => (
-                      <tr key={idx} className={`border-b transition-colors group ${isDarkMode ? 'border-slate-800 hover:bg-slate-800/50' : 'border-slate-50 hover:bg-slate-50/80'}`}>
+                      <tr
+                        key={idx}
+                        onClick={() => { setLevel(2); setSelectedL1(row.nama); }}
+                        title={`Lihat sub-unit ${row.nama}`}
+                        className={`border-b transition-colors group cursor-pointer ${isDarkMode ? 'border-slate-800 hover:bg-slate-800/50' : 'border-slate-50 hover:bg-blue-50/60'}`}
+                      >
                         <td className="px-6 py-4 text-center text-slate-400 font-medium">{idx + 1}</td>
-                        <td className={`px-6 py-4 font-bold ${isDarkMode ? 'text-blue-100' : 'text-[#002855]'}`}>{row.nama}</td>
-                        <td className={`px-6 py-4 font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{row.probis === 0 ? '-' : row.probis}</td>
-                        <td className={`px-6 py-4 font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{row.sop === 0 ? '-' : row.sop}</td>
-                        <td className={`px-6 py-4 font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{row.sp === 0 ? '-' : row.sp}</td>
-                        <td className="px-6 py-4 text-center"><button onClick={() => { setLevel(2); setSelectedL1(row.nama); }} className={`inline-flex items-center justify-center px-4 py-2.5 rounded-lg font-bold transition-all opacity-80 group-hover:opacity-100 ${isDarkMode ? 'bg-blue-900/40 text-blue-400 hover:bg-blue-600 hover:text-white' : 'bg-blue-50 text-blue-700 hover:bg-blue-600 hover:text-white'}`}>Detail <ChevronRight className="w-4 h-4 ml-1" /></button></td>
+                        <td className={`px-6 py-4 font-bold whitespace-normal ${isDarkMode ? 'text-blue-100 group-hover:text-blue-300' : 'text-[#002855] group-hover:text-blue-700'}`}>{row.nama}</td>
+                        <td className={`px-6 py-4 font-semibold text-right tabular-nums ${row.probis === 0 ? 'text-slate-400 font-normal' : isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{row.probis === 0 ? '–' : row.probis}</td>
+                        <td className={`px-6 py-4 font-semibold text-right tabular-nums ${row.sop === 0 ? 'text-slate-400 font-normal' : isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{row.sop === 0 ? '–' : row.sop}</td>
+                        <td className={`px-6 py-4 font-semibold text-right tabular-nums ${row.sp === 0 ? 'text-slate-400 font-normal' : isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{row.sp === 0 ? '–' : row.sp}</td>
+                        <td className="px-6 py-4 text-center"><button onClick={(e) => { e.stopPropagation(); setLevel(2); setSelectedL1(row.nama); }} className={`inline-flex items-center justify-center px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all opacity-80 group-hover:opacity-100 ${isDarkMode ? 'bg-blue-900/40 text-blue-400 group-hover:bg-blue-600 group-hover:text-white' : 'bg-blue-50 text-blue-700 group-hover:bg-blue-600 group-hover:text-white'}`}>Detail <ChevronRight className="w-3.5 h-3.5 ml-1" /></button></td>
                       </tr>
                     ))}
                     {level === 2 && rekapL2.map((row, idx) => (
-                      <tr key={idx} className={`border-b transition-colors group ${isDarkMode ? 'border-slate-800 hover:bg-slate-800/50' : 'border-slate-50 hover:bg-slate-50/80'}`}>
+                      <tr
+                        key={idx}
+                        onClick={() => { setLevel(3); setSelectedL2(row.nama); }}
+                        title={`Lihat dokumen ${row.nama}`}
+                        className={`border-b transition-colors group cursor-pointer ${isDarkMode ? 'border-slate-800 hover:bg-slate-800/50' : 'border-slate-50 hover:bg-[#A29061]/10'}`}
+                      >
                         <td className="px-6 py-4 text-center text-slate-400 font-medium">{idx + 1}</td>
-                        <td className={`px-6 py-4 font-bold ${isDarkMode ? 'text-blue-100' : 'text-[#002855]'}`}>{row.nama}</td>
-                        <td className={`px-6 py-4 font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{row.probis === 0 ? '-' : row.probis}</td>
-                        <td className={`px-6 py-4 font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{row.sop === 0 ? '-' : row.sop}</td>
-                        <td className={`px-6 py-4 font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{row.sp === 0 ? '-' : row.sp}</td>
-                        <td className="px-6 py-4 text-center"><button onClick={() => { setLevel(3); setSelectedL2(row.nama); }} className={`inline-flex items-center justify-center px-4 py-2.5 rounded-lg font-bold transition-all opacity-80 group-hover:opacity-100 ${isDarkMode ? 'bg-amber-900/30 text-amber-500 hover:bg-amber-600 hover:text-white' : 'bg-[#A29061]/10 text-[#A29061] hover:bg-[#A29061] hover:text-white'}`}>Lihat Dokumen <ChevronRight className="w-4 h-4 ml-1" /></button></td>
+                        <td className={`px-6 py-4 font-bold whitespace-normal ${isDarkMode ? 'text-blue-100 group-hover:text-amber-300' : 'text-[#002855] group-hover:text-[#8c7a4b]'}`}>{row.nama}</td>
+                        <td className={`px-6 py-4 font-semibold text-right tabular-nums ${row.probis === 0 ? 'text-slate-400 font-normal' : isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{row.probis === 0 ? '–' : row.probis}</td>
+                        <td className={`px-6 py-4 font-semibold text-right tabular-nums ${row.sop === 0 ? 'text-slate-400 font-normal' : isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{row.sop === 0 ? '–' : row.sop}</td>
+                        <td className={`px-6 py-4 font-semibold text-right tabular-nums ${row.sp === 0 ? 'text-slate-400 font-normal' : isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>{row.sp === 0 ? '–' : row.sp}</td>
+                        <td className="px-6 py-4 text-center"><button onClick={(e) => { e.stopPropagation(); setLevel(3); setSelectedL2(row.nama); }} className={`inline-flex items-center justify-center px-3.5 py-1.5 rounded-lg text-xs font-bold transition-all opacity-80 group-hover:opacity-100 whitespace-nowrap ${isDarkMode ? 'bg-amber-900/30 text-amber-500 group-hover:bg-amber-600 group-hover:text-white' : 'bg-[#A29061]/10 text-[#A29061] group-hover:bg-[#A29061] group-hover:text-white'}`}>Lihat Dokumen <ChevronRight className="w-3.5 h-3.5 ml-1" /></button></td>
                       </tr>
                     ))}
                     {level === 3 && currentItems.map((doc, idx) => (
@@ -1526,12 +1510,24 @@ function DashboardBPN() {
                       </tr>
                     ))}
                   </tbody>
+                  {level === 1 && rekapL1.length > 0 && (
+                    <tfoot className={`sticky bottom-0 z-20 [&_td]:bg-inherit ${isDarkMode ? 'bg-[#0F172A] shadow-[inset_0_2px_0_0_#334155]' : 'bg-slate-50 shadow-[inset_0_2px_0_0_#e2e8f0]'}`}>
+                      <tr>
+                        <td className="px-6 py-4"></td>
+                        <td className={`px-6 py-4 text-[11px] font-extrabold uppercase tracking-wider ${isDarkMode ? 'text-slate-300' : 'text-[#002855]'}`}>Total Keseluruhan</td>
+                        <td className={`px-6 py-4 font-extrabold text-right tabular-nums ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{rekapTotal.probis}</td>
+                        <td className={`px-6 py-4 font-extrabold text-right tabular-nums ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{rekapTotal.sop}</td>
+                        <td className={`px-6 py-4 font-extrabold text-right tabular-nums ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{rekapTotal.sp}</td>
+                        <td className="px-6 py-4"></td>
+                      </tr>
+                    </tfoot>
+                  )}
                 </table>
               </div>
-              
+
               {/* BAGIAN PAGINASI */}
               {level === 3 && dokumenFiltered.length > 0 && (
-                <div className={`flex flex-col sm:flex-row justify-between items-center p-5 border-t gap-4 ${isDarkMode ? 'border-slate-800 bg-[#0F172A]/50' : 'border-slate-100 bg-slate-50/50'}`}>
+                <div className={`flex flex-col sm:flex-row justify-between items-center p-4 border-t gap-3 shrink-0 ${isDarkMode ? 'border-slate-800 bg-[#0F172A]/50' : 'border-slate-100 bg-slate-50/50'}`}>
                   <div className={`flex items-center text-sm font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                     Menampilkan
                     <select value={itemsPerPage} onChange={(e) => setItemsPerPage(Number(e.target.value))} className={`mx-2 border rounded-lg px-2 py-1 outline-none font-bold focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-white' : 'bg-white border-slate-200 text-[#002855]'}`}>
@@ -1547,6 +1543,37 @@ function DashboardBPN() {
                 </div>
               )}
             </div>
+
+            </div>
+            {/* ── akhir kolom kiri ── */}
+
+            {/* ── KOLOM KANAN: kartu ringkasan ── */}
+            {level === 1 && (
+              <div className="w-full xl:w-72 shrink-0 xl:self-start order-1 xl:order-2 grid grid-cols-1 sm:grid-cols-3 xl:grid-cols-1 gap-4">
+                {[
+                  { key: 'Proses Bisnis',      label: 'Total Proses Bisnis', nilai: totalProbis, Icon: Activity, ikonKelas: isDarkMode ? 'bg-blue-900/30 text-blue-400'    : 'bg-blue-50 text-blue-600' },
+                  { key: 'SOP',               label: 'Total SOP',           nilai: totalSOP,    Icon: BookOpen, ikonKelas: isDarkMode ? 'bg-amber-900/30 text-amber-500'  : 'bg-amber-50 text-[#A29061]' },
+                  { key: 'Standar Pelayanan', label: 'Standar Pelayanan',   nilai: totalSP,     Icon: FileText, ikonKelas: isDarkMode ? 'bg-emerald-900/30 text-emerald-400' : 'bg-emerald-50 text-emerald-600' },
+                ].map(({ key, label, nilai, Icon, ikonKelas }) => (
+                  <button
+                    key={key}
+                    onClick={() => { setFilterJenis(key); setSelectedL1(''); setSelectedL2(''); setCurrentPage(1); setLevel(3); }}
+                    title={`Lihat seluruh dokumen ${label}`}
+                    className={`text-left w-full p-5 rounded-2xl border shadow-sm transition-all flex items-center gap-4 cursor-pointer hover:-translate-y-0.5 ${isDarkMode ? 'bg-[#151F32] border-slate-800 hover:border-slate-700' : 'bg-white border-slate-100 hover:shadow-md'}`}
+                  >
+                    <div className={`p-3.5 rounded-2xl shrink-0 ${ikonKelas}`}><Icon className="w-7 h-7" /></div>
+                    <div className="min-w-0">
+                      <p className={`text-[11px] font-bold uppercase tracking-wider mb-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{label}</p>
+                      <p className={`text-3xl font-extrabold tabular-nums leading-none ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{nilai}</p>
+                      <p className={`text-[10px] font-medium mt-1.5 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Klik untuk lihat semua</p>
+                    </div>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            </div>
+            {/* ── akhir grid 2 kolom ── */}
           </div>
         )}
 

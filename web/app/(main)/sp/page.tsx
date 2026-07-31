@@ -11,6 +11,7 @@ import {
   Calendar, ChevronRight, Building2, FileUp, ExternalLink, FileSpreadsheet,
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
+import { useConfirm } from '@/components/ConfirmDialog';
 import { HIERARKI_UNIT } from '@/lib/constants';
 import ManualDocModal from '@/components/ManualDocModal';
 import ManualDocDetailModal from '@/components/ManualDocDetailModal';
@@ -39,6 +40,7 @@ export default function SPPage() {
   const router = useRouter();
   const { isDarkMode } = useAppContext();
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const { confirm, confirmNode } = useConfirm();
   const [token, setToken] = useState('');
   const [models, setModels] = useState<SPModel[]>([]);
   const [loading, setLoading] = useState(true);
@@ -76,6 +78,7 @@ export default function SPPage() {
     apiFetch('/sp/models', token)
       .then(r => r.ok ? r.json() : [])
       .then(data => setModels(Array.isArray(data) ? data : []))
+      .catch(() => { /* jaringan putus — biarkan daftar lama, jangan unhandled rejection */ })
       .finally(() => setLoading(false));
   }, [token]);
 
@@ -140,6 +143,7 @@ export default function SPPage() {
       usulan: ['USULAN', isDarkMode ? 'bg-slate-700/60 text-slate-200 border-slate-600' : 'bg-slate-100 text-slate-600 border-slate-200'],
       draft: ['DRAFT', 'bg-indigo-50 text-indigo-700 border-indigo-200'],
       pending: ['REVIEW ORTALA MR', 'bg-blue-50 text-blue-700 border-blue-200'],
+      approved: ['DISETUJUI', 'bg-emerald-50 text-emerald-700 border-emerald-200'],
       penetapan: ['PENGESAHAN PIMPINAN', 'bg-violet-50 text-violet-700 border-violet-200'],
       verifikasi: ['VERIFIKASI TTD', 'bg-cyan-50 text-cyan-700 border-cyan-200'],
       rejected: ['PERLU REVISI', 'bg-red-50 text-red-700 border-red-200'],
@@ -150,9 +154,12 @@ export default function SPPage() {
   };
 
   const handleDelete = async (m: SPModel) => {
-    if (!window.confirm(`Hapus "${m.process_title}"?${m.is_manual ? '\n\nDokumen manual (file/tautan) ikut terhapus.' : ''}`)) return;
-    const res = await apiFetch(`/sp/models/${m.id}`, token, { method: 'DELETE' });
-    if (res.ok) setModels(prev => prev.filter(x => x.id !== m.id));
+    if (!(await confirm({ title: 'Hapus Dokumen SP', message: `Hapus "${m.process_title}"?${m.is_manual ? '\n\nDokumen manual (file/tautan) ikut terhapus.' : ''}`, tone: 'danger', confirmText: 'Ya, Hapus' }))) return;
+    try {
+      const res = await apiFetch(`/sp/models/${m.id}`, token, { method: 'DELETE' });
+      if (res.ok) setModels(prev => prev.filter(x => x.id !== m.id));
+      else { const e = await res.json().catch(() => ({})); alert(`❌ ${e.error || 'Gagal menghapus dokumen.'}`); }
+    } catch { alert('❌ Gagal menghapus — periksa koneksi.'); }
   };
 
   const submitUsulan = async () => {
@@ -178,6 +185,7 @@ export default function SPPage() {
 
   return (
     <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+      {confirmNode}
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
         <p className={`text-sm font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>

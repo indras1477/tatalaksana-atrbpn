@@ -1,27 +1,29 @@
 "use client";
 
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Plus, Edit, CheckCircle,
   Clock, XCircle, Search, X, FileEdit, FileStack, AlertCircle, Filter,
   Trash2, Calendar, GitCommit, HelpCircle, GitBranch, ChevronRight, Save, History as HistoryIcon, RotateCcw,
-  ExternalLink, Building2, Copy, Landmark, Lock, FileUp, FileSpreadsheet, FileText, MessageSquare
+  ExternalLink, Building2, Copy, Landmark, Lock, FileUp, FileSpreadsheet, FileText, MessageSquare, Eye, ZoomIn, ZoomOut, Maximize2
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
 import { BPMNSymbolsSection } from '@/components/PanduanSymbols';
 import ManualDocModal from '@/components/ManualDocModal';
 import ManualDocDetailModal from '@/components/ManualDocDetailModal';
 import DocHistoryModal from '@/components/DocHistoryModal';
+import TrashModal from '@/components/TrashModal';
 import ManualDocImportModal from '@/components/ManualDocImportModal';
 import ShareButton from '@/components/ShareButton';
+import { useConfirm } from '@/components/ConfirmDialog';
 import { HIERARKI_UNIT } from '@/lib/constants';
 import { getClientId } from '@/lib/clientId';
 
 const API_BASE = '/e-sop-atrbpn/api';
 
-function apiFetch(path: string, token: string, options?: RequestInit) {
-  return fetch(`${API_BASE}${path}`, {
+async function apiFetch(path: string, token: string, options?: RequestInit) {
+  const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -29,9 +31,27 @@ function apiFetch(path: string, token: string, options?: RequestInit) {
       ...(options?.headers || {}),
     },
   });
+  // Sesi berakhir → langsung ke login (jangan tampilkan daftar kosong yang menyesatkan).
+  if (res.status === 401) {
+    localStorage.removeItem('token');
+    localStorage.removeItem('user');
+    document.cookie = 'token=; path=/; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+    window.location.replace('/e-sop-atrbpn/login?expired=1');
+    throw new Error('Sesi berakhir, silakan login kembali');
+  }
+  return res;
 }
 
 const JENIS_OPTIONS = ['Pusat', 'Kantor Wilayah', 'Kantor Pertanahan'];
+
+// Simpan posisi tampilan tabel (tab + drill unit + filter) agar saat kembali dari
+// Studio (mode lihat) pengguna tetap berada di daftar dokumennya, tidak balik ke
+// rekap Unit Kerja Level 1.
+const VIEW_KEY = 'esop-bpmn-view';
+function readSavedView(): { listTab?: string; rekapDrill?: { l1: string | null; l2: string | null }; filterUnit?: string; sortBy?: string } | null {
+  if (typeof window === 'undefined') return null;
+  try { return JSON.parse(sessionStorage.getItem(VIEW_KEY) || 'null'); } catch { return null; }
+}
 const KLASIFIKASI_OPTIONS = [
   'Layanan Administrasi Pemerintah',
   'Layanan Pertanahan',
@@ -55,6 +75,27 @@ interface BPMNModel {
 interface AuthUser {
   id: number; username: string; role: string;
   unit_l1?: string; unit_l2?: string;
+}
+
+
+// Skalakan SVG diagram agar MUAT PENUH di kotak pratinjau (bpmn-js menyimpan SVG
+// dengan width/height asli sehingga diagram besar terpotong). viewBox dipertahankan
+// / dibuat dari ukuran asli, lalu ukuran dibuat 100% + preserveAspectRatio.
+function svgAgarMuat(raw: string): string {
+  try {
+    const doc = new DOMParser().parseFromString(raw, 'image/svg+xml');
+    const svg = doc.querySelector('svg');
+    if (!svg) return raw;
+    if (!svg.getAttribute('viewBox')) {
+      const w = parseFloat(svg.getAttribute('width') || '0');
+      const h = parseFloat(svg.getAttribute('height') || '0');
+      if (w > 0 && h > 0) svg.setAttribute('viewBox', `0 0 ${w} ${h}`);
+    }
+    svg.setAttribute('width', '100%');
+    svg.setAttribute('height', '100%');
+    svg.setAttribute('preserveAspectRatio', 'xMidYMid meet');
+    return new XMLSerializer().serializeToString(svg);
+  } catch { return raw; }
 }
 
 export default function BPMNDashboardPage() {
@@ -85,12 +126,12 @@ export default function BPMNDashboardPage() {
     } catch { /* sessionStorage diblokir — lanjut tanpa penanda */ }
     setPendingDocId(Number(doc));
   }, []);
-  const [filterUnit, setFilterUnit] = useState('Semua');
+  const [filterUnit, setFilterUnit] = useState(() => readSavedView()?.filterUnit ?? 'Semua');
   const [filterStatus, setFilterStatus] = useState('Semua');
   // Urutan daftar: terbaru diperbarui (default) / terbaru dibuat / terlama / judul.
-  const [sortBy, setSortBy] = useState<'updated' | 'created' | 'oldest' | 'title'>('updated');
-  const [listTab, setListTab] = useState<'usulan' | 'penyusunan' | 'terbit'>('penyusunan');
-  const [rekapDrill, setRekapDrill] = useState<{ l1: string | null; l2: string | null }>({ l1: null, l2: null });
+  const [sortBy, setSortBy] = useState<'updated' | 'created' | 'oldest' | 'title'>(() => (readSavedView()?.sortBy as 'updated' | 'created' | 'oldest' | 'title') ?? 'updated');
+  const [listTab, setListTab] = useState<'usulan' | 'penyusunan' | 'terbit'>(() => (readSavedView()?.listTab as 'usulan' | 'penyusunan' | 'terbit') ?? 'penyusunan');
+  const [rekapDrill, setRekapDrill] = useState<{ l1: string | null; l2: string | null }>(() => readSavedView()?.rekapDrill ?? { l1: null, l2: null });
   // Filter cepat via klik kartu ringkasan (khusus admin/superadmin): tampilkan
   // semua dokumen berstatus tsb lintas unit, dengan kolom Unit Kerja.
   const [cardFilter, setCardFilter] = useState<null | 'total' | 'draft' | 'pending' | 'penetapan' | 'approved' | 'rejected'>(null);
@@ -103,6 +144,7 @@ export default function BPMNDashboardPage() {
   const [rejectModal, setRejectModal] = useState<{ isOpen: boolean; modelId: number; note: string; mode?: 'reject' | 'edit' }>({ isOpen: false, modelId: 0, note: '' });
   // Diskusi revisi: penyusun (user) memberi TANGGAPAN atas catatan revisi admin.
   const [tanggapanModal, setTanggapanModal] = useState<{ isOpen: boolean; model: BPMNModel | null; pesan: string }>({ isOpen: false, model: null, pesan: '' });
+  const { confirm, confirmNode } = useConfirm();
   const [sendingTanggapan, setSendingTanggapan] = useState(false);
   const [penetapanModal, setPenetapanModal] = useState<{ isOpen: boolean; model: BPMNModel | null; dasar: string; tanggal: string }>({ isOpen: false, model: null, dasar: '', tanggal: '' });
   const [submittingPenetapan, setSubmittingPenetapan] = useState(false);
@@ -114,6 +156,12 @@ export default function BPMNDashboardPage() {
 
   const [previewModel, setPreviewModel] = useState<BPMNModel | null>(null);
   const [showHistoryFor, setShowHistoryFor] = useState<BPMNModel | null>(null);
+  const [showTrash, setShowTrash] = useState(false);
+  // Pratinjau diagram di modal detail (SVG tersimpan — instan, tak perlu render ulang).
+  const [previewSvg, setPreviewSvg] = useState<string | null>(null);
+  const [loadingSvg, setLoadingSvg] = useState(false);
+  const [svgZoom, setSvgZoom] = useState(1);      // 1 = pas kotak (fit)
+  const [svgFull, setSvgFull] = useState(false);  // pratinjau layar penuh
   const [editMeta, setEditMeta] = useState({ process_title: '', jenis_proses: '', klasifikasi_proses: '' });
   const [savingMeta, setSavingMeta] = useState(false);
 
@@ -296,6 +344,26 @@ export default function BPMNDashboardPage() {
     return urutkan(currentFilteredModels.filter(m => tabOf(m.status) === listTab));
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [currentFilteredModels, listTab, isAdminRekap, rekapDrill, rekapDataset, sortBy]);
+  // Ambil SVG diagram untuk pratinjau saat modal detail dibuka (endpoint daftar
+  // sengaja tidak mengirim svg_xml agar ringan — lihat optimasi payload).
+  useEffect(() => {
+    if (!previewModel || !token || previewModel.is_manual) { setPreviewSvg(null); return; }
+    let aktif = true;
+    setPreviewSvg(null);
+    setLoadingSvg(true);
+    setSvgZoom(1);
+    setSvgFull(false);
+    // Endpoint ringan: hanya svg_xml (tanpa bpmn_xml yang tak dipakai pratinjau).
+    apiFetch(`/bpmn/models/${previewModel.id}/svg`, token)
+      .then(r => r.ok ? r.json() : null)
+      .then((d: { svg_xml?: string | null } | null) => { if (aktif) setPreviewSvg(d?.svg_xml ? svgAgarMuat(d.svg_xml) : ''); })
+      .catch(() => { if (aktif) setPreviewSvg(''); })
+      .finally(() => { if (aktif) setLoadingSvg(false); });
+    return () => { aktif = false; };
+    // Hanya bergantung pada ID — agar tidak mengambil ulang saat meta dokumen disunting.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewModel?.id, previewModel?.is_manual, token]);
+
   // Buka dokumen dari klik notifikasi (?doc=<id>): pilih tab sesuai statusnya,
   // keluar dari rekap per-unit (admin), lalu tampilkan modal detailnya.
   useEffect(() => {
@@ -332,7 +400,17 @@ export default function BPMNDashboardPage() {
     [visibleModels, currentPage, pageSize]
   );
   useEffect(() => { setCurrentPage(1); }, [listTab, searchQuery, filterUnit, filterStatus, pageSize, rekapDrill, sortBy]);
-  useEffect(() => { setRekapDrill({ l1: null, l2: null }); }, [listTab, filterUnit]);
+  // Reset drill saat pengguna GANTI tab/filter — tapi lewati saat mount agar drill
+  // yang dipulihkan dari sessionStorage (kembali dari Studio) tidak ikut terhapus.
+  const skipDrillReset = useRef(true);
+  useEffect(() => {
+    if (skipDrillReset.current) { skipDrillReset.current = false; return; }
+    setRekapDrill({ l1: null, l2: null });
+  }, [listTab, filterUnit]);
+  // Simpan posisi tampilan tiap kali berubah → dipulihkan saat halaman dipasang ulang.
+  useEffect(() => {
+    try { sessionStorage.setItem(VIEW_KEY, JSON.stringify({ listTab, rekapDrill, filterUnit, sortBy })); } catch { /* diblokir — abaikan */ }
+  }, [listTab, rekapDrill, filterUnit, sortBy]);
   useEffect(() => { if (currentPage > totalPages) setCurrentPage(totalPages); }, [currentPage, totalPages]);
 
   const openUsulanModal = () => {
@@ -388,19 +466,22 @@ export default function BPMNDashboardPage() {
   }, [savedModels]);
 
   const deleteModel = async (modelId: number) => {
-    if (!window.confirm('Yakin ingin menghapus dokumen ini?')) return;
+    if (!(await confirm({ title: 'Hapus Dokumen', message: 'Yakin ingin menghapus dokumen ini? Tindakan ini tidak dapat dibatalkan.', tone: 'danger', confirmText: 'Ya, Hapus' }))) return;
     try {
       const res = await apiFetch(`/bpmn/models/${modelId}`, token, { method: 'DELETE' });
       if (res.ok) {
         setSavedModels(prev => prev.filter(m => m.id !== modelId));
         if (previewModel?.id === modelId) setPreviewModel(null);
         alert('Berhasil dihapus.');
+      } else {
+        const e = await res.json().catch(() => ({}));
+        alert(`❌ ${e.error || 'Gagal menghapus dokumen.'}`);
       }
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); alert('❌ Gagal menghapus — periksa koneksi.'); }
   };
 
   const handleApprove = async (model: BPMNModel) => {
-    if (!window.confirm(`Setujui dokumen "${model.process_title}"?`)) return;
+    if (!(await confirm({ title: 'Setujui Proses Bisnis', message: `Setujui dokumen "${model.process_title}"?`, tone: 'success', confirmText: 'Ya, Setujui' }))) return;
     try {
       const res = await apiFetch(`/bpmn/models/status/${model.id}`, token, {
         method: 'PATCH',
@@ -411,8 +492,11 @@ export default function BPMNDashboardPage() {
         setSavedModels(prev => prev.map(m => m.id === model.id ? { ...m, status: 'penetapan', catatan: '' } : m));
         if (previewModel?.id === model.id) setPreviewModel(prev => prev ? { ...prev, status: 'penetapan', catatan: '' } : null);
         alert('Disetujui! Menunggu proses penetapan menteri.');
+      } else {
+        const e = await res.json().catch(() => ({}));
+        alert(`❌ ${e.error || 'Gagal menyetujui dokumen.'}`);
       }
-    } catch (err) { console.error(err); }
+    } catch (err) { console.error(err); alert('❌ Gagal menyetujui — periksa koneksi.'); }
   };
 
   // Admin menetapkan → buka modal isian dasar penetapan & tanggal.
@@ -427,8 +511,9 @@ export default function BPMNDashboardPage() {
   // Admin/superadmin membatalkan proses penetapan (salah klik/terlewat) →
   // dokumen kembali ke status sebelumnya (dihitung server dari riwayat).
   const handleBatalPenetapan = async (model: BPMNModel) => {
-    if (!window.confirm(`Batalkan proses penetapan Proses Bisnis "${model.process_title}"?\n\nDokumen akan dikembalikan ke tahap sebelumnya agar dapat diperbaiki/ditinjau ulang.`)) return;
-    const alasan = window.prompt('Alasan pembatalan (opsional, tercatat di riwayat):', '') ?? '';
+    if (!(await confirm({ title: 'Batalkan Proses Penetapan', message: `Batalkan proses penetapan Proses Bisnis "${model.process_title}"?\n\nDokumen akan dikembalikan ke tahap sebelumnya agar dapat diperbaiki/ditinjau ulang.`, tone: 'warning', confirmText: 'Ya, Batalkan' }))) return;
+    const alasan = window.prompt('Alasan pembatalan (opsional, tercatat di riwayat):', '');
+    if (alasan === null) return; // user menekan Batal pada dialog → batalkan aksi
     try {
       const res = await apiFetch(`/bpmn/models/${model.id}/batal-penetapan`, token, {
         method: 'POST', body: JSON.stringify({ alasan }),
@@ -470,7 +555,7 @@ export default function BPMNDashboardPage() {
   // Batalkan penetapan: kembalikan dokumen 'approved' (Telah Ditetapkan) → 'penetapan'
   // (Proses Penetapan Menteri). Server otomatis menghapus baris registry Dashboard.
   const batalkanPenetapan = async (model: BPMNModel) => {
-    if (!window.confirm(`Batalkan penetapan "${model.process_title}"? Dokumen akan kembali ke "Proses Penetapan Menteri" dan dihapus dari Dashboard.`)) return;
+    if (!(await confirm({ title: 'Batalkan Penetapan', message: `Batalkan penetapan "${model.process_title}"? Dokumen akan kembali ke "Proses Penetapan Menteri" dan dihapus dari Dashboard.`, tone: 'warning', confirmText: 'Ya, Batalkan' }))) return;
     try {
       const res = await apiFetch(`/bpmn/models/status/${model.id}`, token, {
         method: 'PATCH',
@@ -574,7 +659,7 @@ export default function BPMNDashboardPage() {
   const saveMetaEdit = async () => {
     if (!previewModel) return;
     if (!editMeta.process_title.trim()) return alert('Judul tidak boleh kosong.');
-    if (!window.confirm('Apakah Anda yakin ingin menyimpan perubahan metadata ini?')) return;
+    if (!(await confirm({ title: 'Simpan Perubahan', message: 'Apakah Anda yakin ingin menyimpan perubahan metadata ini?', tone: 'default', confirmText: 'Ya, Simpan' }))) return;
     setSavingMeta(true);
     try {
       const res = await apiFetch(`/bpmn/models/${previewModel.id}/meta`, token, {
@@ -657,6 +742,7 @@ export default function BPMNDashboardPage() {
 
   return (
     <>
+      {confirmNode}
 
       {/* Peringatan dokumen sedang diedit */}
       {editWarning && (
@@ -1071,6 +1157,34 @@ export default function BPMNDashboardPage() {
               </div>
               ); })()}
 
+              {/* Pratinjau diagram */}
+              {!previewModel.is_manual && (
+                <div>
+                  <p className={`text-[10px] font-black uppercase tracking-wider mb-1.5 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Pratinjau Diagram</p>
+                  <div className={`rounded-xl border overflow-hidden ${isDarkMode ? 'border-slate-700 bg-[#0F172A]' : 'border-slate-200 bg-slate-50'}`}>
+                    {loadingSvg ? (
+                      <div className={`h-40 flex items-center justify-center text-sm ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Memuat diagram…</div>
+                    ) : previewSvg ? (
+                      <div className="relative">
+                        {/* Kontrol perbesar/perkecil & layar penuh */}
+                        <div className="absolute top-2 right-2 z-10 flex items-center gap-0.5 rounded-lg border border-slate-200 bg-white/95 p-0.5 shadow-md backdrop-blur-sm">
+                          <button onClick={() => setSvgZoom(z => Math.max(1, Math.round((z - 0.25) * 100) / 100))} disabled={svgZoom <= 1} title="Perkecil" className="p-1.5 rounded-md text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"><ZoomOut className="w-4 h-4" /></button>
+                          <button onClick={() => setSvgZoom(1)} title="Kembalikan ke ukuran pas" className="px-1.5 text-[11px] font-bold text-slate-500 hover:text-slate-700 tabular-nums">{Math.round(svgZoom * 100)}%</button>
+                          <button onClick={() => setSvgZoom(z => Math.min(4, Math.round((z + 0.25) * 100) / 100))} disabled={svgZoom >= 4} title="Perbesar" className="p-1.5 rounded-md text-slate-600 hover:bg-slate-100 disabled:opacity-40 disabled:cursor-not-allowed"><ZoomIn className="w-4 h-4" /></button>
+                          <span className="mx-0.5 h-4 w-px bg-slate-200" />
+                          <button onClick={() => setSvgFull(true)} title="Layar penuh" className="p-1.5 rounded-md text-slate-600 hover:bg-slate-100"><Maximize2 className="w-4 h-4" /></button>
+                        </div>
+                        <div className="bg-white h-64 sm:h-72 overflow-auto p-2">
+                          <div style={{ width: `${svgZoom * 100}%`, height: `${svgZoom * 100}%` }} className="[&>svg]:w-full [&>svg]:h-full" dangerouslySetInnerHTML={{ __html: previewSvg }} />
+                        </div>
+                      </div>
+                    ) : (
+                      <div className={`h-24 flex items-center justify-center text-sm text-center px-4 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Diagram belum tersedia — buka di studio untuk mulai menggambar.</div>
+                    )}
+                  </div>
+                </div>
+              )}
+
               {/* Tanggal update */}
               <p className={`text-[11px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
                 <Calendar className="w-3 h-3 inline mr-1" />
@@ -1079,17 +1193,27 @@ export default function BPMNDashboardPage() {
             </div>
 
             {/* Footer actions */}
-            <div className={`p-4 sm:p-5 border-t shrink-0 flex flex-col sm:flex-row gap-2 sm:gap-3 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-              <button
-                onClick={() => router.push(`/bpmn/studio?id=${previewModel.id}`)}
-                className={`flex-1 sm:flex-none px-4 py-3 text-sm font-bold rounded-xl border flex items-center justify-center gap-2 transition-colors ${isDarkMode ? 'border-blue-700 text-blue-400 hover:bg-blue-900/20' : 'border-blue-200 text-blue-600 hover:bg-blue-50'}`}
-              >
-                <ExternalLink className="w-4 h-4" /> Buka di Studio
-              </button>
-              <div className="flex gap-2 flex-1 sm:flex-none sm:ml-auto">
+            <div className={`p-4 sm:p-5 border-t shrink-0 flex flex-wrap items-center gap-2 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+              <div className="flex gap-2 w-full lg:w-auto">
+                <button
+                  onClick={() => router.push(`/bpmn/studio?id=${previewModel.id}&mode=view`)}
+                  title="Buka diagram penuh tanpa mengubah apa pun"
+                  className={`flex-1 lg:flex-none min-w-0 px-3 py-2.5 text-xs sm:text-sm font-bold rounded-xl border flex items-center justify-center gap-1.5 transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-300 text-slate-600 hover:bg-slate-50'}`}
+                >
+                  <Eye className="w-4 h-4 shrink-0" /> <span className="truncate">Hanya Lihat</span>
+                </button>
+                <button
+                  onClick={() => router.push(`/bpmn/studio?id=${previewModel.id}`)}
+                  title="Buka di studio untuk menyunting diagram"
+                  className={`flex-1 lg:flex-none min-w-0 px-3 py-2.5 text-xs sm:text-sm font-bold rounded-xl border flex items-center justify-center gap-1.5 transition-colors ${isDarkMode ? 'border-blue-700 text-blue-400 hover:bg-blue-900/20' : 'border-blue-200 text-blue-600 hover:bg-blue-50'}`}
+                >
+                  <ExternalLink className="w-4 h-4 shrink-0" /> <span className="truncate">Edit di Studio</span>
+                </button>
+              </div>
+              <div className="flex gap-2 w-full lg:w-auto lg:ml-auto">
                 <button
                   onClick={() => setPreviewModel(null)}
-                  className={`flex-1 px-4 py-3 text-sm font-bold rounded-xl border transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+                  className={`flex-1 lg:flex-none px-4 py-2.5 text-xs sm:text-sm font-bold rounded-xl border transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
                 >
                   Tutup
                 </button>
@@ -1097,7 +1221,7 @@ export default function BPMNDashboardPage() {
                   <button
                     onClick={saveMetaEdit}
                     disabled={savingMeta}
-                    className="flex-1 sm:flex-none px-5 py-3 text-sm font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded-xl shadow-sm flex items-center justify-center gap-2 transition-all active:scale-95"
+                    className="flex-1 lg:flex-none px-5 py-2.5 text-xs sm:text-sm font-bold bg-blue-600 hover:bg-blue-700 disabled:opacity-60 text-white rounded-xl shadow-sm flex items-center justify-center gap-2 transition-all active:scale-95"
                   >
                     <Save className="w-4 h-4" />
                     {savingMeta ? 'Menyimpan...' : 'Simpan'}
@@ -1121,6 +1245,11 @@ export default function BPMNDashboardPage() {
             {isSuperadmin && (
               <button onClick={() => setShowImport(true)} className={`px-4 py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-emerald-700 text-emerald-400 hover:bg-emerald-900/30' : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'}`}>
                 <FileSpreadsheet className="w-4 h-4" /> Impor Excel
+              </button>
+            )}
+            {currentUser.role === 'admin' && (
+              <button onClick={() => setShowTrash(true)} title="Kotak Sampah — dokumen terhapus (30 hari)" className={`px-4 py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/20' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
+                <Trash2 className="w-4 h-4" /> <span className="hidden sm:inline">Kotak Sampah</span>
               </button>
             )}
             <button onClick={() => setShowManualDoc(true)} className={`px-4 py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/30' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
@@ -1207,9 +1336,9 @@ export default function BPMNDashboardPage() {
                   {cardFilterModels.length === 0 ? (
                     <tr><td colSpan={4} className={`px-6 py-12 text-center ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Tidak ada dokumen.</td></tr>
                   ) : cardFilterModels.map(model => (
-                    <tr key={model.id} className={`transition-colors ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-blue-50/40'}`}>
+                    <tr key={model.id} onClick={() => { if (model.is_manual) setManualDetail(model); else openPreview(model); }} title="Klik baris untuk membuka detail dokumen" className={`transition-colors cursor-pointer ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-blue-50/40'}`}>
                       <td className="px-4 sm:px-6 py-3.5">
-                        <button onClick={() => { if (model.is_manual) { setManualDetail(model); } else { openPreview(model); } }} className={`font-bold text-left hover:underline ${isDarkMode ? 'text-white hover:text-blue-400' : 'text-[#002855] hover:text-blue-600'}`}>{model.process_title}</button>
+                        <button onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else { openPreview(model); } }} className={`font-bold text-left hover:underline ${isDarkMode ? 'text-white hover:text-blue-400' : 'text-[#002855] hover:text-blue-600'}`}>{model.process_title}</button>
                         <div className="flex flex-wrap items-center gap-1.5 mt-1">
                           {model.is_manual && <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border uppercase ${isDarkMode ? 'text-amber-300 bg-amber-900/30 border-amber-700' : 'text-amber-700 bg-amber-50 border-amber-300'}`}>Manual{model.manual_nomor ? ` · ${model.manual_nomor}` : ''}</span>}
                           {model.process_key && <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${isDarkMode ? 'text-slate-400 bg-slate-800 border-slate-700' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>{model.process_key}</span>}
@@ -1642,6 +1771,30 @@ export default function BPMNDashboardPage() {
         </div>
         )}
       </div>
+
+      {/* PRATINJAU DIAGRAM LAYAR PENUH */}
+      {svgFull && previewSvg && (
+        <div className="fixed inset-0 z-70 bg-black/80 backdrop-blur-sm flex flex-col p-3 sm:p-6" onClick={() => setSvgFull(false)}>
+          <div className="flex items-center justify-between gap-2 mb-3 shrink-0" onClick={e => e.stopPropagation()}>
+            <p className="text-white font-bold text-sm truncate">{previewModel?.process_title}</p>
+            <div className="flex items-center gap-0.5 rounded-lg border border-white/20 bg-white/10 p-0.5 shrink-0">
+              <button onClick={() => setSvgZoom(z => Math.max(1, Math.round((z - 0.25) * 100) / 100))} disabled={svgZoom <= 1} title="Perkecil" className="p-2 rounded-md text-white hover:bg-white/20 disabled:opacity-40"><ZoomOut className="w-4 h-4" /></button>
+              <button onClick={() => setSvgZoom(1)} title="Ukuran pas" className="px-2 text-xs font-bold text-white tabular-nums">{Math.round(svgZoom * 100)}%</button>
+              <button onClick={() => setSvgZoom(z => Math.min(4, Math.round((z + 0.25) * 100) / 100))} disabled={svgZoom >= 4} title="Perbesar" className="p-2 rounded-md text-white hover:bg-white/20 disabled:opacity-40"><ZoomIn className="w-4 h-4" /></button>
+              <span className="mx-0.5 h-4 w-px bg-white/20" />
+              <button onClick={() => setSvgFull(false)} title="Tutup layar penuh" className="p-2 rounded-md text-white hover:bg-white/20"><X className="w-4 h-4" /></button>
+            </div>
+          </div>
+          <div className="flex-1 min-h-0 rounded-xl bg-white overflow-auto p-3" onClick={e => e.stopPropagation()}>
+            <div style={{ width: `${svgZoom * 100}%`, height: `${svgZoom * 100}%` }} className="[&>svg]:w-full [&>svg]:h-full" dangerouslySetInnerHTML={{ __html: previewSvg }} />
+          </div>
+        </div>
+      )}
+
+      {showTrash && currentUser && (
+        <TrashModal token={token} role={isSuperadmin ? 'superadmin' : currentUser.role} isDarkMode={isDarkMode}
+          onClose={() => setShowTrash(false)} onRestored={() => window.location.reload()} />
+      )}
 
       {/* MODAL RIWAYAT DOKUMEN */}
       {showHistoryFor && (

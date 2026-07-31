@@ -1,6 +1,6 @@
 "use client";
 import React, { useState, useEffect } from 'react';
-import { Eye, EyeOff, Loader2 } from 'lucide-react';
+import { Eye, EyeOff, Loader2, Headphones, X, MessageCircle } from 'lucide-react';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
@@ -11,6 +11,12 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
   const [sessionExpiredMsg, setSessionExpiredMsg] = useState('');
+  const [showCallCenter, setShowCallCenter] = useState(false);
+
+  const ADMINS = [
+    { name: 'Bima Karismanto', phone: '6285292724654' },
+    { name: 'Nanda Ferdiansyah', phone: '6285713595915' },
+  ];
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -179,21 +185,97 @@ export default function LoginPage() {
               </div>
             )}
 
-            <button
-              type="submit"
-              disabled={loading}
-              className="w-full bg-linear-to-r from-violet-600 to-indigo-600 text-white px-5 py-3 rounded-lg font-medium hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2"
-            >
-              {loading && <Loader2 className="w-4 h-4 animate-spin" />}
-              {loading ? 'Memproses...' : 'Masuk'}
-            </button>
+            <div className="flex gap-2">
+              <button
+                type="submit"
+                disabled={loading}
+                className="flex-1 bg-linear-to-r from-[#001F43] to-[#000F24] text-white px-5 py-3 rounded-lg font-medium hover:opacity-90 transition-opacity disabled:opacity-60 flex items-center justify-center gap-2"
+              >
+                {loading && <Loader2 className="w-4 h-4 animate-spin" />}
+                {loading ? 'Memproses...' : 'Masuk'}
+              </button>
+
+              {/* Tombol Call Center */}
+              <button
+                type="button"
+                onClick={() => setShowCallCenter(true)}
+                title="Hubungi Admin"
+                className="w-12 h-12 shrink-0 rounded-lg border border-gray-200 bg-gray-50 hover:bg-green-50 hover:border-green-300 text-gray-500 hover:text-green-600 flex items-center justify-center transition-colors"
+              >
+                <Headphones className="w-5 h-5" />
+              </button>
+            </div>
           </form>
+
+          {/* Popup Call Center */}
+          {showCallCenter && (
+            <div
+              className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+              onClick={() => setShowCallCenter(false)}
+            >
+              <div
+                className="w-full max-w-sm bg-white rounded-2xl shadow-2xl overflow-hidden"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {/* Header popup */}
+                <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-green-100 flex items-center justify-center">
+                      <Headphones className="w-5 h-5 text-green-600" />
+                    </div>
+                    <div>
+                      <p className="font-bold text-gray-900 text-sm">Butuh Bantuan?</p>
+                      <p className="text-xs text-gray-500">Hubungi admin Biro ORTALAMR</p>
+                    </div>
+                  </div>
+                  <button
+                    onClick={() => setShowCallCenter(false)}
+                    className="p-1.5 text-gray-400 hover:text-gray-700 hover:bg-gray-100 rounded-lg transition-colors"
+                  >
+                    <X className="w-4 h-4" />
+                  </button>
+                </div>
+
+                {/* Daftar kontak */}
+                <div className="p-4 space-y-3">
+                  <p className="text-xs text-gray-400 text-center mb-1">
+                    Pilih admin yang ingin dihubungi via WhatsApp
+                  </p>
+                  {ADMINS.map((admin) => (
+                    <a
+                      key={admin.phone}
+                      href={`https://wa.me/${admin.phone}?text=${encodeURIComponent('Halo, saya tidak bisa masuk ke aplikasi SIMPEL ATR/BPN. Mohon bantuannya.')}`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="flex items-center gap-4 p-4 rounded-xl border border-gray-100 hover:border-green-200 hover:bg-green-50 transition-all group"
+                    >
+                      {/* Avatar */}
+                      <div className="w-11 h-11 rounded-full bg-linear-to-br from-green-400 to-emerald-600 flex items-center justify-center font-bold text-white text-base shrink-0">
+                        {admin.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-gray-900 text-sm truncate">{admin.name}</p>
+                        <p className="text-xs text-gray-500 mt-0.5">+{admin.phone}</p>
+                      </div>
+                      <MessageCircle className="w-5 h-5 text-green-500 group-hover:text-green-600 shrink-0" />
+                    </a>
+                  ))}
+                </div>
+
+                <div className="px-5 pb-4 pt-1">
+                  <p className="text-[11px] text-gray-400 text-center leading-relaxed">
+                    Jam kerja: Senin–Jumat, 08.00–16.00 WIB
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
 
         <p className="text-center text-sm text-gray-500 mt-6 leading-relaxed">
           Dibuat oleh{' '}
           <a
-            href="https://www.linkedin.com/in/nanda-ferdiansyah-77640b121"
+            href="https://nanda-portfolio-flax.vercel.app"
             target="_blank"
             rel="noopener noreferrer"
             className="text-blue-500 hover:underline font-medium"

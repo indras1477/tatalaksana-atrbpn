@@ -111,9 +111,24 @@ class PoolGroupRenderer extends BaseRenderer {
 
     const pool = this._containerPool(element);
     if (pool) {
-      return this._drawLane(parentGfx, element, isVertical(pool));
+      return this._drawLane(parentGfx, element, pool);
     }
     return this._drawPool(parentGfx, element);
+  }
+
+  // Jumlah maksimum baris label di antara lane-lane sebuah pool (biar pita header
+  // semua lane sejajar rapi meski hanya sebagian lane yang labelnya multi-baris).
+  private _maxLaneLines(pool: El): number {
+    const reg = this._elementRegistry;
+    let max = 1;
+    reg.forEach((o: El) => {
+      if (o === pool || !is(o, 'bpmn:Group')) return;
+      if (this._containerPool(o) === pool) {
+        const n = lineCount(getLabel(o));
+        if (n > max) max = n;
+      }
+    });
+    return max;
   }
 
   private _drawPool(parentGfx: SVGElement, element: El): SVGElement {
@@ -122,53 +137,58 @@ class PoolGroupRenderer extends BaseRenderer {
     const vertical = isVertical(element);
     const name = getLabel(element) || '';
     const stroke = diStroke(element) || POOL_STROKE;
-    const bandFill = diFill(element) || '#ffffff';
+    const bandFill = diFill(element) || undefined; // hanya diisi bila diwarnai pengguna
+    // Pita tumbuh mengikuti jumlah baris judul agar tidak menabrak garis pemisah.
+    const band = bandSize(BAND, lineCount(name), 12);
 
+    // Interior TRANSPARAN (fill:none) — dulu putih 0.2 yang, bila pool salah lapisan
+    // (tergambar di atas), meredupkan elemen di dalamnya jadi abu-abu. Transparan =
+    // elemen selalu terlihat penuh, sekaligus tampilan pool BPMN standar.
     const outer = svgCreate('rect', {
       x: 0, y: 0, width: w, height: h,
-      fill: '#ffffff', 'fill-opacity': 0.2, stroke, 'stroke-width': 1.5,
+      fill: 'none', stroke, 'stroke-width': 1.5,
     });
     svgAppend(parentGfx, outer);
 
-    // Band judul: putih/transparan (mengikuti gaya Pool Participant di proses
-    // utama) — hanya garis pemisah, tanpa blok warna. Warna kustom (bila diwarnai
-    // pengguna) tetap dipakai sebagai isi band.
     if (vertical) {
-      appendRect(parentGfx, 0, 0, w, BAND, bandFill, stroke, 1.5);
-      appendLine(parentGfx, 0, BAND, w, BAND, stroke, 1.5);
-      if (name) appendText(parentGfx, name, w / 2, BAND / 2);
+      if (bandFill) appendRect(parentGfx, 0, 0, w, band, bandFill, stroke, 1.5);
+      appendLine(parentGfx, 0, band, w, band, stroke, 1.5);
+      if (name) appendText(parentGfx, name, w / 2, band / 2);
     } else {
-      appendRect(parentGfx, 0, 0, BAND, h, bandFill, stroke, 1.5);
-      appendLine(parentGfx, BAND, 0, BAND, h, stroke, 1.5);
-      if (name) appendText(parentGfx, name, BAND / 2, h / 2, -90);
+      if (bandFill) appendRect(parentGfx, 0, 0, band, h, bandFill, stroke, 1.5);
+      appendLine(parentGfx, band, 0, band, h, stroke, 1.5);
+      if (name) appendText(parentGfx, name, band / 2, h / 2, -90);
     }
     return outer;
   }
 
-  private _drawLane(parentGfx: SVGElement, element: El, vertical: boolean): SVGElement {
+  private _drawLane(parentGfx: SVGElement, element: El, pool: El): SVGElement {
+    const vertical = isVertical(pool);
     const w = element.width || 200;
     const h = element.height || 80;
     const name = getLabel(element) || '';
     const stroke = diStroke(element) || LANE_STROKE;
-    const bandFill = diFill(element) || '#ffffff';
+    const bandFill = diFill(element) || undefined;
+    // Pita seragam untuk semua lane pool ini = baris terbanyak di antara mereka.
+    const band = bandSize(LANE_BAND, this._maxLaneLines(pool), 11);
 
-    // Kotak lane — tebal garis 1.5 seperti bpmn:Lane asli di proses utama.
+    // Interior transparan (lihat _drawPool) — cegah elemen di dalam lane jadi abu-abu.
     const rect = svgCreate('rect', {
       x: 0, y: 0, width: w, height: h,
-      fill: '#ffffff', 'fill-opacity': 0.35, stroke, 'stroke-width': 1.5,
+      fill: 'none', stroke, 'stroke-width': 1.5,
     });
     svgAppend(parentGfx, rect);
 
     if (vertical) {
       // Lane = kolom → pita label di ATAS, teks mendatar
-      appendRect(parentGfx, 0, 0, w, LANE_BAND, bandFill, stroke, 1.5);
-      appendLine(parentGfx, 0, LANE_BAND, w, LANE_BAND, stroke, 1.5);
-      if (name) appendText(parentGfx, name, w / 2, LANE_BAND / 2, 0, BPMN_BLACK, 11);
+      if (bandFill) appendRect(parentGfx, 0, 0, w, band, bandFill, stroke, 1.5);
+      appendLine(parentGfx, 0, band, w, band, stroke, 1.5);
+      if (name) appendText(parentGfx, name, w / 2, band / 2, 0, BPMN_BLACK, 11);
     } else {
       // Lane = pita mendatar → pita label di KIRI, teks rotasi -90°
-      appendRect(parentGfx, 0, 0, LANE_BAND, h, bandFill, stroke, 1.5);
-      appendLine(parentGfx, LANE_BAND, 0, LANE_BAND, h, stroke, 1.5);
-      if (name) appendText(parentGfx, name, LANE_BAND / 2, h / 2, -90, BPMN_BLACK, 11);
+      if (bandFill) appendRect(parentGfx, 0, 0, band, h, bandFill, stroke, 1.5);
+      appendLine(parentGfx, band, 0, band, h, stroke, 1.5);
+      if (name) appendText(parentGfx, name, band / 2, h / 2, -90, BPMN_BLACK, 11);
     }
     return rect;
   }
@@ -177,6 +197,18 @@ class PoolGroupRenderer extends BaseRenderer {
     const { x, y, width, height } = shape;
     return `M${x},${y} l${width},0 l0,${height} l${-width},0 z`;
   }
+}
+
+// Jumlah baris sebuah label (dipisah Enter/\n saat pengguna mengetik).
+function lineCount(name: string | null | undefined): number {
+  if (!name) return 1;
+  return String(name).split(/\r?\n/).length;
+}
+// Tinggi/lebar pita header: base bila ≤1 baris; tumbuh mengikuti jumlah baris +
+// padding agar garis pemisah tidak menabrak teks (bug header 2–3 baris).
+function bandSize(base: number, lines: number, fontSize: number): number {
+  if (lines <= 1) return base;
+  return Math.round(Math.max(base, lines * fontSize * 1.25 + 10));
 }
 
 // helpers SVG //////////

@@ -932,6 +932,11 @@ export interface BpmnCanvasApi {
 export default function BPMNModelerComponent({ xml, projectName, onSave, isViewOnly = false, onDirtyChange, onSelectionChange, registerSaveHandler, registerCanvasApi, toolbarExtra, onBeforeDelete }: { xml?: string, projectName?: string, onSave?: (xml: string, svg: string, subSvgs?: { id: string; name: string; svg: string; depth?: number; path?: string[] }[]) => void, isViewOnly?: boolean, onDirtyChange?: (isDirty: boolean) => void, onSelectionChange?: (el: BpmnSelectedElement | null) => void, registerSaveHandler?: (fn: () => Promise<void>) => void, registerCanvasApi?: (api: BpmnCanvasApi) => void, toolbarExtra?: React.ReactNode, onBeforeDelete?: (els: BpmnSelectedElement[]) => boolean }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const modelerRef = useRef<BpmnModeler | NavigatedViewer | null>(null);
+  // projectName dibaca via ref agar mengetik judul TIDAK membuat kanvas dibongkar-pasang
+  // (dulu projectName ada di deps effect init → modeler.destroy() setiap ketikan judul,
+  // menghapus semua perubahan diagram yang belum disimpan).
+  const projectNameRef = useRef(projectName);
+  projectNameRef.current = projectName;
   const navStackRef = useRef<BreadcrumbItem[]>([]);
   // Ref agar closure di eventBus selalu gunakan callback terbaru
   const onDirtyChangeRef = useRef(onDirtyChange);
@@ -1007,8 +1012,8 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
     const initCanvas = async () => {
       try {
         let xmlToLoad = (xml && xml.includes('bpmn:definitions')) ? xml : DEFAULT_XML;
-        if (projectName && xmlToLoad.includes('id="Process_1"') && !xmlToLoad.includes('id="Process_1" name=')) {
-           xmlToLoad = xmlToLoad.replace('id="Process_1"', `id="Process_1" name="${projectName}"`);
+        if (projectNameRef.current && xmlToLoad.includes('id="Process_1"') && !xmlToLoad.includes('id="Process_1" name=')) {
+           xmlToLoad = xmlToLoad.replace('id="Process_1"', `id="Process_1" name="${projectNameRef.current}"`);
         }
 
         // Repair XML: move orphaned process elements into their SubProcess flowElements,
@@ -1139,7 +1144,7 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
         const initialRoot = canvas.getRootElement();
         const initialItem: BreadcrumbItem = {
           id: initialRoot.id,
-          name: projectName || initialRoot.businessObject?.name || 'Proses Utama',
+          name: projectNameRef.current || initialRoot.businessObject?.name || 'Proses Utama',
           element: initialRoot,
         };
         navStackRef.current = [initialItem];
@@ -1185,6 +1190,9 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
         // Tangani navigasi masuk SubProcess dan kembali ke parent
         modeler.on('root.set', ({ element }: { element: BpmnElement }) => {
           if (!isMounted) return;
+          // Drill-in ke sub-proses merender plane baru → tata ulang lapisan pool di
+          // plane itu (drill tidak memicu commandStack.changed, jadi perlu di sini).
+          setTimeout(() => { if (isMounted) restackGroups(); }, 60);
           const stack = navStackRef.current;
           const existingIdx = stack.findIndex(b => b.id === element.id);
           let newStack: BreadcrumbItem[];
@@ -1343,7 +1351,9 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
     const detachTouch = containerRef.current ? enableTouchInteraction(containerRef.current) : undefined;
 
     return () => { isMounted = false; document.removeEventListener('keydown', enterNewlineForGroup, true); detachTouch?.(); modeler.destroy(); };
-  }, [isViewOnly, xml, projectName]);
+    // projectName SENGAJA tidak masuk deps (dibaca via ref) — lihat komentar projectNameRef.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isViewOnly, xml]);
 
   // Tambah swimlane (bpmn:Group) langsung di dalam SubProcess yang sedang aktif.
   // Tombol ini hanya muncul ketika pengguna sudah masuk ke dalam (drill-in) SubProcess.

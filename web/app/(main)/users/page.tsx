@@ -8,6 +8,7 @@ import {
 
 import { useRouter } from 'next/navigation';
 import { HIERARKI_UNIT } from '@/lib/constants';
+import { useAppContext } from '@/lib/app-context';
 import * as XLSX from 'xlsx';
 
 const BASE_PATH = '/e-sop-atrbpn';
@@ -61,6 +62,7 @@ const ROLE_LABEL: Record<string, string> = {
 
 export default function UsersPage() {
   const router = useRouter();
+  const { isDarkMode } = useAppContext();
   const [users,   setUsers]   = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [showModal,    setShowModal]    = useState(false);
@@ -189,17 +191,17 @@ export default function UsersPage() {
   };
 
   return (
-    <div className="p-4 md:p-6 lg:p-8 text-slate-900 font-sans">
+    <div className={`p-4 md:p-6 lg:p-8 font-sans ${isDarkMode ? 'text-slate-200' : 'text-slate-900'}`}>
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
-        <p className="text-sm text-slate-500">Kelola akun dan hak akses pengguna sistem</p>
+        <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Kelola akun dan hak akses pengguna sistem</p>
         <div className="flex items-center gap-2 self-start sm:self-auto">
           {activeTab === 'users' && (
             <>
-              <button onClick={handleDownloadExcel} className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition shadow-lg shadow-emerald-200">
+              <button onClick={handleDownloadExcel} className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition shadow-sm">
                 <Download className="w-4 h-4" /> Unduh Excel
               </button>
-              <button onClick={() => openModal()} className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition shadow-lg shadow-blue-200">
+              <button onClick={() => openModal()} className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition shadow-sm">
                 <Plus className="w-4 h-4" /> Tambah User
               </button>
             </>
@@ -214,12 +216,12 @@ export default function UsersPage() {
 
       {/* Tabs — hanya superadmin lihat tab Aktivitas */}
       {isSuperAdmin && (
-        <div className="flex gap-1 p-1 bg-slate-100 rounded-xl w-fit mb-5">
+        <div className={`flex gap-1 p-1 rounded-xl w-fit mb-5 ${isDarkMode ? 'bg-[#0F172A] border border-slate-700' : 'bg-slate-100'}`}>
           {([['users','Daftar Pengguna'], ['activity','Aktivitas Akses']] as const).map(([key, label]) => (
             <button
               key={key}
               onClick={() => handleTabChange(key)}
-              className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeTab === key ? 'bg-white text-blue-700 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+              className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${activeTab === key ? (isDarkMode ? 'bg-[#151F32] text-blue-400 shadow-sm' : 'bg-white text-blue-700 shadow-sm') : (isDarkMode ? 'text-slate-400 hover:text-slate-200' : 'text-slate-500 hover:text-slate-700')}`}
             >
               {label}
             </button>
@@ -230,12 +232,12 @@ export default function UsersPage() {
       {/* ===== TAB: DAFTAR PENGGUNA ===== */}
       {activeTab === 'users' && (
         loading ? (
-          <div className="p-12 text-center font-bold text-slate-400 italic">Menghubungkan ke server...</div>
+          <div className={`p-12 text-center font-bold italic ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Menghubungkan ke server...</div>
         ) : (
-          <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
+          <div className={`rounded-2xl shadow-sm border overflow-hidden ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
             <div className="overflow-x-auto">
               <table className="w-full text-left">
-                <thead className="bg-slate-50 border-b border-slate-200 text-[11px] font-bold text-slate-500 uppercase tracking-widest">
+                <thead className={`border-b text-[11px] font-bold uppercase tracking-widest ${isDarkMode ? 'bg-[#0F172A] border-slate-700 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-500'}`}>
                   <tr>
                     <th className="px-6 py-4">Identitas User</th>
                     <th className="px-6 py-4">Unit Penempatan</th>
@@ -244,11 +246,11 @@ export default function UsersPage() {
                     <th className="px-6 py-4 text-center">Aksi</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-100">
+                <tbody className={`divide-y ${isDarkMode ? 'divide-slate-800' : 'divide-slate-100'}`}>
                   {users.map(user => (
-                    <tr key={user.id} className="hover:bg-slate-50/50 transition">
+                    <tr key={user.id} className={`transition ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-slate-50/50'}`}>
                       <td className="px-6 py-4">
-                        <p className="font-bold text-[#002855] text-sm">{user.nama_lengkap || user.username}</p>
+                        <p className={`font-bold text-sm ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{user.nama_lengkap || user.username}</p>
                         <p className="text-xs font-mono text-slate-500">@{user.username}</p>
                         {/* Password reveal — superadmin only */}
                         {isSuperAdmin && (
@@ -281,7 +283,7 @@ export default function UsersPage() {
                           </span>
                         ) : (
                           <>
-                            <p className="text-sm font-bold text-slate-700 leading-tight">{user.unit_l1}</p>
+                            <p className={`text-sm font-bold leading-tight ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{user.unit_l1}</p>
                             <p className="text-[10px] text-slate-400 font-bold uppercase mt-0.5">{user.unit_l2 || 'Level 1'}</p>
                           </>
                         )}
@@ -297,7 +299,7 @@ export default function UsersPage() {
                                 ? 'bg-red-100 text-red-600'
                                 : (user.active_sessions || 0) > 0
                                   ? 'bg-emerald-100 text-emerald-700'
-                                  : 'bg-slate-100 text-slate-400'
+                                  : (isDarkMode ? 'bg-slate-800 text-slate-500' : 'bg-slate-100 text-slate-400')
                             }`}>
                               {user.active_sessions || 0}/4 aktif
                             </span>
@@ -329,21 +331,21 @@ export default function UsersPage() {
           <div>
             <div className="flex items-center gap-2 mb-3">
               <Wifi className="w-4 h-4 text-emerald-500" />
-              <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Sedang Aktif Sekarang</h3>
+              <h3 className={`text-sm font-black uppercase tracking-widest ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>Sedang Aktif Sekarang</h3>
               <span className="px-2 py-0.5 bg-emerald-100 text-emerald-700 text-[10px] font-black rounded-full">{activeSessions.length} sesi</span>
             </div>
             {actLoading ? (
               <div className="p-8 text-center text-slate-400 italic text-sm">Memuat data...</div>
             ) : activeSessions.length === 0 ? (
-              <div className="p-8 text-center text-slate-400 italic text-sm bg-white rounded-2xl border border-slate-200">
+              <div className={`p-8 text-center italic text-sm rounded-2xl border ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-slate-500' : 'bg-white border-slate-200 text-slate-400'}`}>
                 <WifiOff className="w-8 h-8 mx-auto mb-2 text-slate-300" />
                 Tidak ada sesi aktif saat ini
               </div>
             ) : (
-              <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className={`rounded-2xl border overflow-hidden ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
-                    <thead className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                    <thead className={`border-b text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'bg-[#0F172A] border-slate-700 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-500'}`}>
                       <tr>
                         <th className="px-5 py-3">Pengguna</th>
                         <th className="px-5 py-3 text-center">Role</th>
@@ -353,11 +355,11 @@ export default function UsersPage() {
                         <th className="px-5 py-3">Browser</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className={`divide-y ${isDarkMode ? 'divide-slate-800' : 'divide-slate-100'}`}>
                       {activeSessions.map((s, i) => (
-                        <tr key={i} className="hover:bg-slate-50/50">
+                        <tr key={i} className={isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-slate-50/50'}>
                           <td className="px-5 py-3">
-                            <p className="text-sm font-bold text-[#002855]">{s.nama_lengkap || s.username}</p>
+                            <p className={`text-sm font-bold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{s.nama_lengkap || s.username}</p>
                             <p className="text-[10px] font-mono text-slate-400">@{s.username}</p>
                           </td>
                           <td className="px-5 py-3 text-center">
@@ -389,18 +391,18 @@ export default function UsersPage() {
           <div>
             <div className="flex items-center gap-2 mb-3">
               <Clock className="w-4 h-4 text-blue-500" />
-              <h3 className="text-sm font-black text-slate-700 uppercase tracking-widest">Riwayat Login</h3>
+              <h3 className={`text-sm font-black uppercase tracking-widest ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>Riwayat Login</h3>
               <span className="px-2 py-0.5 bg-blue-100 text-blue-700 text-[10px] font-black rounded-full">{loginHistory.length} entri</span>
             </div>
             {actLoading ? (
               <div className="p-8 text-center text-slate-400 italic text-sm">Memuat data...</div>
             ) : loginHistory.length === 0 ? (
-              <div className="p-8 text-center text-slate-400 italic text-sm bg-white rounded-2xl border border-slate-200">Belum ada riwayat login</div>
+              <div className={`p-8 text-center italic text-sm rounded-2xl border ${isDarkMode ? 'bg-[#151F32] border-slate-700 text-slate-500' : 'bg-white border-slate-200 text-slate-400'}`}>Belum ada riwayat login</div>
             ) : (
-              <div className="bg-white rounded-2xl border border-slate-200 overflow-hidden">
+              <div className={`rounded-2xl border overflow-hidden ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
-                    <thead className="bg-slate-50 border-b border-slate-200 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+                    <thead className={`border-b text-[10px] font-bold uppercase tracking-widest ${isDarkMode ? 'bg-[#0F172A] border-slate-700 text-slate-400' : 'bg-slate-50 border-slate-200 text-slate-500'}`}>
                       <tr>
                         <th className="px-5 py-3">Waktu Login</th>
                         <th className="px-5 py-3">Pengguna</th>
@@ -408,14 +410,14 @@ export default function UsersPage() {
                         <th className="px-5 py-3">IP Address</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-slate-100">
+                    <tbody className={`divide-y ${isDarkMode ? 'divide-slate-800' : 'divide-slate-100'}`}>
                       {loginHistory.map((ev, i) => (
-                        <tr key={i} className="hover:bg-slate-50/50">
+                        <tr key={i} className={isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-slate-50/50'}>
                           <td className="px-5 py-3">
-                            <span className="text-xs font-mono text-slate-700">{fmtDt(ev.created_at)}</span>
+                            <span className={`text-xs font-mono ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{fmtDt(ev.created_at)}</span>
                           </td>
                           <td className="px-5 py-3">
-                            <p className="text-sm font-bold text-[#002855]">{ev.nama_lengkap || ev.username}</p>
+                            <p className={`text-sm font-bold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{ev.nama_lengkap || ev.username}</p>
                             <p className="text-[10px] font-mono text-slate-400">@{ev.username}</p>
                           </td>
                           <td className="px-5 py-3 text-center">
@@ -440,24 +442,24 @@ export default function UsersPage() {
       {/* Modal Tambah/Edit */}
       {showModal && (
         <div className="fixed inset-0 bg-[#002855]/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-3xl p-8 w-full max-w-xl shadow-2xl animate-in zoom-in duration-200 max-h-[90vh] overflow-y-auto">
-            <div className="flex justify-between items-center mb-8 border-b border-slate-100 pb-4">
-              <h2 className="text-xl font-black text-[#002855] flex items-center gap-2">
+          <div className={`rounded-3xl p-8 w-full max-w-xl shadow-2xl animate-in zoom-in duration-200 max-h-[90vh] overflow-y-auto ${isDarkMode ? 'bg-[#151F32] border border-slate-700' : 'bg-white'}`}>
+            <div className={`flex justify-between items-center mb-8 border-b pb-4 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+              <h2 className={`text-xl font-black flex items-center gap-2 ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>
                 <UserCheck className="w-6 h-6 text-blue-600" />
                 {editingUser ? 'Edit Data Pengguna' : 'Tambah Pengguna Baru'}
               </h2>
-              <button onClick={() => setShowModal(false)} className="p-2 hover:bg-slate-100 rounded-full transition"><X className="w-5 h-5 text-slate-400" /></button>
+              <button onClick={() => setShowModal(false)} className={`p-2 rounded-full transition ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-slate-100'}`}><X className="w-5 h-5 text-slate-400" /></button>
             </div>
 
             <form onSubmit={handleSubmit} className="space-y-5">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Username</label>
-                  <input type="text" value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})} className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" required autoComplete="off" />
+                  <input type="text" value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})} className={`w-full px-4 py-2.5 border rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900 shadow-sm'}`} required autoComplete="off" />
                 </div>
                 <div className="space-y-1">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Hak Akses (Role)</label>
-                  <select value={formData.role} onChange={e => setFormData({...formData, role: e.target.value})} className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-bold text-[#002855] outline-none focus:ring-2 focus:ring-blue-500 shadow-sm">
+                  <select value={formData.role} onChange={e => setFormData({...formData, role: e.target.value})} className={`w-full px-4 py-2.5 border rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-[#002855] shadow-sm'}`}>
                     <option value="user">User (Terbatas)</option>
                     <option value="viewer">Viewer</option>
                     <option value="admin">Admin</option>
@@ -472,7 +474,7 @@ export default function UsersPage() {
                 </label>
                 <div className="relative">
                   <KeyRound className="absolute left-3 top-2.5 w-4 h-4 text-slate-400" />
-                  <input type={showPassword ? "text" : "password"} value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className="w-full pl-10 pr-12 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" required={!editingUser} autoComplete="new-password" />
+                  <input type={showPassword ? "text" : "password"} value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} className={`w-full pl-10 pr-12 py-2.5 border rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900 shadow-sm'}`} required={!editingUser} autoComplete="new-password" />
                   <button type="button" onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-2 p-1 text-slate-400 hover:text-blue-600 transition-colors">
                     {showPassword ? <EyeOff className="w-5 h-5" /> : <Eye className="w-5 h-5" />}
                   </button>
@@ -481,7 +483,7 @@ export default function UsersPage() {
 
               <div className="space-y-1">
                 <label className="text-[10px] font-black text-slate-400 uppercase tracking-wider">Nama Lengkap</label>
-                <input type="text" value={formData.nama_lengkap} onChange={e => setFormData({...formData, nama_lengkap: e.target.value})} className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" required />
+                <input type="text" value={formData.nama_lengkap} onChange={e => setFormData({...formData, nama_lengkap: e.target.value})} className={`w-full px-4 py-2.5 border rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900 shadow-sm'}`} required />
               </div>
 
               {!['admin', 'viewer', 'superadmin'].includes(formData.role) && (
@@ -491,14 +493,14 @@ export default function UsersPage() {
                   </p>
                   <div className="space-y-1">
                     <label className="text-[9px] font-bold text-slate-400 uppercase">Unit Kerja Level 1</label>
-                    <select value={formData.unit_l1} onChange={e => setFormData({...formData, unit_l1: e.target.value, unit_l2: ''})} className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-blue-500 shadow-sm" required>
+                    <select value={formData.unit_l1} onChange={e => setFormData({...formData, unit_l1: e.target.value, unit_l2: ''})} className={`w-full px-4 py-2.5 border rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900 shadow-sm'}`} required>
                       <option value="">-- Pilih Unit Kerja L1 --</option>
                       {Object.keys(HIERARKI_UNIT).map(l1 => <option key={l1} value={l1}>{l1}</option>)}
                     </select>
                   </div>
                   <div className="space-y-1">
                     <label className="text-[9px] font-bold text-slate-400 uppercase">Unit Kerja Level 2 (Opsional)</label>
-                    <select value={formData.unit_l2} onChange={e => setFormData({...formData, unit_l2: e.target.value})} className="w-full px-4 py-2.5 bg-white border border-slate-300 rounded-xl text-sm font-bold text-slate-900 outline-none focus:ring-2 focus:ring-blue-500 shadow-sm disabled:opacity-50" disabled={!formData.unit_l1}>
+                    <select value={formData.unit_l2} onChange={e => setFormData({...formData, unit_l2: e.target.value})} className={`w-full px-4 py-2.5 border rounded-xl text-sm font-bold outline-none focus:ring-2 focus:ring-blue-500 disabled:opacity-50 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900 shadow-sm'}`} disabled={!formData.unit_l1}>
                       <option value="">-- Pilih Unit Kerja L2 (Opsional) --</option>
                       {availableL2.map(sub => <option key={sub} value={sub}>{sub}</option>)}
                     </select>
@@ -526,7 +528,7 @@ export default function UsersPage() {
                 </div>
               )}
 
-              <button type="submit" disabled={loading} className="w-full py-4 bg-[#002855] text-white font-black rounded-2xl hover:bg-blue-900 transition shadow-xl shadow-blue-100 mt-4 uppercase tracking-widest text-sm disabled:bg-slate-400">
+              <button type="submit" disabled={loading} className={`w-full py-4 text-white font-black rounded-2xl transition shadow-sm mt-4 uppercase tracking-widest text-sm disabled:bg-slate-400 ${isDarkMode ? 'bg-blue-600 hover:bg-blue-500' : 'bg-[#002855] hover:bg-blue-900'}`}>
                 {loading ? 'Memproses...' : (editingUser ? 'Simpan Perubahan' : 'Daftarkan Pengguna')}
               </button>
             </form>
