@@ -157,6 +157,20 @@ export default function BPMNDashboardPage() {
   const [previewModel, setPreviewModel] = useState<BPMNModel | null>(null);
   const [showHistoryFor, setShowHistoryFor] = useState<BPMNModel | null>(null);
   const [showTrash, setShowTrash] = useState(false);
+  // Dokumen yang sudah DITETAPKAN lewat Keputusan Menteri — tercatat di registri
+  // Dashboard, tidak disusun lewat studio, jadi tidak punya baris model sendiri.
+  const [dokTetap, setDokTetap] = useState<{ id: number; nama: string; tahun: string; link?: string | null; sumber?: string | null; unit_l1?: string | null; unit_l2?: string | null; created_at?: string | null }[]>([]);
+  const [tahunTetap, setTahunTetap] = useState<string>('');
+
+  useEffect(() => {
+    if (!token) return;
+    let aktif = true;
+    apiFetch(`/bpmn/terbit-registry`, token)
+      .then(r => (r.ok ? r.json() : null))
+      .then(d => { if (aktif && d) { setDokTetap(d.items || []); setTahunTetap(d.tahun || ''); } })
+      .catch(() => {});
+    return () => { aktif = false; };
+  }, [token]);
   // Pratinjau diagram di modal detail (SVG tersimpan — instan, tak perlu render ulang).
   const [previewSvg, setPreviewSvg] = useState<string | null>(null);
   const [loadingSvg, setLoadingSvg] = useState(false);
@@ -247,6 +261,36 @@ export default function BPMNDashboardPage() {
     return () => clearInterval(timer);
   }, [token]);
 
+  // Dokumen yang ditetapkan lewat Keputusan Menteri (registri Dashboard) diperlakukan
+  // sebagai dokumen MANUAL berstatus terbit, sehingga ikut terhitung di kartu, panel
+  // klik-kartu, dan rekap unit kerja. id dibuat negatif agar tak bentrok dengan model.
+  // Baris yang berasal dari registri Kepmen: tidak punya berkas di aplikasi ini,
+  // jadi aksinya cukup membuka tautan dokumen resminya.
+  const isRegistri = (m: unknown) => !!(m as { _registri?: boolean } | null)?._registri;
+  const bukaDokumenRegistri = (m: unknown) => {
+    const d = m as { manual_link?: string | null };
+    if (d.manual_link) window.open(d.manual_link, '_blank', 'noopener,noreferrer');
+    else alert('Dokumen ini belum memiliki tautan berkas.');
+  };
+
+  const modelsPlusTetap = useMemo(() => ([
+    ...savedModels,
+    ...dokTetap.map(d => ({
+      id: -d.id,
+      process_title: d.nama,
+      status: 'approved',
+      is_manual: true,
+      manual_link: d.link || null,
+      manual_nomor: d.sumber || null,
+      unit_l1: d.unit_l1 || null,
+      unit_l2: d.unit_l2 || null,
+      updated_at: d.created_at,
+      created_at: d.created_at,
+      version: 1,
+      _registri: true,
+    } as unknown as BPMNModel)),
+  ]), [savedModels, dokTetap]);
+
   const currentFilteredModels = useMemo(() => {
     return savedModels.filter(m => {
       // process_key bisa null (dokumen manual / usulan tanpa kode) — jangan crash.
@@ -260,7 +304,7 @@ export default function BPMNDashboardPage() {
 
       return matchesSearch && matchesUnit && matchesStatus;
     });
-  }, [savedModels, searchQuery, filterUnit, filterStatus]);
+  }, [modelsPlusTetap, searchQuery, filterUnit, filterStatus]);
 
   // Dokumen untuk panel "klik kartu": difilter status kartu + kotak cari, lintas unit.
   const CARD_MATCH: Record<string, (m: BPMNModel) => boolean> = {
@@ -281,7 +325,7 @@ export default function BPMNDashboardPage() {
     return savedModels.filter(m => CARD_MATCH[cardFilter](m) &&
       ((m.process_title || '').toLowerCase().includes(q) || (m.process_key || '').toLowerCase().includes(q)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cardFilter, savedModels, searchQuery]);
+  }, [cardFilter, modelsPlusTetap, searchQuery]);
   const isAdminRole = currentUser?.role === 'admin';
   const toggleCard = (key: typeof cardFilter) => { if (isAdminRole) setCardFilter(cur => cur === key ? null : key); };
 
@@ -465,8 +509,20 @@ export default function BPMNDashboardPage() {
     return ['Semua', ...Array.from(new Set(units))];
   }, [savedModels]);
 
+  // Siapa yang boleh menghapus sebuah dokumen.
+  // Pengguna unit (User Terbatas) boleh menghapus dokumen unitnya selama BELUM
+  // disetujui Ortala MR — termasuk yang "Perlu Revisi" dan yang masih "Review Ortala MR". Sengaja TIDAK memakai syarat
+  // "pembuat = saya": dokumen hasil impor massal dibuat oleh superadmin, dan satu
+  // akun unit dipakai bersama beberapa petugas. Batas antar-unit dijaga server.
+  const bolehHapus = (model: BPMNModel) => {
+    if (!currentUser || currentUser.role === 'viewer') return false;
+    if (isRegistri(model)) return false; // dokumen registri Kepmen — dikelola lewat menu Dokumen/Dashboard
+    if (currentUser.role === 'admin' || isSuperadmin) return true;
+    return ['draft', 'usulan', 'rejected', 'pending', ''].includes(model.status || '');
+  };
+
   const deleteModel = async (modelId: number) => {
-    if (!(await confirm({ title: 'Hapus Dokumen', message: 'Yakin ingin menghapus dokumen ini? Tindakan ini tidak dapat dibatalkan.', tone: 'danger', confirmText: 'Ya, Hapus' }))) return;
+    if (!(await confirm({ title: 'Hapus Dokumen', message: 'Dokumen akan dipindahkan ke Kotak Sampah dan masih dapat dipulihkan admin dalam 30 hari. Lanjutkan?', tone: 'danger', confirmText: 'Ya, Hapus' }))) return;
     try {
       const res = await apiFetch(`/bpmn/models/${modelId}`, token, { method: 'DELETE' });
       if (res.ok) {
@@ -712,27 +768,27 @@ export default function BPMNDashboardPage() {
   // Tombol aksi ringkas — dipakai di panel klik-kartu (admin/superadmin) agar bisa
   // Setujui/Tolak/Tetapkan langsung dari sana. Alur & kondisi sama dgn tabel utama.
   const cardRowActions = (model: BPMNModel) => (
-    <div className="flex items-center justify-end gap-1.5 flex-wrap">
+    <div className="flex items-center justify-end gap-1.5 flex-wrap min-w-max">
       {canRespond(model) && (
         <button onClick={(e) => { e.stopPropagation(); setTanggapanModal({ isOpen: true, model, pesan: '' }); }} className="px-3 py-2 bg-indigo-100 hover:bg-indigo-600 hover:text-white text-indigo-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><MessageSquare className="w-4 h-4" /> Tanggapi</button>
       )}
       {currentUser?.role === 'admin' && ['pending', 'draft', 'rejected'].includes(model.status || 'draft') && (<>
         <button onClick={(e) => { e.stopPropagation(); handleApprove(model); }} className="px-3 py-2 bg-emerald-100 hover:bg-emerald-500 hover:text-white text-emerald-700 text-xs font-extrabold rounded-lg uppercase transition-all">Setujui</button>
-        {model.status !== 'rejected' && <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '' }); }} className="px-3 py-2 bg-red-100 hover:bg-red-500 hover:text-white text-red-700 text-xs font-extrabold rounded-lg uppercase transition-all">Tolak</button>}
+        {model.status !== 'rejected' && <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: '' }); }} className="px-3 py-2 bg-red-100 hover:bg-red-500 hover:text-white text-red-700 text-xs font-extrabold rounded-lg uppercase transition-all">Tolak</button>}
         {model.status === 'rejected' && <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '', mode: 'edit' }); }} className="px-3 py-2 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all">Edit Revisi</button>}
       </>)}
       {model.status === 'penetapan' && currentUser?.role === 'admin' && (
         <><button onClick={(e) => { e.stopPropagation(); handleDitetapkan(model); }} className="px-3 py-2 bg-violet-100 hover:bg-violet-600 hover:text-white text-violet-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><Landmark className="w-4 h-4" /> Ditetapkan</button><button onClick={(e) => { e.stopPropagation(); handleBatalPenetapan(model); }} title="Batalkan proses penetapan (kembali ke tahap sebelumnya)" className="px-3 py-2 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><RotateCcw className="w-4 h-4" /> Batalkan</button></>
       )}
-      {model.status === 'approved' && currentUser?.role === 'admin' && (
+      {model.status === 'approved' && currentUser?.role === 'admin' && !isRegistri(model) && (
         <button onClick={(e) => { e.stopPropagation(); batalkanPenetapan(model); }} className="px-3 py-2 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><XCircle className="w-4 h-4" /> Batalkan Penetapan</button>
       )}
       {model.is_manual ? (
         <button onClick={(e) => { e.stopPropagation(); setManualDetail(model); }} className="px-3 py-2 text-blue-600 hover:bg-blue-50 font-bold text-xs rounded-lg border border-transparent hover:border-blue-200 flex items-center gap-1"><FileText className="w-4 h-4" /> Lihat Dokumen</button>
       ) : (
-        <button onClick={(e) => { e.stopPropagation(); if (['approved', 'penetapan'].includes(model.status || '')) { router.push(`/bpmn/studio?id=${model.id}&mode=view`); } else { openForEdit(model); } }} className="px-3 py-2 text-blue-600 hover:bg-blue-50 font-bold text-xs rounded-lg border border-transparent hover:border-blue-200 flex items-center gap-1"><Edit className="w-4 h-4" /> Buka</button>
+        <button onClick={(e) => { e.stopPropagation(); if (['approved', 'penetapan'].includes(model.status || '')) { router.push(`/bpmn/studio?id=${model.id}&mode=view`); } else { openForEdit(model); } }} className="px-3 py-2 text-blue-600 hover:bg-blue-50 font-bold text-xs rounded-lg border border-transparent hover:border-blue-200 flex items-center gap-1"><Edit className="w-4 h-4" /> {['approved', 'penetapan'].includes(model.status || '') ? 'Lihat' : 'Edit'}</button>
       )}
-      {currentUser?.role === 'admin' && (
+      {bolehHapus(model) && (
         <button onClick={(e) => { e.stopPropagation(); deleteModel(model.id); }} className={`p-2 rounded-lg transition-colors hover:text-red-600 hover:bg-red-50 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} title="Hapus Dokumen"><Trash2 className="w-4 h-4" /></button>
       )}
     </div>
@@ -1083,7 +1139,7 @@ export default function BPMNDashboardPage() {
               {previewModel.catatan && (
                 <div className={`rounded-xl p-3 border text-sm ${isDarkMode ? 'bg-red-900/10 border-red-800 text-red-300' : 'bg-red-50 border-red-200 text-red-700'}`}>
                   <p className="font-bold text-xs uppercase tracking-wide mb-1">Catatan Revisi</p>
-                  <p className="leading-relaxed">{previewModel.catatan}</p>
+                  <p className="leading-relaxed whitespace-pre-wrap wrap-break-word">{previewModel.catatan}</p>
                 </div>
               )}
 
@@ -1233,36 +1289,36 @@ export default function BPMNDashboardPage() {
         </div>
       )}
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+      <div className="@container max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
+        <div className="flex flex-col @5xl:flex-row @5xl:items-center justify-between gap-3 @5xl:gap-4 mb-6">
           <p className={`text-sm font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
             {currentUser.role === 'admin' ? 'Manajemen Pengajuan (Pusat)' : `${currentUser.unit_l1}${currentUser.unit_l2 ? ' › ' + currentUser.unit_l2 : ''}`}
           </p>
-          <div className="flex items-center gap-2 self-start sm:self-auto">
-            <button onClick={() => setShowPanduan(true)} className={`px-4 py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-blue-700 text-blue-400 hover:bg-blue-900/30' : 'border-blue-200 text-blue-600 hover:bg-blue-50'}`}>
+          <div className="flex flex-wrap items-center gap-2 self-start @5xl:self-auto @5xl:justify-end">
+            <button onClick={() => setShowPanduan(true)} className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-blue-700 text-blue-400 hover:bg-blue-900/30' : 'border-blue-200 text-blue-600 hover:bg-blue-50'}`}>
               <HelpCircle className="w-4 h-4" /> Panduan
             </button>
             {isSuperadmin && (
-              <button onClick={() => setShowImport(true)} className={`px-4 py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-emerald-700 text-emerald-400 hover:bg-emerald-900/30' : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'}`}>
+              <button onClick={() => setShowImport(true)} className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-emerald-700 text-emerald-400 hover:bg-emerald-900/30' : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'}`}>
                 <FileSpreadsheet className="w-4 h-4" /> Impor Excel
               </button>
             )}
             {currentUser.role === 'admin' && (
-              <button onClick={() => setShowTrash(true)} title="Kotak Sampah — dokumen terhapus (30 hari)" className={`px-4 py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/20' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
+              <button onClick={() => setShowTrash(true)} title="Kotak Sampah — dokumen terhapus (30 hari)" className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/20' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
                 <Trash2 className="w-4 h-4" /> <span className="hidden sm:inline">Kotak Sampah</span>
               </button>
             )}
-            <button onClick={() => setShowManualDoc(true)} className={`px-4 py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/30' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
+            <button onClick={() => setShowManualDoc(true)} className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/30' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
               <FileUp className="w-4 h-4" /> Dokumen Manual
             </button>
-            <button onClick={() => router.push(`/bpmn/studio?t=${Date.now()}`)} className="px-5 py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center gap-2 font-bold transition-all">
+            <button onClick={() => router.push(`/bpmn/studio?t=${Date.now()}`)} className="whitespace-nowrap shrink-0 px-4 py-2.5 xl:px-5 xl:py-3 bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-md flex items-center gap-2 font-bold transition-all">
               <Plus className="w-4 h-4" /> Buat BPMN Baru
             </button>
           </div>
         </div>
 
         {/* STATS SUMMARY */}
-        <div className="grid grid-cols-2 sm:grid-cols-3 xl:grid-cols-6 gap-3 sm:gap-4 mb-8">
+        <div className="grid grid-cols-2 @2xl:grid-cols-3 @6xl:grid-cols-6 gap-3 sm:gap-4 mb-8">
           <div onClick={() => toggleCard('total')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm flex justify-between items-center gap-2 transition-all hover:shadow-md ${isAdminRole ? 'cursor-pointer' : ''} ${cardFilter === 'total' ? 'ring-2 ring-[#002855]' : ''} ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
             <div className="min-w-0">
               <p className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Total</p>
@@ -1329,16 +1385,16 @@ export default function BPMNDashboardPage() {
                     <th className="px-4 sm:px-6 py-3">Informasi Dokumen</th>
                     <th className="px-4 sm:px-6 py-3">Unit Kerja</th>
                     <th className="px-4 sm:px-6 py-3 text-center">Status</th>
-                    <th className="px-4 sm:px-6 py-3 text-center">Aksi / Tindakan</th>
+                    <th className="px-4 sm:px-6 py-3 text-center w-px whitespace-nowrap">Aksi / Tindakan</th>
                   </tr>
                 </thead>
                 <tbody className={`divide-y ${isDarkMode ? 'divide-slate-800' : 'divide-slate-100'}`}>
                   {cardFilterModels.length === 0 ? (
                     <tr><td colSpan={4} className={`px-6 py-12 text-center ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Tidak ada dokumen.</td></tr>
                   ) : cardFilterModels.map(model => (
-                    <tr key={model.id} onClick={() => { if (model.is_manual) setManualDetail(model); else openPreview(model); }} title="Klik baris untuk membuka detail dokumen" className={`transition-colors cursor-pointer ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-blue-50/40'}`}>
+                    <tr key={model.id} onClick={() => { if (isRegistri(model)) bukaDokumenRegistri(model); else if (model.is_manual) setManualDetail(model); else openPreview(model); }} title="Klik baris untuk membuka detail dokumen" className={`transition-colors cursor-pointer ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-blue-50/40'}`}>
                       <td className="px-4 sm:px-6 py-3.5">
-                        <button onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else { openPreview(model); } }} className={`font-bold text-left hover:underline ${isDarkMode ? 'text-white hover:text-blue-400' : 'text-[#002855] hover:text-blue-600'}`}>{model.process_title}</button>
+                        <button onClick={(e) => { e.stopPropagation(); if (isRegistri(model)) { bukaDokumenRegistri(model); } else if (model.is_manual) { setManualDetail(model); } else { openPreview(model); } }} className={`font-bold text-left hover:underline ${isDarkMode ? 'text-white hover:text-blue-400' : 'text-[#002855] hover:text-blue-600'}`}>{model.process_title}</button>
                         <div className="flex flex-wrap items-center gap-1.5 mt-1">
                           {model.is_manual && <span className={`text-[10px] font-black px-1.5 py-0.5 rounded border uppercase ${isDarkMode ? 'text-amber-300 bg-amber-900/30 border-amber-700' : 'text-amber-700 bg-amber-50 border-amber-300'}`}>Manual{model.manual_nomor ? ` · ${model.manual_nomor}` : ''}</span>}
                           {model.process_key && <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${isDarkMode ? 'text-slate-400 bg-slate-800 border-slate-700' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>{model.process_key}</span>}
@@ -1360,7 +1416,7 @@ export default function BPMNDashboardPage() {
                       <td className="px-4 sm:px-6 py-3.5 text-center">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider border ${statusBadgeClass(model.status)}`}>{statusLabel(model.status, model.is_manual)}</span>
                       </td>
-                      <td className="px-4 sm:px-6 py-3.5">{cardRowActions(model)}</td>
+                      <td className="px-4 sm:px-6 py-3.5 w-px whitespace-nowrap align-middle">{cardRowActions(model)}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -1527,7 +1583,7 @@ export default function BPMNDashboardPage() {
                   pagedModels.map((model) => (
                     <tr
                       key={model.id}
-                      onClick={() => model.is_manual ? setManualDetail(model) : openPreview(model)}
+                      onClick={() => isRegistri(model) ? bukaDokumenRegistri(model) : model.is_manual ? setManualDetail(model) : openPreview(model)}
                       className={`transition-colors cursor-pointer ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-blue-50/40'}`}
                     >
                       <td className="px-6 py-4">
@@ -1588,7 +1644,7 @@ export default function BPMNDashboardPage() {
                           {model.status === 'usulan' && (
                             <>
                               <button onClick={(e) => { e.stopPropagation(); handleLanjutPenyusunan(model); }} className="px-3 py-2.5 bg-blue-600 hover:bg-blue-700 text-white text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm flex items-center gap-1.5"><ChevronRight className="w-4 h-4" /> Lanjut Penyusunan</button>
-                              {(currentUser.role === 'admin' || model.created_by === currentUser.id) && (
+                              {bolehHapus(model) && (
                                 <button onClick={(e) => { e.stopPropagation(); deleteModel(model.id); }} className={`p-2.5 rounded-lg transition-colors hover:text-red-600 hover:bg-red-50 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} title="Hapus Usulan"><Trash2 className="w-4 h-4" /></button>
                               )}
                             </>
@@ -1598,7 +1654,7 @@ export default function BPMNDashboardPage() {
                             onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else { openForEdit(model); } }}
                             className="px-3 py-2.5 text-blue-600 hover:bg-blue-50 font-bold text-xs rounded-lg transition-colors flex items-center gap-1 border border-transparent hover:border-blue-200"
                           >
-                            {model.is_manual ? <><FileText className="w-4 h-4" /> Lihat Dokumen</> : <><Edit className="w-4 h-4" /> Buka</>}
+                            {model.is_manual ? <><FileText className="w-4 h-4" /> Lihat Dokumen</> : <><Edit className="w-4 h-4" /> Edit</>}
                           </button>
 
                           {currentUser.role !== 'viewer' && !model.is_manual && (
@@ -1611,7 +1667,7 @@ export default function BPMNDashboardPage() {
                             </button>
                           )}
 
-                          <ShareButton kind="bpmn" modelId={model.id} token={token} isDarkMode={isDarkMode} />
+                          {!isRegistri(model) && <ShareButton kind="bpmn" modelId={model.id} token={token} isDarkMode={isDarkMode} />}
                           {canRespond(model) && (
                             <button onClick={(e) => { e.stopPropagation(); setTanggapanModal({ isOpen: true, model, pesan: '' }); }} className="px-3 py-2.5 bg-indigo-100 hover:bg-indigo-500 hover:text-white text-indigo-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm flex items-center gap-1.5"><MessageSquare className="w-4 h-4" /> Tanggapi</button>
                           )}
@@ -1619,7 +1675,7 @@ export default function BPMNDashboardPage() {
                           {currentUser.role === 'admin' && ['pending', 'draft', 'rejected'].includes(model.status || 'draft') && (
                             <div className={`flex ml-2 border-l pl-2 gap-2 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
                               <button onClick={(e) => { e.stopPropagation(); handleApprove(model); }} className="px-3 py-2.5 bg-emerald-100 hover:bg-emerald-500 hover:text-white text-emerald-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm">Setujui</button>
-                              {model.status !== 'rejected' && <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '' }); }} className="px-3 py-2.5 bg-red-100 hover:bg-red-500 hover:text-white text-red-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm">Tolak</button>}
+                              {model.status !== 'rejected' && <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: '' }); }} className="px-3 py-2.5 bg-red-100 hover:bg-red-500 hover:text-white text-red-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm">Tolak</button>}
                               {model.status === 'rejected' && <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '', mode: 'edit' }); }} className="px-3 py-2.5 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm">Edit Revisi</button>}
                             </div>
                           )}
@@ -1629,11 +1685,11 @@ export default function BPMNDashboardPage() {
                           {model.status === 'penetapan' && currentUser.role !== 'admin' && (
                             <span className="ml-2 px-2.5 py-1.5 text-[11px] font-bold text-violet-700 bg-violet-50 rounded-lg border border-violet-200">Menunggu penetapan menteri</span>
                           )}
-                          {model.status === 'approved' && currentUser.role === 'admin' && (
+                          {model.status === 'approved' && currentUser.role === 'admin' && !isRegistri(model) && (
                             <button onClick={(e) => { e.stopPropagation(); batalkanPenetapan(model); }} className="ml-2 px-3 py-2.5 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm flex items-center gap-1.5"><XCircle className="w-4 h-4" /> Batalkan Penetapan</button>
                           )}
 
-                          {(currentUser.role === 'admin' || (model.created_by === currentUser.id && (model.status === 'draft' || model.status === 'rejected' || !model.status))) && (
+                          {bolehHapus(model) && (
                             <button
                               onClick={(e) => { e.stopPropagation(); deleteModel(model.id); }}
                               className={`p-2.5 rounded-lg transition-colors hover:text-red-600 hover:bg-red-50 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}
@@ -1665,7 +1721,7 @@ export default function BPMNDashboardPage() {
               pagedModels.map((model) => (
                 <div
                   key={model.id}
-                  onClick={() => model.is_manual ? setManualDetail(model) : openPreview(model)}
+                  onClick={() => isRegistri(model) ? bukaDokumenRegistri(model) : model.is_manual ? setManualDetail(model) : openPreview(model)}
                   className={`px-4 py-4 cursor-pointer transition-colors ${isDarkMode ? 'hover:bg-slate-800/60 divide-slate-800' : 'hover:bg-blue-50/40'}`}
                 >
                   <div className="flex items-start justify-between gap-2">
@@ -1707,17 +1763,17 @@ export default function BPMNDashboardPage() {
                       {model.status === 'usulan' && (
                         <>
                           <button onClick={(e) => { e.stopPropagation(); handleLanjutPenyusunan(model); }} className="px-2.5 py-2.5 bg-blue-600 text-white font-bold text-xs rounded-lg flex items-center gap-1"><ChevronRight className="w-3.5 h-3.5" /> Lanjut</button>
-                          {(currentUser.role === 'admin' || model.created_by === currentUser.id) && (
+                          {bolehHapus(model) && (
                             <button onClick={(e) => { e.stopPropagation(); deleteModel(model.id); }} className={`p-2.5 rounded-lg hover:text-red-600 hover:bg-red-50 transition-colors ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} title="Hapus"><Trash2 className="w-3.5 h-3.5" /></button>
                           )}
                         </>
                       )}
                       {model.status !== 'usulan' && (<>
-                      <button onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else { openForEdit(model); } }} className="px-2.5 py-2.5 text-blue-600 bg-blue-50 font-bold text-xs rounded-lg flex items-center gap-1">{model.is_manual ? <><FileText className="w-3 h-3" /> Lihat</> : <><Edit className="w-3 h-3" /> Buka</>}</button>
+                      <button onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else { openForEdit(model); } }} className="px-2.5 py-2.5 text-blue-600 bg-blue-50 font-bold text-xs rounded-lg flex items-center gap-1">{model.is_manual ? <><FileText className="w-3 h-3" /> Lihat</> : <><Edit className="w-3 h-3" /> Edit</>}</button>
                       {currentUser.role === 'admin' && ['pending', 'draft', 'rejected'].includes(model.status || 'draft') && (
                         <>
                           <button onClick={(e) => { e.stopPropagation(); handleApprove(model); }} className="px-2.5 py-2.5 bg-emerald-100 text-emerald-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Setujui"><CheckCircle className="w-3.5 h-3.5" /></button>
-                          {model.status !== 'rejected' && <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '' }); }} className="px-2.5 py-2.5 bg-red-100 text-red-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Tolak"><XCircle className="w-3.5 h-3.5" /></button>}
+                          {model.status !== 'rejected' && <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: '' }); }} className="px-2.5 py-2.5 bg-red-100 text-red-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Tolak"><XCircle className="w-3.5 h-3.5" /></button>}
                           {model.status === 'rejected' && <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '', mode: 'edit' }); }} className="px-2.5 py-2.5 bg-amber-100 text-amber-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Edit Revisi"><Edit className="w-3.5 h-3.5" /></button>}
                         </>
                       )}
@@ -1727,17 +1783,17 @@ export default function BPMNDashboardPage() {
                       {model.status === 'penetapan' && currentUser.role !== 'admin' && (
                         <span className="px-2.5 py-2 text-[10px] font-bold text-violet-700 bg-violet-50 rounded-lg border border-violet-200 self-center">Penetapan</span>
                       )}
-                      {model.status === 'approved' && currentUser.role === 'admin' && (
+                      {model.status === 'approved' && currentUser.role === 'admin' && !isRegistri(model) && (
                         <button onClick={(e) => { e.stopPropagation(); batalkanPenetapan(model); }} className="px-2.5 py-2.5 bg-amber-100 text-amber-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Batalkan Penetapan"><XCircle className="w-3.5 h-3.5" /> Batalkan</button>
                       )}
                       {currentUser.role !== 'viewer' && !model.is_manual && (
                         <button onClick={(e) => { e.stopPropagation(); openCopyModal(model); }} className={`p-2.5 rounded-lg hover:text-amber-600 hover:bg-amber-50 transition-colors ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} title="Salin"><Copy className="w-3.5 h-3.5" /></button>
                       )}
-                      <ShareButton kind="bpmn" modelId={model.id} token={token} isDarkMode={isDarkMode} />
+                      {!isRegistri(model) && <ShareButton kind="bpmn" modelId={model.id} token={token} isDarkMode={isDarkMode} />}
                       {canRespond(model) && (
                         <button onClick={(e) => { e.stopPropagation(); setTanggapanModal({ isOpen: true, model, pesan: '' }); }} className="px-2.5 py-2.5 bg-indigo-100 text-indigo-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Tanggapi Revisi"><MessageSquare className="w-3.5 h-3.5" /> Tanggapi</button>
                       )}
-                      {(currentUser.role === 'admin' || (model.created_by === currentUser.id && (model.status === 'draft' || model.status === 'rejected' || !model.status))) && (
+                      {bolehHapus(model) && (
                         <button onClick={(e) => { e.stopPropagation(); deleteModel(model.id); }} className={`p-2.5 rounded-lg hover:text-red-600 hover:bg-red-50 transition-colors ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}><Trash2 className="w-3.5 h-3.5" /></button>
                       )}
                       </>)}

@@ -40,3 +40,37 @@ body {
     display: block !important;
   }
 }
+/* ================= SKALA UI ADAPTIF =================
+   Laptop/PC beresolusi menengah (mis. 19" 1366×768) menampilkan antarmuka yang
+   SAMA seperti layar besar, hanya diperkecil secara proporsional, sehingga
+   seluruh isi halaman muat tanpa pengguna perlu menekan Ctrl+- sendiri.
+
+   Kelas `ui-skala` dipasang pada <html> oleh layout, dan SENGAJA tidak dipasang
+   di halaman studio (BPMN/SOP/Peta) agar koordinat kanvas tetap presisi dan
+   hasil cetak PDF tidak ikut mengecil.
+
+   Tata letak kartu memakai container query, jadi jumlah kolomnya mengikuti ruang
+   yang benar-benar tersedia — tetap benar walau `zoom` tak didukung peramban. */
+/* Tinggi ikut dikoreksi (100% ÷ skala); tanpa ini tampilan berhenti sebelum
+   tepi bawah layar dan menyisakan pita kosong. */
+@media (min-width: 1024px) and (max-width: 1279.98px) {
+  html.ui-skala { zoom: 0.8; --ui-vh: 125vh; }
+}
+@media (min-width: 1280px) and (max-width: 1439.98px) {
+  html.ui-skala { zoom: 0.85; --ui-vh: 117.65vh; }
+}
+@media (min-width: 1440px) and (max-width: 1599.98px) {
+  html.ui-skala { zoom: 0.9; --ui-vh: 111.12vh; }
+}
+
+/* Layar pendek (tinggi ≤ 800px, mis. 1366×768) diperkecil sedikit lagi supaya
+   tabel di bawah kartu ikut terlihat tanpa menggulir. */
+@media (min-width: 1024px) and (max-width: 1599.98px) and (max-height: 800px) {
+  html.ui-skala { zoom: 0.85; --ui-vh: 117.65vh; }
+}
+
+/* Satuan 100vh TIDAK ikut mengecil saat `zoom` aktif, sehingga kerangka aplikasi
+   berhenti sebelum tepi bawah layar dan menyisakan pita kosong. Kelas tinggi
+   layar-penuh dipetakan ulang ke --ui-vh (100vh ÷ skala). */
+html.ui-skala .h-screen { height: var(--ui-vh, 100vh); }
+html.ui-skala .min-h-screen { min-height: var(--ui-vh, 100vh); }

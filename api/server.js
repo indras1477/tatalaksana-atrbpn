@@ -482,6 +482,10 @@ const initDatabase = async () => {
         uploaded_by INTEGER REFERENCES users(id),
         uploaded_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
       );
+      -- Berapa halaman cover yang benar-benar discan. Unit kerja umumnya hanya
+      -- memindai halaman pertama (yang bertanda tangan); halaman cover LANJUTAN
+      -- tetap harus dipakai dari sistem, bukan ikut hilang.
+      ALTER TABLE sop_covers ADD COLUMN IF NOT EXISTS pages INTEGER;
     `);
 
     // Riwayat/log aktivitas dokumen BPMN & SOP: tercatat di tiap transisi status.
@@ -659,6 +663,22 @@ const WRITE_TABLES = { bpmn: 'bpmn_models', sop: 'sop_models', sp: 'sp_models' }
 // Kolom default RINGAN (sop_models punya kolom besar: share_pdf/pdf_cache/preview_png —
 // jangan ikut terangkut). Caller yang butuh kolom lain menyebutkannya lewat opsi `cols`.
 const ACCESS_COLS_RINGAN = 'm.id, m.status, m.created_by, m.l1_id, m.l2_id, m.deleted_at';
+// Status yang masih boleh dihapus oleh pengguna unit (role 'user'): dokumen yang
+// BELUM disetujui Ortala MR — termasuk yang masih menunggu review ('pending').
+// Dokumen approved/verifikasi/penetapan/terbit hanya boleh dihapus admin/superadmin.
+const STATUS_BOLEH_HAPUS_USER = ['draft', 'usulan', 'rejected', 'pending'];
+async function assertDeleteAccess(req, res, kind, id, cols = ACCESS_COLS_RINGAN) {
+  const row = await assertModelAccess(req, res, kind, id, { cols });
+  if (!row) return null;
+  if (req.user.role === 'admin' || req.user.role === 'superadmin') return row;
+  const st = row.status || 'draft';
+  if (!STATUS_BOLEH_HAPUS_USER.includes(st)) {
+    res.status(403).json({ error: 'Dokumen yang sudah masuk proses persetujuan hanya dapat dihapus oleh admin.' });
+    return null;
+  }
+  return row;
+}
+
 async function assertModelAccess(req, res, kind, id, { write = true, cols = ACCESS_COLS_RINGAN } = {}) {
   const table = WRITE_TABLES[kind];
   if (!table) { res.status(400).json({ error: 'Jenis dokumen tidak dikenal' }); return null; }
@@ -1432,9 +1452,13 @@ app.put('/api/bpmn/models/:id/save', authenticate, async (req, res) => {
     const versionBump = (lockChk.rows[0]?.status === 'rejected' && ['draft', 'pending'].includes(status || 'draft')) ? 1 : 0;
     const result = await pool.query(
       `UPDATE bpmn_models
-       SET bpmn_xml = $1, svg_xml = $2, status = $3, updated_at = NOW(),
+       SET bpmn_xml = $1, svg_xml = $2, status = $3::varchar, updated_at = NOW(),
            version = version + $5,
-           catatan = CASE WHEN $3 IN ('draft', 'pending') THEN NULL ELSE catatan END
+           -- $3 dipakai dua kali → WAJIB di-cast, kalau tidak PostgreSQL menolak
+           -- dengan "inconsistent types deduced for parameter $3" (error 42P08)
+           -- dan SETIAP penyimpanan BPMN yang mengubah status gagal 500.
+           catatan = CASE WHEN $3::varchar IN ('draft', 'pending') THEN NULL ELSE catatan END,
+           catatan_at = CASE WHEN $3::varchar IN ('draft', 'pending') THEN NULL ELSE catatan_at END
        WHERE id = $4 RETURNING *`,
       [bpmn_xml, svg_xml, status || 'draft', req.params.id, versionBump]
     );
@@ -1468,7 +1492,7 @@ app.put('/api/bpmn/models/:id/autosave', authenticate, async (req, res) => {
 
 app.delete('/api/bpmn/models/:id', authenticate, async (req, res) => {
   try {
-    const acc = await assertWriteAccess(req, res, 'bpmn', req.params.id, `${ACCESS_COLS_RINGAN}, m.peta_kegiatan_id, m.probis_element_id`);
+    const acc = await assertDeleteAccess(req, res, 'bpmn', req.params.id, `${ACCESS_COLS_RINGAN}, m.peta_kegiatan_id, m.probis_element_id`);
     if (!acc) return;
     // Usulan yang tertaut kegiatan probis (kotak L3 pada kanvas L2): kotaknya
     // ikut dibersihkan dari kanvas agar tidak dibuat ulang oleh sinkronisasi.
@@ -2817,6 +2841,50 @@ app.post('/api/bpmn/models/:id/batal-penetapan', authenticate, requireRole('admi
 app.post('/api/sop/models/:id/batal-penetapan', authenticate, requireRole('admin', 'superadmin'), (req, res) => batalPenetapan('sop', req, res));
 app.post('/api/sp/models/:id/batal-penetapan', authenticate, requireRole('admin', 'superadmin'), (req, res) => batalPenetapan('sp', req, res));
 
+// ============ DOKUMEN TERBIT DARI REGISTRI (Dashboard) ============
+// Dokumen yang sudah DITETAPKAN lewat Keputusan Menteri dicatat di tabel `dokumen`
+// (dipakai Dashboard) dan TIDAK punya baris di sop_models/bpmn_models — dokumennya
+// tidak disusun lewat studio. Endpoint ini menyediakannya agar ikut tampil pada
+// kartu & tab "Telah Ditetapkan (Terbit)" di menu Buat SOP / Buat Proses Bisnis.
+const JENIS_REGISTRI = { sop: 'SOP', bpmn: 'Proses Bisnis' };
+app.get('/api/:kind(sop|bpmn)/terbit-registry', authenticate, async (req, res) => {
+  try {
+    const jenis = JENIS_REGISTRI[req.params.kind];
+    if (!jenis) return res.status(400).json({ error: 'Jenis dokumen tidak dikenal' });
+    // Default: tahun berjalan (arsip tahun sebelumnya tetap dilihat lewat Dashboard).
+    const tahun = String(req.query.tahun || new Date().getFullYear());
+
+    const params = [jenis, tahun];
+    let filterUnit = '';
+    const { role, unit_l1 } = req.user;
+    if (role !== 'admin' && role !== 'superadmin' && unit_l1) {
+      params.push(unit_l1);
+      filterUnit = ` AND LOWER(TRIM(u1.nama)) = LOWER(TRIM($${params.length}))`;
+    }
+
+    const r = await pool.query(
+      `SELECT d.id, d.nama, d.jenis, d.tahun, d.link, d.sumber, d.created_at,
+              u1.nama AS unit_l1, u2.nama AS unit_l2
+       FROM dokumen d
+       LEFT JOIN unit_kerja_l1 u1 ON d.l1_id = u1.id
+       LEFT JOIN unit_kerja_l2 u2 ON d.l2_id = u2.id
+       WHERE d.jenis = $1 AND d.tahun = $2 AND d.source_id IS NULL${filterUnit}
+       ORDER BY d.nama`, params);
+    res.json({ tahun, items: r.rows });
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+// Jumlah halaman berkas cover: PDF dibaca isinya, gambar selalu 1 halaman.
+async function hitungHalamanCover(dataBase64, mime) {
+  try {
+    if (!(mime || '').includes('pdf')) return 1;
+    const m = /^data:[^;]+;base64,(.+)$/s.exec(dataBase64);
+    const buf = Buffer.from(m ? m[1] : dataBase64, 'base64');
+    const doc = await PDFDocument.load(buf);
+    return doc.getPageCount() || 1;
+  } catch { return 1; }
+}
+
 // ============ KOTAK SAMPAH (soft delete, retensi 30 hari) ============
 // Dokumen yang dihapus tidak langsung lenyap — admin/superadmin dapat memulihkannya
 // dalam 30 hari. Lewat itu, dibersihkan permanen secara otomatis.
@@ -3084,7 +3152,7 @@ app.patch('/api/sp/models/status/:id', authenticate, requireRole('admin', 'super
 
 app.delete('/api/sp/models/:id', authenticate, async (req, res) => {
   try {
-    const acc = await assertWriteAccess(req, res, 'sp', req.params.id);
+    const acc = await assertDeleteAccess(req, res, 'sp', req.params.id);
     if (!acc) return;
     await pool.query('UPDATE sp_models SET deleted_at = NOW(), deleted_by = $2 WHERE id = $1', [req.params.id, req.user.id]);
     await removeDokumenForModel('sp', req.params.id);
@@ -3110,7 +3178,8 @@ app.get('/api/sop/models', authenticate, async (req, res) => {
     
     let query = `
       SELECT ${SOP_COLS}, u1.nama as unit_l1, u2.nama as unit_l2,
-             EXISTS(SELECT 1 FROM sop_covers c WHERE c.sop_id = s.id) AS has_cover
+             EXISTS(SELECT 1 FROM sop_covers c WHERE c.sop_id = s.id) AS has_cover,
+             (SELECT COALESCE(c.pages, 1) FROM sop_covers c WHERE c.sop_id = s.id) AS cover_pages
       FROM sop_models s
       LEFT JOIN unit_kerja_l1 u1 ON s.l1_id = u1.id
       LEFT JOIN unit_kerja_l2 u2 ON s.l2_id = u2.id
@@ -3154,7 +3223,9 @@ app.get('/api/sop/models/:id', authenticate, async (req, res) => {
     if (!acc) return;
     if (acc.deleted_at) return res.status(404).json({ error: 'Model not found' });
     const result = await pool.query(`
-      SELECT ${SOP_COLS}, u1.nama as unit_l1, u2.nama as unit_l2
+      SELECT ${SOP_COLS}, u1.nama as unit_l1, u2.nama as unit_l2,
+             EXISTS(SELECT 1 FROM sop_covers c WHERE c.sop_id = s.id) AS has_cover,
+             (SELECT COALESCE(c.pages, 1) FROM sop_covers c WHERE c.sop_id = s.id) AS cover_pages
       FROM sop_models s
       LEFT JOIN unit_kerja_l1 u1 ON s.l1_id = u1.id
       LEFT JOIN unit_kerja_l2 u2 ON s.l2_id = u2.id
@@ -3431,7 +3502,12 @@ app.put('/api/sop/models/:id', authenticate, async (req, res) => {
       `UPDATE sop_models
        SET process_title = $1, process_key = $2, l1_id = $3, l2_id = $4,
            sop_data = $5, status = COALESCE($6, status), jenis_proses = $7, klasifikasi_proses = $8,
-           updated_at = NOW(), version = version + $9
+           updated_at = NOW(), version = version + $9,
+           -- Catatan review Ortala dianggap SELESAI begitu dokumen diperbaiki &
+           -- dikirim ulang, supaya revisi berikutnya dimulai dari catatan kosong.
+           -- Riwayatnya tetap tersimpan permanen di doc_history.
+           catatan = CASE WHEN COALESCE($6, status) IN ('draft', 'pending') THEN NULL ELSE catatan END,
+           catatan_at = CASE WHEN COALESCE($6, status) IN ('draft', 'pending') THEN NULL ELSE catatan_at END
        WHERE id = $10 RETURNING *`,
       [process_title, finalKey, final_l1, final_l2, sop_data || null, statusParam,
        jenis_proses || null, klasifikasi_proses || null, versionBump, req.params.id]
@@ -3452,7 +3528,7 @@ app.put('/api/sop/models/:id', authenticate, async (req, res) => {
 
 app.delete('/api/sop/models/:id', authenticate, async (req, res) => {
   try {
-    const acc = await assertWriteAccess(req, res, 'sop', req.params.id);
+    const acc = await assertDeleteAccess(req, res, 'sop', req.params.id);
     if (!acc) return;
     // SOFT DELETE — dokumen masuk Kotak Sampah (dipulihkan dalam 30 hari).
     await pool.query('UPDATE sop_models SET deleted_at = NOW(), deleted_by = $2 WHERE id = $1', [req.params.id, req.user.id]);
@@ -3533,12 +3609,13 @@ app.post('/api/sop/models/:id/cover', authenticate, async (req, res) => {
     if (bytes > 2 * 1024 * 1024) return res.status(400).json({ error: 'Ukuran file melebihi 2 MB' });
 
     await pool.query(`
-      INSERT INTO sop_covers (sop_id, data, filename, mime, uploaded_by, uploaded_at)
-      VALUES ($1, $2, $3, $4, $5, NOW())
+      INSERT INTO sop_covers (sop_id, data, filename, mime, uploaded_by, uploaded_at, pages)
+      VALUES ($1, $2, $3, $4, $5, NOW(), $6)
       ON CONFLICT (sop_id) DO UPDATE
         SET data = EXCLUDED.data, filename = EXCLUDED.filename, mime = EXCLUDED.mime,
-            uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW()
-    `, [id, cover, (filename || 'cover-sop.pdf').slice(0, 255), mime, req.user.id]);
+            uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW(), pages = EXCLUDED.pages
+    `, [id, cover, (filename || 'cover-sop.pdf').slice(0, 255), mime, req.user.id,
+        await hitungHalamanCover(cover, mime)]);
 
     // Cover masuk → status 'verifikasi' (menunggu admin memeriksa TTD & nomor SOP). Belum terbit,
     // belum masuk registry Dashboard — itu terjadi saat admin menyetujui (status → 'terbit').

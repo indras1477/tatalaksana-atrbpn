@@ -12,10 +12,14 @@ HANYA_API="${1:-}"
 if [ "$HANYA_API" != "api" ]; then
   echo "▶ Membangun aplikasi web…"
   cd "$DIR/web"
+  # PENTING: tanpa pipefail, kode keluar diambil dari `tail` sehingga build yang
+  # GAGAL tetap dianggap sukses dan layanan ikut di-reload dengan kode lama.
+  set -o pipefail
   if ! npx next build 2>&1 | tail -25; then
     echo "✗ BUILD GAGAL — perubahan TIDAK diterapkan (layanan lama tetap jalan)."
     exit 1
   fi
+  set +o pipefail
 fi
 
 echo "▶ Memeriksa sintaks API…"

@@ -10,20 +10,20 @@ export default function LoginPage() {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
   const [isAuthChecking, setIsAuthChecking] = useState(true);
-  const [sessionExpiredMsg, setSessionExpiredMsg] = useState('');
+  // Dibaca SEKALI dari query URL (?expired=1) via lazy initializer — bukan setState di
+  // dalam effect (memicu cascading render). Aman dari hydration mismatch karena render
+  // pertama (server & klien) selalu menampilkan layar isAuthChecking, bukan banner ini.
+  const [sessionExpiredMsg] = useState(() =>
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('expired') === '1'
+      ? 'Sesi Anda telah berakhir. Silakan login kembali.'
+      : ''
+  );
   const [showCallCenter, setShowCallCenter] = useState(false);
 
   const ADMINS = [
     { name: 'Bima Karismanto', phone: '6285292724654' },
     { name: 'Nanda Ferdiansyah', phone: '6285713595915' },
   ];
-
-  useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('expired') === '1') {
-      setSessionExpiredMsg('Sesi Anda telah berakhir. Silakan login kembali.');
-    }
-  }, []);
 
   useEffect(() => {
     const checkSession = async () => {

@@ -52,6 +52,13 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
   const resetIdle = useIdleTimeout(handleWarn, handleLogout);
 
+  // Skala UI adaptif: aktif di halaman biasa, dimatikan di studio agar koordinat
+  // kanvas BPMN/SOP dan hasil render PDF tidak ikut terskala.
+  useEffect(() => {
+    const diStudio = pathname.includes('/studio');
+    document.documentElement.classList.toggle('ui-skala', !diStudio);
+  }, [pathname]);
+
   // KEEPALIVE: selagi tab terbuka, segarkan last_activity sesi tiap 2 menit agar
   // sesi pengguna yang sedang bekerja TIDAK ikut tergusur sebagai "sesi hantu" saat
   // rekan seakun (shared account) login. Bila server menjawab 401 (sesi sudah mati),

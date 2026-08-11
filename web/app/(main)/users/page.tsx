@@ -193,21 +193,21 @@ export default function UsersPage() {
   return (
     <div className={`p-4 md:p-6 lg:p-8 font-sans ${isDarkMode ? 'text-slate-200' : 'text-slate-900'}`}>
       {/* Header */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+      <div className="flex flex-col 2xl:flex-row 2xl:items-center justify-between gap-3 2xl:gap-4 mb-6">
         <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Kelola akun dan hak akses pengguna sistem</p>
-        <div className="flex items-center gap-2 self-start sm:self-auto">
+        <div className="flex flex-wrap items-center gap-2 self-start 2xl:self-auto 2xl:justify-end">
           {activeTab === 'users' && (
             <>
-              <button onClick={handleDownloadExcel} className="flex items-center gap-2 px-4 py-2.5 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition shadow-sm">
+              <button onClick={handleDownloadExcel} className="flex items-center gap-2 whitespace-nowrap shrink-0 px-4 py-2.5 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition shadow-sm">
                 <Download className="w-4 h-4" /> Unduh Excel
               </button>
-              <button onClick={() => openModal()} className="flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition shadow-sm">
+              <button onClick={() => openModal()} className="whitespace-nowrap shrink-0 flex items-center gap-2 px-5 py-2.5 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition shadow-sm">
                 <Plus className="w-4 h-4" /> Tambah User
               </button>
             </>
           )}
           {activeTab === 'activity' && (
-            <button onClick={fetchActivity} disabled={actLoading} className="flex items-center gap-2 px-4 py-2.5 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition disabled:opacity-50">
+            <button onClick={fetchActivity} disabled={actLoading} className="flex items-center gap-2 whitespace-nowrap shrink-0 px-4 py-2.5 bg-blue-600 text-white font-bold rounded-xl hover:bg-blue-700 transition disabled:opacity-50">
               <Activity className="w-4 h-4" /> {actLoading ? 'Memuat...' : 'Refresh'}
             </button>
           )}

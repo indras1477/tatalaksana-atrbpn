@@ -12,6 +12,7 @@ import {
   AlertCircle, MessageSquare, Pencil, Lock, Send, FolderOpen, FileCode, Download
 } from 'lucide-react';
 import { HIERARKI_UNIT } from '@/lib/constants';
+import CatatanRevisiPanel from '@/components/CatatanRevisiPanel';
 import type { BpmnCanvasApi } from '@/components/BPMNModeler';
 import type { BpmnViewerExport } from '@/components/BPMNViewer';
 import ShareButton from '@/components/ShareButton';
@@ -551,6 +552,11 @@ function BPMNStudioContent() {
   return (
     /* h-[calc(100vh-4rem)] = viewport minus shared header (h-16 = 4rem) */
     <div className={`flex flex-col h-[calc(100vh-4rem)] font-sans overflow-hidden ${isDarkMode ? 'bg-[#0B1121] text-slate-200' : 'bg-[#f3f4f6] text-slate-800'}`}>
+
+      {/* Panel catatan revisi mengambang — admin/superadmin, mode baca maupun edit. */}
+      {currentModel?.id && token && (
+        <CatatanRevisiPanel kind="bpmn" modelId={currentModel.id} token={token} />
+      )}
 
       {/* Peringatan konflik editing */}
       {editConflict.length > 0 && (

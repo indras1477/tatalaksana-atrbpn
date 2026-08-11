@@ -43,6 +43,12 @@ function embedUrl(link: string): string | null {
 export default function SharePage() {
   const params = useParams();
   const kind = String(params.kind || '');
+  const LABEL_JENIS: Record<string, string> = {
+    bpmn: 'Proses Bisnis',
+    sop: 'Standar Operasional Prosedur',
+    sp: 'Standar Pelayanan',
+  };
+  const labelJenis = LABEL_JENIS[kind] || 'Dokumen';
   const token = String(params.token || '');
   const [doc, setDoc] = useState<ShareDoc | null>(null);
   const [error, setError] = useState('');
@@ -67,7 +73,7 @@ export default function SharePage() {
         <div className="w-9 h-9 rounded-lg bg-white/10 grid place-items-center shrink-0 text-sm font-black">SI</div>
         <div className="min-w-0 flex-1">
           <p className="text-[10px] font-bold uppercase tracking-widest text-white/50 leading-none mb-0.5">
-            {kind === 'bpmn' ? 'Proses Bisnis' : 'Standar Pelayanan'} · SIMPEL ATR/BPN
+            {labelJenis} · SIMPEL ATR/BPN
           </p>
           <h1 className="text-sm sm:text-base font-bold leading-snug wrap-break-word line-clamp-2">{doc?.process_title || 'Memuat…'}</h1>
           {doc && (doc.unit_l1 || doc.unit_l2) && (
@@ -79,7 +85,20 @@ export default function SharePage() {
       </header>
       {children}
       <footer className="shrink-0 bg-white border-t border-slate-200 px-4 py-1.5 text-center text-[10px] text-slate-400">
-        Tampilan baca-saja · Sistem Informasi Manajemen Prosedur dan Pelayanan (SIMPEL) ATR/BPN
+        <span className="block sm:inline">Tampilan baca-saja · Sistem Informasi Manajemen Prosedur dan Pelayanan (SIMPEL) ATR/BPN</span>
+        <span className="hidden sm:inline"> · </span>
+        <span className="block sm:inline">
+          Dibuat oleh{' '}
+          <a
+            href="https://nanda-portfolio-flax.vercel.app"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-blue-500 hover:underline font-medium"
+          >
+            Nanda Ferdiansyah
+          </a>{' '}
+          &copy; 2025–{new Date().getFullYear()}
+        </span>
       </footer>
     </div>
   );

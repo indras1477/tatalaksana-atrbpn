@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { HIERARKI_UNIT } from '@/lib/constants';
 import ShareButton from '@/components/ShareButton';
+import CatatanRevisiPanel from '@/components/CatatanRevisiPanel';
 
 // Sumber tunggal (Titlecase) dari master unit; konsisten dengan modal konfigurasi SOP.
 const L1_OPTIONS = Object.keys(HIERARKI_UNIT);
@@ -109,6 +110,7 @@ export interface SOPBuilderProps {
   signedCoverUrl?: string | null;
   signedCoverMime?: string;
   hasSignedCover?: boolean;
+  signedCoverPages?: number;
   // ID dokumen tersimpan — untuk tombol Bagikan (tautan view publik). Null = belum tersimpan.
   shareModelId?: number | null;
 }
@@ -673,7 +675,7 @@ const EditableCell = ({ value, onChange, className, placeholder, center = false,
 const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   initialData, initialTitle, initialKey, initialL1, initialL2, initialJenis, initialKlasifikasi,
   isViewOnly = false, allowLocalDraft = true, onSaveTrigger, onSubmitTrigger, onBackTrigger, onDownloadPdf,
-  signedCoverUrl = null, signedCoverMime = '', hasSignedCover = false, shareModelId = null
+  signedCoverUrl = null, signedCoverMime = '', hasSignedCover = false, signedCoverPages = 1, shareModelId = null
 }, ref) => {
   const searchParams = useSearchParams();
 
@@ -1817,6 +1819,12 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         </div>
       )}
 
+      {/* Panel catatan revisi mengambang — hanya tampil untuk admin/superadmin
+          (komponennya sendiri yang memutuskan), berlaku di mode baca maupun edit. */}
+      {shareModelId != null && authToken && (
+        <CatatanRevisiPanel kind="sop" modelId={shareModelId} token={authToken} />
+      )}
+
       {/* TOOLBAR ATAS */}
       <div ref={toolbarRef} className="w-full max-w-[330mm] mb-4 bg-white p-3 rounded-2xl shadow-sm border flex flex-col justify-between items-center gap-4 no-print sticky top-0 z-45 font-sans">
         <div className="flex flex-wrap items-center justify-between w-full gap-2 border-b pb-2">
@@ -1908,7 +1916,11 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
       {/* COVER UTAMA (generate). TIDAK dirender sama sekali bila SOP terbit (sudah ada cover TTD) —
           diganti scan di layar & hasil merge di PDF, supaya cover tidak dobel. Tidak cukup pakai
           class `hidden`, karena @media print `.cover-page-container{display:flex!important}` menimpanya. */}
-      {!hasSignedCover && coverChunks.map((chunk, chunkIdx) => (
+      {/* Halaman cover yang SUDAH tergantikan berkas scan dilewati; halaman cover
+          LANJUTAN (yang tidak ikut discan) tetap dirender agar tidak hilang dari
+          dokumen — unit kerja biasanya hanya memindai halaman bertanda tangan. */}
+      {coverChunks.map((chunk, chunkIdx) => (
+        hasSignedCover && chunkIdx < signedCoverPages ? null : (
         <React.Fragment key={`cover-chunk-${chunkIdx}`}>
           <div className={`print-page-target paper-f4-landscape-auto shadow-2xl p-[6mm] border border-slate-300 text-black cover-page-container flex-col ${activeTab === 'cover' || isPrinting ? 'flex mb-8 print:mb-0' : 'hidden print:flex'}`}>
             <table className="w-full border-collapse border-2 border-black table-fixed cover-table mb-auto">
@@ -2002,7 +2014,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
              </div>
           )}
         </React.Fragment>
-      ))}
+      )))}
 
       {/* HALAMAN ALUR */}
       {chunkedSteps.map((chunk, chunkIdx) => {

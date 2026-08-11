@@ -23,6 +23,9 @@ function SOPStudioContent() {
   const [initialData, setInitialData] = useState<string | null>(null);
   const [loading, setLoading] = useState(idFromUrl ? true : false);
   const [docStatus, setDocStatus] = useState<string | null>(null);
+  // Berapa halaman cover yang discan unit kerja (umumnya 1 = halaman bertanda tangan);
+  // sisanya tetap dipakai dari sistem agar halaman cover lanjutan tidak hilang.
+  const [coverPages, setCoverPages] = useState(1);
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [coverMime, setCoverMime] = useState<string>('');
   const [editConflict, setEditConflict] = useState<{username: string; nama_lengkap: string}[]>([]);
@@ -79,6 +82,7 @@ function SOPStudioContent() {
         .then((data) => {
            if (data && data.sop_data) setInitialData(data.sop_data);
            if (data && data.status) setDocStatus(data.status);
+           if (data && data.cover_pages) setCoverPages(Math.max(1, Number(data.cover_pages) || 1));
            loadedOkRef.current = true; // izinkan autosave HANYA setelah dokumen benar termuat
            // Cek apakah perangkat lain sedang mengedit dokumen ini (termasuk akun sama beda perangkat).
            // Mode lihat / dokumen terkunci tidak perlu peringatan — pembaca tidak menimbulkan konflik.
@@ -311,6 +315,7 @@ function SOPStudioContent() {
       signedCoverUrl={coverUrl}
       signedCoverMime={coverMime}
       hasSignedCover={['terbit', 'verifikasi', 'penetapan'].includes(docStatus || '')}
+      signedCoverPages={coverPages}
       onSaveTrigger={handleSave}
       onSubmitTrigger={handleSubmit}
       onBackTrigger={handleBack}

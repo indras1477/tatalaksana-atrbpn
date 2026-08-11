@@ -29,6 +29,15 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="id" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
+      <head>
+        {/* Pasang skala UI sebelum halaman digambar agar tidak berkedip saat dimuat.
+            Studio dikecualikan supaya kanvas & hasil cetak PDF tetap presisi. */}
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){try{var p=location.pathname;if(p.indexOf('/studio')===-1){document.documentElement.classList.add('ui-skala');}}catch(e){}})();`,
+          }}
+        />
+      </head>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
