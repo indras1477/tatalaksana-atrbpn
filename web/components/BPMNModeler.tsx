@@ -15,7 +15,9 @@ import 'bpmn-js/dist/assets/bpmn-font/css/bpmn-embedded.css';
 import 'bpmn-js/dist/assets/bpmn-js.css';
 
 // Font seluruh dokumen BPMN (kanvas + ekspor SVG/PDF).
-const BPMN_FONT = "'Bookman Old Style', 'URW Bookman', Bookman, Georgia, serif";
+// 'URW Bookman' PERTAMA — tersedia sebagai webfont (globals.css) dgn file yang sama
+// persis dengan font server PDF → metrik pemenggalan baris identik kanvas vs PDF.
+const BPMN_FONT = "'URW Bookman', 'Bookman Old Style', Bookman, Georgia, serif";
 
 // === XML REPAIR ===
 // Fixes BPMN XML corrupted by placing a Pool (bpmn:Participant) inside a SubProcess.
@@ -1020,6 +1022,11 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
         // remove Pool shapes with no position, strip sopext comment.
         xmlToLoad = repairBpmnXml(xmlToLoad);
 
+        // Pastikan webfont URW Bookman termuat SEBELUM import — bpmn-js mengukur &
+        // memenggal baris label saat import; tanpa ini metrik memakai font fallback
+        // (beda dgn server PDF → teks meluber di hasil PDF).
+        try { await document.fonts.load('12px "URW Bookman"'); } catch { /* lanjut */ }
+
         await modeler.importXML(xmlToLoad);
         if (!isMounted) return;
 
@@ -1721,7 +1728,7 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
            agar tarik/geser elemen berfungsi. */
         .djs-container, .djs-container svg { touch-action: none; }
         /* Pastikan teks di kotak edit selalu terlihat (tidak terpengaruh dark mode OS) */
-        .djs-direct-editing-parent { color: #1f2937 !important; background-color: #ffffff !important; z-index: 100 !important; font-family: 'Bookman Old Style', 'URW Bookman', Bookman, Georgia, serif !important; }
+        .djs-direct-editing-parent { color: #1f2937 !important; background-color: #ffffff !important; z-index: 100 !important; font-family: 'URW Bookman', 'Bookman Old Style', Bookman, Georgia, serif !important; }
         .djs-direct-editing-content { color: #1f2937 !important; font-family: inherit !important; }
         /* Popup pilihan warna elemen */
         .djs-popup[data-popup="element-colors"] .djs-popup-body .entry { display: flex; align-items: center; gap: 8px; }

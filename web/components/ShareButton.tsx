@@ -1,14 +1,14 @@
 'use client';
 
 // Tombol "Bagikan" — buat tautan view-only publik (tanpa login) untuk sebuah
-// dokumen BPMN/SOP, lalu tampilkan modal berisi tautan + salin/WhatsApp/buka.
+// dokumen BPMN/SOP/SP, lalu tampilkan modal berisi tautan + salin/WhatsApp/buka.
 import { useState } from 'react';
 import { Share2, Copy, Check, ExternalLink, X, Loader2 } from 'lucide-react';
 
 const API_BASE = '/e-sop-atrbpn/api';
 
 export default function ShareButton({ kind, modelId, token, isDarkMode, variant = 'icon' }: {
-  kind: 'bpmn' | 'sop';
+  kind: 'bpmn' | 'sop' | 'sp';
   modelId: number;
   token: string;
   isDarkMode?: boolean;

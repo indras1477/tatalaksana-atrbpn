@@ -10,6 +10,7 @@ const jwt = require('jsonwebtoken');
 const crypto = require('crypto');
 const puppeteer = require('puppeteer');
 const { PDFDocument } = require('pdf-lib');
+const spDocument = require('./spDocument'); // naskah Standar Pelayanan: HTML/PDF, DOCX, impor Word
 const rateLimit = require('express-rate-limit');
 require('dotenv').config({ path: __dirname + '/.env' });
 
@@ -311,6 +312,13 @@ const initDatabase = async () => {
       ALTER TABLE sop_models ADD COLUMN IF NOT EXISTS tanggapan TEXT;
       ALTER TABLE sp_models ADD COLUMN IF NOT EXISTS catatan_at TIMESTAMP;
       ALTER TABLE sp_models ADD COLUMN IF NOT EXISTS tanggapan TEXT;
+      /* Studio Standar Pelayanan: naskah SP (komponen Service Delivery &
+         Manufacturing) disimpan sebagai JSON — setara sop_data pada SOP. */
+      ALTER TABLE sp_models ADD COLUMN IF NOT EXISTS sp_data TEXT;
+      /* Bagikan tautan publik SP: token + PDF hasil render (base64) agar
+         pembaca tanpa login tidak perlu memicu render ulang. */
+      ALTER TABLE sp_models ADD COLUMN IF NOT EXISTS share_token VARCHAR(48);
+      ALTER TABLE sp_models ADD COLUMN IF NOT EXISTS share_pdf TEXT;
 
       /* Notifikasi header: for_role 'admin' (admin+superadmin) atau 'user'
          (dibatasi unit_l1 bila terisi). Terbaca dilacak via users.notif_seen_at. */
@@ -2289,7 +2297,7 @@ app.get('/api/process-map/models/:id/pdf', authenticate, requireSuperadmin, pdfL
     const html = `<!doctype html><html><head><meta charset="utf-8"><style>
       @page { size: 330mm 215mm; margin: 0; }
       * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { font-family: Georgia, 'Times New Roman', serif; color: #000; }
+      body { font-family: 'URW Bookman', 'Bookman Old Style', Bookman, Georgia, serif; color: #000; }
       .page { width: 330mm; height: 215mm; padding: 9mm; page-break-after: always; display: flex; flex-direction: column; }
       .page:last-child { page-break-after: auto; }
       .frame { border: 2px solid #000; flex: 1; display: flex; flex-direction: column; min-height: 0; }
@@ -2388,7 +2396,7 @@ app.post('/api/bpmn/pdf', authenticate, pdfLimiter, async (req, res) => {
     const html = `<!doctype html><html><head><meta charset="utf-8"><style>
       @page { size: ${PW}mm ${PH}mm; margin: 0; }
       * { box-sizing: border-box; margin: 0; padding: 0; }
-      body { font-family: 'Times New Roman', Times, Georgia, serif; color: #000; }
+      body { font-family: 'URW Bookman', 'Bookman Old Style', Bookman, Georgia, serif; color: #000; }
       .page { width: ${PW}mm; height: ${PH}mm; padding: 12mm 14mm 8mm; display: flex; flex-direction: column; page-break-after: always; }
       .page:last-child { page-break-after: auto; }
       .head { text-align: center; }
@@ -2770,7 +2778,10 @@ async function logDocHistory(kind, modelId, req, action, detail) {
 async function getDocHistory(kind, req, res) {
   try {
     const { id } = req.params;
-    const table = kind === 'bpmn' ? 'bpmn_models' : 'sop_models';
+    // Dulu ternary bpmn/sop — dokumen SP ikut dibaca dari sop_models sehingga
+    // entri "dibuat" hasil sintesis menunjuk dokumen yang salah.
+    const table = WRITE_TABLES[kind];
+    if (!table) return res.status(400).json({ error: 'Jenis dokumen tidak dikenal' });
     const r = await pool.query(
       `SELECT h.id, h.action, h.detail, h.created_at, h.user_role, h.unit, u.nama_lengkap, u.username
        FROM doc_history h LEFT JOIN users u ON h.user_id = u.id
@@ -2942,7 +2953,7 @@ app.post('/api/trash/:kind/:id/restore', authenticate, requireRole('admin', 'sup
       `UPDATE ${tabel} SET deleted_at = NULL, deleted_by = NULL WHERE id = $1 AND deleted_at IS NOT NULL RETURNING id, process_title, status`,
       [req.params.id]);
     if (r.rowCount === 0) return res.status(404).json({ error: 'Dokumen tidak ada di kotak sampah' });
-    if (req.params.kind !== 'sp') logDocHistory(req.params.kind, req.params.id, req, 'dipulihkan', 'Dipulihkan dari Kotak Sampah');
+    logDocHistory(req.params.kind, req.params.id, req, 'dipulihkan', 'Dipulihkan dari Kotak Sampah');
     res.json({ success: true, ...r.rows[0] });
   } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
 });
@@ -2963,6 +2974,7 @@ app.delete('/api/trash/:kind/:id', authenticate, requireRole('superadmin'), asyn
 
 app.get('/api/bpmn/models/:id/history', authenticate, (req, res) => getDocHistory('bpmn', req, res));
 app.get('/api/sop/models/:id/history', authenticate, (req, res) => getDocHistory('sop', req, res));
+app.get('/api/sp/models/:id/history', authenticate, (req, res) => getDocHistory('sp', req, res));
 
 async function pushNotif({ kind, row, event, req, pesan }) {
   try {
@@ -3076,11 +3088,20 @@ app.patch('/api/sp/models/:id/tanggapan', authenticate, requireRole('admin', 'su
 // ========= STANDAR PELAYANAN (SP) — daftar & usulan ========
 // Belum ada studio penyusun: baris lahir dari usulan atau dokumen manual.
 // ==========================================================
+// Kolom daftar SP — SENGAJA tanpa `sp_data` (naskah studio bisa puluhan KB per
+// dokumen). Lihat SOP_COLS/BPMN_LIST_COLS: daftar hanya butuh metadata.
+const SP_LIST_COLS = [
+  'id', 'process_title', 'l1_id', 'l2_id', 'description', 'status', 'catatan', 'version',
+  'jenis_proses', 'klasifikasi_proses', 'is_manual', 'manual_nomor', 'manual_link',
+  'manual_file_name', 'manual_tanggal', 'manual_link_visio', 'penetapan_dasar', 'penetapan_tanggal',
+  'catatan_at', 'tanggapan', 'created_by', 'created_at', 'updated_at',
+].map(c => `m.${c}`).join(', ') + ', (m.sp_data IS NOT NULL) AS has_studio';
+
 app.get('/api/sp/models', authenticate, async (req, res) => {
   try {
     const { id, role, unit_l1, unit_l2 } = req.user;
     let query = `
-      SELECT m.*, u1.nama as unit_l1, u2.nama as unit_l2
+      SELECT ${SP_LIST_COLS}, u1.nama as unit_l1, u2.nama as unit_l2
       FROM sp_models m
       LEFT JOIN unit_kerja_l1 u1 ON m.l1_id = u1.id
       LEFT JOIN unit_kerja_l2 u2 ON m.l2_id = u2.id
@@ -3110,13 +3131,13 @@ app.get('/api/sp/models', authenticate, async (req, res) => {
 
 app.post('/api/sp/models', authenticate, async (req, res) => {
   try {
-    const { process_title, unit_l1, unit_l2, jenis_proses, klasifikasi_proses, status } = req.body;
+    const { process_title, unit_l1, unit_l2, jenis_proses, klasifikasi_proses, status, sp_data } = req.body;
     if (!process_title || !process_title.trim()) return res.status(400).json({ error: 'Judul wajib diisi' });
     const { l1Id, l2Id } = await resolveUnitIds(unit_l1, unit_l2, true);
     const ins = await pool.query(
-      `INSERT INTO sp_models (process_title, l1_id, l2_id, jenis_proses, klasifikasi_proses, status, created_by)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [process_title.trim(), l1Id, l2Id, jenis_proses || null, klasifikasi_proses || null, status || 'usulan', req.user.id]
+      `INSERT INTO sp_models (process_title, l1_id, l2_id, jenis_proses, klasifikasi_proses, status, created_by, sp_data)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [process_title.trim(), l1Id, l2Id, jenis_proses || null, klasifikasi_proses || null, status || 'usulan', req.user.id, sp_data || null]
     );
     const full = await pool.query(
       `SELECT m.*, u1.nama as unit_l1, u2.nama as unit_l2
@@ -3135,6 +3156,9 @@ app.patch('/api/sp/models/status/:id', authenticate, requireRole('admin', 'super
   try {
     const result = await pool.query(
       `UPDATE sp_models SET status = $1::varchar, catatan = $2, updated_at = NOW(),
+         -- Tanggal catatan revisi dipakai daftar & panel catatan untuk menampilkan
+         -- "direvisi sejak kapan"; tanpa ini kolomnya selalu kosong.
+         catatan_at = CASE WHEN $1::varchar = 'rejected' THEN NOW() ELSE catatan_at END,
          penetapan_dasar = COALESCE($4, penetapan_dasar),
          penetapan_tanggal = COALESCE($5, penetapan_tanggal)
        WHERE id = $3 RETURNING *`,
@@ -3146,6 +3170,9 @@ app.patch('/api/sp/models/status/:id', authenticate, requireRole('admin', 'super
       else await removeDokumenForModel('sp', req.params.id);
     } catch (e) { console.error('Sync dokumen SP gagal:', e.message); }
     pushNotif({ kind: 'sp', row: result.rows[0], event: status, req });
+    // Catatan revisi HARUS masuk Riwayat: kolom `catatan` dikosongkan lagi begitu
+    // unit mengirim ulang perbaikan, jadi doc_history-lah arsip permanennya.
+    logDocHistory('sp', req.params.id, req, status, catatan || null);
     res.json(result.rows[0]);
   } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
 });
@@ -3156,8 +3183,226 @@ app.delete('/api/sp/models/:id', authenticate, async (req, res) => {
     if (!acc) return;
     await pool.query('UPDATE sp_models SET deleted_at = NOW(), deleted_by = $2 WHERE id = $1', [req.params.id, req.user.id]);
     await removeDokumenForModel('sp', req.params.id);
+    logDocHistory('sp', req.params.id, req, 'dihapus', 'Dipindahkan ke Kotak Sampah');
     res.json({ success: true });
   } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
+});
+
+// ==========================================================
+// ====== STUDIO STANDAR PELAYANAN (naskah komponen SP) =====
+// ==========================================================
+// Naskah SP mengikuti Permenpan RB 15/2014: komponen Service Delivery (wajib
+// dipublikasikan) lalu Manufacturing, ditambah komponen lain bila diperlukan
+// (mis. "Peringatan"). Kertas F4 potret 210×330 mm, Bookman Old Style 12 pt.
+
+// Status yang mengunci naskah dari perubahan (sejajar aturan SOP).
+const SP_STATUS_TERKUNCI = ['verifikasi', 'penetapan', 'terbit'];
+
+// TAHAP PELUNCURAN: studio SP dibuka untuk SUPERADMIN lebih dulu. Admin, user
+// terbatas, dan viewer menyusul setelah alurnya mantap — cukup longgarkan
+// `requireSuperadmin` di bawah ini (mis. jadi requireRole('admin','superadmin',
+// 'user')); aturan unit kerja & status tetap dijaga assertModelAccess.
+app.get('/api/sp/models/:id', authenticate, requireSuperadmin, async (req, res) => {
+  try {
+    const acc = await assertModelAccess(req, res, 'sp', req.params.id, { write: false });
+    if (!acc) return;
+    if (acc.deleted_at) return res.status(404).json({ error: 'Dokumen tidak ditemukan' });
+    const r = await pool.query(`
+      SELECT ${SP_LIST_COLS}, m.sp_data, u1.nama as unit_l1, u2.nama as unit_l2
+      FROM sp_models m
+      LEFT JOIN unit_kerja_l1 u1 ON m.l1_id = u1.id
+      LEFT JOIN unit_kerja_l2 u2 ON m.l2_id = u2.id
+      WHERE m.id = $1`, [req.params.id]);
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Dokumen tidak ditemukan' });
+    res.json(r.rows[0]);
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+app.put('/api/sp/models/:id', authenticate, requireSuperadmin, async (req, res) => {
+  try {
+    const { process_title, unit_l1, unit_l2, jenis_proses, klasifikasi_proses, sp_data, status } = req.body;
+    const cur = await assertWriteAccess(req, res, 'sp', req.params.id);
+    if (!cur) return;
+    if (SP_STATUS_TERKUNCI.includes(cur.status)) {
+      return res.status(403).json({ error: 'Dokumen SP terkunci (menunggu verifikasi/penetapan atau sudah terbit). Buat salinan untuk merevisi.' });
+    }
+    const { l1Id, l2Id } = await resolveUnitIds(unit_l1, unit_l2, true);
+    // Status tak dikirim (mis. simpan otomatis / simpan sebelum ekspor) → pertahankan yang lama.
+    const statusParam = (typeof status === 'string' && status) ? status : null;
+    // Versi naik hanya saat dokumen hasil catatan revisi dikirim/disimpan ulang.
+    const versionBump = (cur.status === 'rejected' && ['draft', 'pending'].includes(statusParam || '')) ? 1 : 0;
+
+    const r = await pool.query(
+      `UPDATE sp_models
+       SET process_title = $1, l1_id = $2, l2_id = $3, jenis_proses = $4, klasifikasi_proses = $5,
+           sp_data = $6, status = COALESCE($7, status), updated_at = NOW(), version = version + $8,
+           catatan = CASE WHEN COALESCE($7, status) IN ('draft','pending') THEN NULL ELSE catatan END,
+           catatan_at = CASE WHEN COALESCE($7, status) IN ('draft','pending') THEN NULL ELSE catatan_at END
+       WHERE id = $9 RETURNING *`,
+      [process_title || cur.process_title || 'Standar Pelayanan', l1Id, l2Id,
+       jenis_proses || null, klasifikasi_proses || null, sp_data || null, statusParam, versionBump, req.params.id]
+    );
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Dokumen tidak ditemukan' });
+    if (statusParam === 'pending' && cur.status !== 'pending') pushNotif({ kind: 'sp', row: r.rows[0], event: 'pending', req });
+    if (statusParam && statusParam !== cur.status) {
+      logDocHistory('sp', req.params.id, req, statusParam,
+        cur.status === 'rejected' && statusParam === 'pending' ? 'Mengirim ulang hasil perbaikan setelah catatan review' : null);
+    }
+    const { sp_data: _buang, ...ringkas } = r.rows[0];
+    res.json(ringkas);
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+// Salin dokumen SP menjadi draft baru — dipakai untuk merevisi naskah yang
+// sudah terkunci (verifikasi/penetapan/terbit), sama seperti Salin di SOP.
+app.post('/api/sp/models/:id/copy', authenticate, async (req, res) => {
+  try {
+    const sumber = await assertWriteAccess(req, res, 'sp', req.params.id,
+      `${ACCESS_COLS_RINGAN}, m.process_title, m.sp_data, m.jenis_proses, m.klasifikasi_proses, m.is_manual`);
+    if (!sumber) return;
+    if (sumber.is_manual) return res.status(400).json({ error: 'Dokumen manual tidak dapat disalin — unggah ulang berkasnya sebagai dokumen baru.' });
+    const judulBaru = (req.body?.process_title || '').trim() || `Salinan - ${sumber.process_title}`;
+    const ins = await pool.query(
+      `INSERT INTO sp_models (process_title, l1_id, l2_id, sp_data, status, jenis_proses, klasifikasi_proses, created_by)
+       VALUES ($1,$2,$3,$4,'draft',$5,$6,$7) RETURNING id`,
+      [judulBaru, sumber.l1_id, sumber.l2_id, sumber.sp_data,
+       sumber.jenis_proses || null, sumber.klasifikasi_proses || null, req.user.id]);
+    const full = await pool.query(
+      `SELECT ${SP_LIST_COLS}, u1.nama as unit_l1, u2.nama as unit_l2
+       FROM sp_models m
+       LEFT JOIN unit_kerja_l1 u1 ON m.l1_id = u1.id
+       LEFT JOIN unit_kerja_l2 u2 ON m.l2_id = u2.id
+       WHERE m.id = $1`, [ins.rows[0].id]);
+    logDocHistory('sp', ins.rows[0].id, req, 'draft', `Disalin dari dokumen #${req.params.id}`);
+    res.json(full.rows[0]);
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+// Ubah informasi ringkas dari modal "Detail Dokumen SP" — dipakai admin/unit
+// pemilik, jadi TIDAK ikut dibatasi superadmin seperti rute naskah studio.
+app.patch('/api/sp/models/:id/meta', authenticate, async (req, res) => {
+  const { process_title, klasifikasi_proses, jenis_proses } = req.body;
+  if (!process_title || !process_title.trim()) return res.status(400).json({ error: 'Nama Pelayanan tidak boleh kosong' });
+  try {
+    const cur = await assertWriteAccess(req, res, 'sp', req.params.id);
+    if (!cur) return;
+    if (SP_STATUS_TERKUNCI.includes(cur.status)) {
+      return res.status(403).json({ error: 'Dokumen SP terkunci (menunggu verifikasi/penetapan atau sudah terbit).' });
+    }
+    const r = await pool.query(
+      `UPDATE sp_models SET process_title = $1, klasifikasi_proses = $2, jenis_proses = $3, updated_at = NOW()
+       WHERE id = $4 RETURNING id, process_title, klasifikasi_proses, jenis_proses, updated_at`,
+      [process_title.trim(), klasifikasi_proses || null, jenis_proses || null, req.params.id]
+    );
+    if (r.rowCount === 0) return res.status(404).json({ error: 'Dokumen tidak ditemukan' });
+    res.json(r.rows[0]);
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+// Nama berkas unduhan: "SP - {judul}" tanpa karakter yang ilegal di Windows.
+const namaBerkasSp = (judul) => `SP - ${String(judul || 'Standar Pelayanan')
+  .replace(/[\\/]+/g, '_').replace(/[:*?"<>|]+/g, '').replace(/\s+/g, ' ').trim() || 'Standar Pelayanan'}`;
+const kirimLampiran = (res, nama, ext, mime, buf) => {
+  const penuh = `${nama}.${ext}`;
+  res.setHeader('Content-Type', mime);
+  res.setHeader('Content-Disposition',
+    `attachment; filename="${penuh.replace(/[^\x20-\x7E]/g, '_')}"; filename*=UTF-8''${encodeURIComponent(penuh)}`);
+  res.end(buf);
+};
+
+// ── Unduh PDF vektor F4 potret (210×330 mm) ────────────────────────────────
+// Naskah dirender langsung dari sp_data menjadi HTML lalu dicetak headless
+// Chrome. Berbeda dgn SOP (yang harus membuka halaman studio karena panah alur
+// dihitung di klien), SP murni teks/tabel sehingga tak perlu memuat aplikasi —
+// jauh lebih cepat dan tidak bergantung sesi login perender.
+// Render naskah SP menjadi PDF. Fungsi mandiri (bukan hanya di dalam rute) agar
+// fitur "Bagikan" bisa memakainya langsung — tanpa memanggil HTTP ke diri
+// sendiri yang akan ikut terkena pembatasan peran rute unduh.
+async function renderSpPdf(spData) {
+  let browser, semaphoreAcquired = false;
+  try {
+    const html = spDocument.buildDocumentHtml(spData);
+    await _pdfSemaphore.acquire();
+    semaphoreAcquired = true;
+    browser = await puppeteer.launch({ headless: 'new', args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: 'networkidle0', timeout: 60000 });
+    await page.emulateMediaType('print');
+    // Tunggu skrip pemenggal halaman (cermin algoritma kanvas) selesai menyusun
+    // lembar-lembar; bila skrip gagal, tata alir asli tetap tercetak (cadangan).
+    await page.waitForFunction('window.__siapCetak === true', { timeout: 30000 }).catch(() => {});
+    const P = spDocument.PAGE;
+    const pdf = await page.pdf({
+      width: `${P.w}mm`, height: `${P.h}mm`, printBackground: true,
+      margin: { top: `${P.mTop}mm`, right: `${P.mRight}mm`, bottom: `${P.mBottom}mm`, left: `${P.mLeft}mm` },
+    });
+    return Buffer.from(pdf);
+  } finally {
+    if (browser) { try { await browser.close(); } catch (e) {} }
+    if (semaphoreAcquired) _pdfSemaphore.release();
+  }
+}
+
+app.get('/api/sp/models/:id/pdf', authenticate, requireSuperadmin, pdfLimiter, async (req, res) => {
+  try {
+    const acc = await assertModelAccess(req, res, 'sp', req.params.id, { write: false });
+    if (!acc) return;
+    const r = await pool.query('SELECT process_title, sp_data FROM sp_models WHERE id = $1', [req.params.id]);
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Dokumen tidak ditemukan' });
+    if (!r.rows[0].sp_data) return res.status(400).json({ error: 'Dokumen ini belum memiliki naskah studio SP.' });
+    const buf = await renderSpPdf(r.rows[0].sp_data);
+    // `inline` dipakai pratinjau di modal detail; unduhan memakai ?unduh=1.
+    if (req.query.unduh) return kirimLampiran(res, namaBerkasSp(r.rows[0].process_title), 'pdf', 'application/pdf', buf);
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="standar-pelayanan.pdf"');
+    res.end(buf);
+  } catch (err) {
+    console.error('[ROUTE ERROR]', req.method, req.path, err.message);
+    if (!res.headersSent) res.status(500).json({ error: 'Gagal membuat PDF. Coba lagi beberapa saat.' });
+  }
+});
+
+// ── Unduh DOCX (Word asli, F4 potret + Bookman Old Style 12) ───────────────
+app.get('/api/sp/models/:id/docx', authenticate, requireSuperadmin, async (req, res) => {
+  try {
+    const acc = await assertModelAccess(req, res, 'sp', req.params.id, { write: false });
+    if (!acc) return;
+    const r = await pool.query('SELECT process_title, sp_data FROM sp_models WHERE id = $1', [req.params.id]);
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Dokumen tidak ditemukan' });
+    if (!r.rows[0].sp_data) return res.status(400).json({ error: 'Dokumen ini belum memiliki naskah studio SP.' });
+    const buf = await spDocument.buildDocx(r.rows[0].sp_data);
+    kirimLampiran(res, namaBerkasSp(r.rows[0].process_title), 'docx',
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document', buf);
+  } catch (err) {
+    console.error('[ROUTE ERROR]', req.method, req.path, err.message);
+    if (!res.headersSent) res.status(500).json({ error: 'Gagal membuat berkas Word.' });
+  }
+});
+
+// ── Impor naskah dari berkas Word ──────────────────────────────────────────
+// Menerima .docx (base64) dan MENGEMBALIKAN struktur naskah saja — tidak
+// menyentuh basis data. Penyusun memeriksa hasilnya di studio lalu menyimpan
+// sendiri, jadi impor yang meleset tak pernah menimpa dokumen tersimpan.
+app.post('/api/sp/import-docx', authenticate, requireSuperadmin, async (req, res) => {
+  try {
+    const { file_data } = req.body;
+    if (!file_data || typeof file_data !== 'string') return res.status(400).json({ error: 'Berkas Word wajib diunggah.' });
+    const base64 = file_data.includes(',') ? file_data.split(',').pop() : file_data;
+    const buf = Buffer.from(base64, 'base64');
+    if (!buf.length) return res.status(400).json({ error: 'Berkas Word kosong atau rusak.' });
+    if (buf.length > 8 * 1024 * 1024) return res.status(413).json({ error: 'Berkas Word terlalu besar (maksimal 8MB).' });
+    // .docx = arsip ZIP; .doc lama (biner) tidak didukung mammoth.
+    if (buf[0] !== 0x50 || buf[1] !== 0x4B) {
+      return res.status(400).json({ error: 'Format tidak didukung. Simpan dokumen sebagai .docx (Word 2007+) lalu unggah ulang.' });
+    }
+    const doc = await spDocument.parseDocxToDoc(buf);
+    const jumlah = doc.sections.reduce((n, s) => n + s.items.length, 0);
+    if (!jumlah) return res.status(422).json({ error: 'Tidak menemukan tabel komponen di berkas Word. Pastikan naskah memakai tabel NO | KOMPONEN | URAIAN.' });
+    res.json({ doc, jumlahKomponen: jumlah });
+  } catch (err) {
+    console.error('[ROUTE ERROR]', req.method, req.path, err.message);
+    res.status(500).json({ error: 'Gagal membaca berkas Word.' });
+  }
 });
 
 
@@ -3932,7 +4177,8 @@ app.delete('/api/juknis/:id', authenticate, async (req, res) => {
 // pakai kredensial pembagi lalu simpan (share_pdf) supaya publik tak perlu auth.
 async function createShare(kind, req, res) {
   try {
-    const table = kind === 'bpmn' ? 'bpmn_models' : 'sop_models';
+    const table = WRITE_TABLES[kind];
+    if (!table) return res.status(400).json({ error: 'Jenis dokumen tidak dikenal' });
     const { id } = req.params;
     // Hanya dokumen yang boleh DIA ubah yang boleh dia bagikan (role user = unit sendiri;
     // viewer ditolak) — mencegah mempublikasikan draft unit lain lewat tautan publik.
@@ -3944,6 +4190,17 @@ async function createShare(kind, req, res) {
     if (!token) {
       token = crypto.randomBytes(18).toString('base64url');
       await pool.query(`UPDATE ${table} SET share_token = $1 WHERE id = $2`, [token, id]);
+    }
+    // SP studio → render & simpan PDF-nya agar pembaca publik langsung dilayani
+    // dari cache (render dipanggil langsung, tanpa lewat rute ber-otorisasi).
+    if (kind === 'sp' && !cur.rows[0].is_manual) {
+      try {
+        const d = await pool.query('SELECT sp_data FROM sp_models WHERE id = $1', [id]);
+        if (d.rows[0]?.sp_data) {
+          const buf = await renderSpPdf(d.rows[0].sp_data);
+          await pool.query('UPDATE sp_models SET share_pdf = $1 WHERE id = $2', [buf.toString('base64'), id]);
+        }
+      } catch (e) { console.error('Share SP PDF gagal:', e.message); }
     }
     // SOP studio → render & cache PDF (pakai token pembagi ke endpoint PDF yang sudah ada).
     if (kind === 'sop' && !cur.rows[0].is_manual) {
@@ -3963,6 +4220,7 @@ async function createShare(kind, req, res) {
 }
 app.post('/api/bpmn/models/:id/share', authenticate, requireRole('admin', 'superadmin', 'user'), (req, res) => createShare('bpmn', req, res));
 app.post('/api/sop/models/:id/share', authenticate, requireRole('admin', 'superadmin', 'user'), (req, res) => createShare('sop', req, res));
+app.post('/api/sp/models/:id/share', authenticate, requireRole('admin', 'superadmin', 'user'), (req, res) => createShare('sp', req, res));
 
 // PUBLIK (tanpa auth) — hanya baca, hanya dokumen yang punya share_token.
 app.get('/api/public/bpmn/:token', async (req, res) => {
@@ -4009,6 +4267,32 @@ async function servePublicManualFile(kind, req, res) {
 }
 app.get('/api/public/bpmn/:token/file', (req, res) => servePublicManualFile('bpmn', req, res));
 app.get('/api/public/sop/:token/file', (req, res) => servePublicManualFile('sop', req, res));
+app.get('/api/public/sp/:token/file', (req, res) => servePublicManualFile('sp', req, res));
+
+// Data dokumen SP yang dibagikan (tanpa login).
+app.get('/api/public/sp/:token', async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT s.id, s.process_title, s.status, s.is_manual, s.manual_link, s.manual_file_name,
+              s.jenis_proses, s.klasifikasi_proses, (s.share_pdf IS NOT NULL) AS has_pdf,
+              u1.nama AS unit_l1, u2.nama AS unit_l2
+       FROM sp_models s LEFT JOIN unit_kerja_l1 u1 ON s.l1_id=u1.id LEFT JOIN unit_kerja_l2 u2 ON s.l2_id=u2.id
+       WHERE s.share_token = $1 AND s.deleted_at IS NULL`, [req.params.token]);
+    if (r.rows.length === 0) return res.status(404).json({ error: 'Tautan tidak ditemukan atau sudah dicabut' });
+    const row = r.rows[0];
+    res.json({ ...row, has_file: !!row.manual_file_name });
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+app.get('/api/public/sp/:token/pdf', async (req, res) => {
+  try {
+    const r = await pool.query('SELECT share_pdf FROM sp_models WHERE share_token = $1 AND deleted_at IS NULL', [req.params.token]);
+    if (r.rows.length === 0 || !r.rows[0].share_pdf) return res.status(404).json({ error: 'PDF tidak tersedia' });
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Disposition', 'inline; filename="standar-pelayanan.pdf"');
+    res.send(Buffer.from(r.rows[0].share_pdf, 'base64'));
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
 // PDF SOP studio yang sudah di-cache saat dibagikan.
 app.get('/api/public/sop/:token/pdf', async (req, res) => {
   try {

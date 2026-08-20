@@ -113,6 +113,8 @@ export interface SOPBuilderProps {
   signedCoverPages?: number;
   // ID dokumen tersimpan — untuk tombol Bagikan (tautan view publik). Null = belum tersimpan.
   shareModelId?: number | null;
+  // Tombol tambahan di kanan toolbar (mis. "Setujui" utk admin di mode lihat).
+  toolbarExtra?: React.ReactNode;
 }
 
 // --- KOMPONEN LABEL TEKS BISA DIGESER & DIEDIT ---
@@ -675,7 +677,7 @@ const EditableCell = ({ value, onChange, className, placeholder, center = false,
 const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   initialData, initialTitle, initialKey, initialL1, initialL2, initialJenis, initialKlasifikasi,
   isViewOnly = false, allowLocalDraft = true, onSaveTrigger, onSubmitTrigger, onBackTrigger, onDownloadPdf,
-  signedCoverUrl = null, signedCoverMime = '', hasSignedCover = false, signedCoverPages = 1, shareModelId = null
+  signedCoverUrl = null, signedCoverMime = '', hasSignedCover = false, signedCoverPages = 1, shareModelId = null, toolbarExtra = null
 }, ref) => {
   const searchParams = useSearchParams();
 
@@ -1850,6 +1852,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
             )}
           </div>
           <div className="flex gap-2">
+            {toolbarExtra}
             {shareModelId != null && authToken && (
               <ShareButton kind="sop" modelId={shareModelId} token={authToken} variant="solid" />
             )}

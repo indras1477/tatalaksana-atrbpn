@@ -5,6 +5,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import SOPBuilder, { type SOPBuilderRef } from '@/components/SOPBuilder';
 import { useEditingPresence } from '@/lib/useEditingPresence';
 import { getClientId } from '@/lib/clientId';
+import { useConfirm } from '@/components/ConfirmDialog';
 
 function SOPStudioContent() {
   const searchParams = useSearchParams();
@@ -43,6 +44,26 @@ function SOPStudioContent() {
 
   const [presenceToken, setPresenceToken] = useState('');
   useEffect(() => { setPresenceToken(localStorage.getItem('token') || ''); }, []);
+  // Role utk tombol Setujui di mode lihat (superadmin diperlakukan sbg admin).
+  const [isAdminUser, setIsAdminUser] = useState(false);
+  useEffect(() => {
+    try { const me = JSON.parse(localStorage.getItem('user') || '{}'); setIsAdminUser(['admin', 'superadmin'].includes(me.role)); } catch { /* abaikan */ }
+  }, []);
+  const { confirm, confirmNode } = useConfirm();
+  const [approving, setApproving] = useState(false);
+  // Setujui langsung dari mode lihat (status pending) — tanpa kembali ke daftar.
+  // Alur sama dgn handleApprove halaman daftar: pending → approved (pengesahan pimpinan).
+  const approveFromView = async () => {
+    if (!currentId) return;
+    if (!(await confirm({ title: 'Setujui Dokumen SOP', message: `Setujui dokumen SOP \"${title || 'ini'}\"? Selanjutnya menunggu pengesahan pimpinan (unggah cover TTD).`, tone: 'success', confirmText: 'Ya, Setujui' }))) return;
+    setApproving(true);
+    try {
+      const res = await apiFetch(`/sop/models/status/${currentId}`, { method: 'PATCH', body: JSON.stringify({ status: 'approved', catatan: '' }) });
+      if (res.ok) { setDocStatus('approved'); alert('✅ Disetujui. Menunggu pengesahan pimpinan — unit kerja mengunggah cover ber-TTD.'); }
+      else { const e = await res.json().catch(() => ({} as { error?: string })); alert(e.error || 'Gagal menyetujui.'); }
+    } catch (e) { console.error(e); alert('Gagal menyetujui.'); }
+    finally { setApproving(false); }
+  };
   const isViewOnlySop = mode === 'view' || ['terbit', 'verifikasi', 'penetapan'].includes(docStatus || '');
   useEditingPresence('sop', (isViewOnlySop || !currentId) ? null : Number(currentId), presenceToken);
 
@@ -302,6 +323,7 @@ function SOPStudioContent() {
         Tersimpan otomatis {autoSavedAt}
       </div>
     )}
+    {confirmNode}
     <SOPBuilder
       ref={builderRef}
       initialData={initialData}
@@ -321,6 +343,12 @@ function SOPStudioContent() {
       onBackTrigger={handleBack}
       onDownloadPdf={handleDownloadPdf}
       shareModelId={currentId ? Number(currentId) : null}
+      toolbarExtra={isViewOnlySop && isAdminUser && docStatus === 'pending' && currentId ? (
+        <button onClick={approveFromView} disabled={approving} title="Setujui dokumen ini (Review Ortala MR)"
+          className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-extrabold uppercase shadow-sm flex items-center gap-1.5 transition-all active:scale-95 disabled:opacity-60">
+          {approving ? 'Memproses…' : 'Setujui'}
+        </button>
+      ) : null}
     />
     </>
   );

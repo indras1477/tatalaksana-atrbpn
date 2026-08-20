@@ -16,6 +16,7 @@ import CatatanRevisiPanel from '@/components/CatatanRevisiPanel';
 import type { BpmnCanvasApi } from '@/components/BPMNModeler';
 import type { BpmnViewerExport } from '@/components/BPMNViewer';
 import ShareButton from '@/components/ShareButton';
+import { useConfirm } from '@/components/ConfirmDialog';
 
 const Modeler = dynamic(() => import('@/components/BPMNModeler'), {
   ssr: false,
@@ -75,6 +76,23 @@ function BPMNStudioContent() {
 
   const [token, setToken] = useState<string>('');
   const [currentUser, setCurrentUser] = useState<{id: number, username: string, role: string, unit_l1?: string, unit_l2?: string} | null>(null);
+  const { confirm, confirmNode } = useConfirm();
+  const [approving, setApproving] = useState(false);
+  // Setujui langsung dari mode lihat (admin/superadmin, status pending) —
+  // tanpa harus kembali ke daftar. Alur sama dgn handleApprove di halaman daftar.
+  const approveFromView = async () => {
+    if (!currentModel?.id) return;
+    if (!(await confirm({ title: 'Setujui Proses Bisnis', message: `Setujui dokumen \"${currentModel.process_title || config.processTitle}\"? Selanjutnya menunggu proses penetapan menteri.`, tone: 'success', confirmText: 'Ya, Setujui' }))) return;
+    setApproving(true);
+    try {
+      const res = await apiFetch(`/bpmn/models/status/${currentModel.id}`, token, { method: 'PATCH', body: JSON.stringify({ status: 'penetapan', catatan: '' }) });
+      if (res.ok) {
+        setCurrentModel(prev => prev ? { ...prev, status: 'penetapan', catatan: null } : prev);
+        alert('✅ Disetujui! Menunggu proses penetapan menteri.');
+      } else { const e = await res.json().catch(() => ({} as { error?: string })); alert(e.error || 'Gagal menyetujui.'); }
+    } catch (e) { console.error(e); alert('Gagal menyetujui.'); }
+    finally { setApproving(false); }
+  };
 
   const [unitL1List, setUnitL1List] = useState<{id: number, nama: string}[]>([]);
   const [unitL2List, setUnitL2List] = useState<{id: number, nama: string}[]>([]);
@@ -552,6 +570,7 @@ function BPMNStudioContent() {
   return (
     /* h-[calc(100vh-4rem)] = viewport minus shared header (h-16 = 4rem) */
     <div className={`flex flex-col h-[calc(100vh-4rem)] font-sans overflow-hidden ${isDarkMode ? 'bg-[#0B1121] text-slate-200' : 'bg-[#f3f4f6] text-slate-800'}`}>
+      {confirmNode}
 
       {/* Panel catatan revisi mengambang — admin/superadmin, mode baca maupun edit. */}
       {currentModel?.id && token && (
@@ -658,6 +677,16 @@ function BPMNStudioContent() {
         {/* Mode baca: unduh PDF/SVG + Bagikan (view-only, tanpa perlu login) */}
         {isViewOnly && currentModel?.id && (
           <div className="flex items-center gap-2 shrink-0">
+            {currentUser?.role === 'admin' && currentModel.status === 'pending' && (
+              <button
+                onClick={approveFromView}
+                disabled={approving}
+                title="Setujui dokumen ini (Review Ortala MR)"
+                className="py-2.5 px-4 rounded-lg text-sm font-extrabold uppercase bg-emerald-600 hover:bg-emerald-700 text-white shadow-md flex items-center gap-2 transition-all disabled:opacity-60"
+              >
+                {approving ? 'Memproses…' : 'Setujui'}
+              </button>
+            )}
             <button
               onClick={() => handleViewDownload('pdf')}
               disabled={preparingExport}

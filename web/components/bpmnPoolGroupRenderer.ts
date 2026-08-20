@@ -35,7 +35,7 @@ type El = any;
 const BPMN_BLACK = 'hsl(225, 10%, 15%)';
 const POOL_STROKE = BPMN_BLACK;
 const LANE_STROKE = BPMN_BLACK;
-const FONT_FAMILY = "'Bookman Old Style', 'URW Bookman', Bookman, Georgia, serif";
+const FONT_FAMILY = "'URW Bookman', 'Bookman Old Style', Bookman, Georgia, serif";
 
 // Apakah orientasi elemen vertikal (dibaca dari DI, fallback rasio dimensi).
 function isVertical(el: El): boolean {

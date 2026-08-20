@@ -1,6 +1,6 @@
 'use client';
 
-// Riwayat / log aktivitas dokumen BPMN & SOP — linimasa transisi status lengkap
+// Riwayat / log aktivitas dokumen BPMN, SOP & SP — linimasa transisi status lengkap
 // dengan pelakunya dan CATATAN REVIEW Ortala MR terdahulu (tersimpan permanen,
 // walau kolom catatan di dokumen dibersihkan saat dikirim ulang).
 import { useEffect, useState } from 'react';
@@ -17,15 +17,15 @@ interface HistRow {
 const roleLabel = (r?: string | null) =>
   r === 'admin' ? 'Admin' : r === 'superadmin' ? 'Superadmin' : r === 'user' ? 'User (Terbatas)' : r === 'viewer' ? 'Viewer' : (r || '');
 
-function narasi(kind: 'bpmn' | 'sop', action: string): string {
-  const doc = kind === 'bpmn' ? 'Proses Bisnis' : 'SOP';
+function narasi(kind: 'bpmn' | 'sop' | 'sp', action: string): string {
+  const doc = kind === 'bpmn' ? 'Proses Bisnis' : kind === 'sp' ? 'Standar Pelayanan' : 'SOP';
   switch (action) {
     case 'create':
     case 'draft': return `menyusun draft dokumen ${doc}`;
     case 'usulan': return `menambahkan usulan dokumen ${doc}`;
     case 'pending': return `mengirim dokumen ${doc} ke Biro Ortala MR untuk direview`;
     case 'rejected': return `mengembalikan dokumen ${doc} untuk diperbaiki (dengan catatan review)`;
-    case 'approved': return kind === 'sop'
+    case 'approved': return kind !== 'bpmn'
       ? `menyetujui dokumen ${doc} — lanjut pengesahan pimpinan`
       : `menetapkan dokumen ${doc} (ditetapkan)`;
     case 'verifikasi': return 'menyerahkan berkas bertanda tangan — menunggu verifikasi admin';
@@ -43,7 +43,7 @@ const dotCls: Record<string, string> = {
 };
 
 export default function DocHistoryModal({ kind, modelId, title, token, isDarkMode, onClose }: {
-  kind: 'bpmn' | 'sop';
+  kind: 'bpmn' | 'sop' | 'sp';
   modelId: number;
   title?: string;
   token: string;

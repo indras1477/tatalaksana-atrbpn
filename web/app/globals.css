@@ -1,5 +1,25 @@
 @import "tailwindcss";
 
+/* Font diagram BPMN: URW Bookman disajikan sebagai WEBFONT (file yang sama persis
+   dengan font di server PDF/puppeteer). Dengan begitu pemenggalan baris label yang
+   dihitung di kanvas klien memakai metrik yang identik dengan render server —
+   teks di PDF tidak lagi meluber keluar kotak (dulu: klien Windows memakai
+   Bookman Old Style, server memakai URW Bookman → metrik beda → teks menabrak). */
+@font-face {
+  font-family: 'URW Bookman';
+  src: url('/e-sop-atrbpn/fonts/URWBookman-Light.otf') format('opentype');
+  font-weight: 400;
+  font-style: normal;
+  font-display: block;
+}
+@font-face {
+  font-family: 'URW Bookman';
+  src: url('/e-sop-atrbpn/fonts/URWBookman-Demi.otf') format('opentype');
+  font-weight: 700;
+  font-style: normal;
+  font-display: block;
+}
+
 :root {
   --background: #ffffff;
   --foreground: #171717;

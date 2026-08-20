@@ -179,8 +179,16 @@ export default function BPMNViewer({ xml, registerExportApi }: BPMNViewerProps) 
     const viewer = new NavigatedViewer({
       container: containerRef.current,
       additionalModules: [poolGroupRendererModule],
+      // Samakan font & metrik pemenggalan label dgn editor + server PDF (webfont
+      // URW Bookman) — tanpa ini viewer memakai Arial → SVG ekspor mode baca beda.
+      textRenderer: {
+        defaultStyle: { fontFamily: "'URW Bookman', 'Bookman Old Style', Bookman, Georgia, serif" },
+        externalStyle: { fontFamily: "'URW Bookman', 'Bookman Old Style', Bookman, Georgia, serif" },
+      },
     });
     viewerRef.current = viewer;
+    // Hook debug/E2E (searah dgn __bpmnModeler di editor).
+    if (typeof window !== 'undefined') (window as unknown as { __bpmnViewer?: unknown }).__bpmnViewer = viewer;
 
     (async () => {
       // Single batched state reset (inside async context, not synchronous effect body)
@@ -188,6 +196,9 @@ export default function BPMNViewer({ xml, registerExportApi }: BPMNViewerProps) 
       try {
         // Repair XML before import: move orphaned process elements into their
         // SubProcess flowElements, strip empty-bounds Pool shapes, strip sopext comment.
+        // Pastikan webfont termuat SEBELUM import — bpmn-js mengukur & memenggal
+        // teks label saat import; tanpa ini metrik memakai font fallback.
+        try { await document.fonts.load('12px "URW Bookman"'); } catch { /* lanjut */ }
         await viewer.importXML(repairBpmnXml(xml));
         if (destroyedRef.current) return;
 
@@ -203,12 +214,21 @@ export default function BPMNViewer({ xml, registerExportApi }: BPMNViewerProps) 
           forEach: (fn: (el: { type?: string; parent?: { type?: string } }) => void) => void;
           getGraphics: (el: unknown) => SVGElement | undefined;
         };
+        const gfxFactory = viewer.get('graphicsFactory') as unknown as {
+          update: (type: string, el: unknown, gfx: SVGElement) => void;
+        };
         const restackGroups = () => {
           try {
             reg.forEach((el) => {
               if (el.type !== 'bpmn:Group') return;
-              if (!el.parent || el.parent.type === 'bpmn:Group') return;
+              // GAMBAR ULANG dulu semua Group (pool & lane): saat paint awal import,
+              // lane yang dirender duluan belum "melihat" lane saudaranya di registry
+              // sehingga tinggi pita header (_maxLaneLines) dihitung terlalu pendek —
+              // di mode edit tak terlihat karena banyak re-render susulan, di mode
+              // view inilah penyebab pita lane tidak sejajar.
               const gfx = reg.getGraphics(el);
+              if (gfx) { try { gfxFactory.update('shape', el, gfx); } catch { /* abaikan */ } }
+              if (!el.parent || el.parent.type === 'bpmn:Group') return;
               const wrapper = gfx?.parentNode as SVGElement | null;
               const container = wrapper?.parentNode as SVGElement | null;
               if (wrapper && container && container.firstChild !== wrapper) {

@@ -2,7 +2,7 @@
 
 // Halaman PUBLIK view-only (tanpa login) — dibuka dari tautan "Bagikan".
 // BPMN studio → viewer interaktif (pan/zoom, ramah HP). Dokumen manual → PDF/tautan.
-// SOP studio → PDF vektor yang sudah dirender saat dibagikan.
+// SOP & SP studio → PDF vektor yang sudah dirender saat dibagikan.
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
@@ -55,7 +55,7 @@ export default function SharePage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (kind !== 'bpmn' && kind !== 'sop') { setError('Jenis dokumen tidak dikenali.'); setLoading(false); return; }
+    if (!['bpmn', 'sop', 'sp'].includes(kind)) { setError('Jenis dokumen tidak dikenali.'); setLoading(false); return; }
     fetch(`${API}/public/${kind}/${token}`)
       .then(async r => { if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Tautan tidak ditemukan'); return r.json(); })
       .then(setDoc)
@@ -64,7 +64,7 @@ export default function SharePage() {
   }, [kind, token]);
 
   const fileUrl = `${API}/public/${kind}/${token}/file`;
-  const pdfUrl = `${API}/public/sop/${token}/pdf`;
+  const pdfUrl = `${API}/public/${kind}/${token}/pdf`;  // SOP & SP sama-sama menyajikan PDF hasil render
 
   const Shell = ({ children }: { children: React.ReactNode }) => (
     <div className="fixed inset-0 flex flex-col bg-slate-100">
