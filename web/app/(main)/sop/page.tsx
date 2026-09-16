@@ -409,13 +409,15 @@ export default function SOPDashboardPage() {
 
   // FASE 2 — tampilan admin: rekap per unit (drill-down L1 → L2 → dokumen)
   // untuk tab Penyusunan DAN tab Usulan (dikelompokkan per unit kerja).
-  const isAdminRekap = currentUser?.role === 'admin' && (listTab === 'penyusunan' || listTab === 'usulan');
-  // Rekap penyusunan kini IKUT menyertakan dokumen yang sudah terbit — dulu difilter
-  // keluar, sehingga unit kerja yang SELURUH SOP-nya sudah terbit hilang dari rekap.
+  // Rekap per unit berlaku di SEMUA tab admin — termasuk SOP Terbit, supaya SOP
+  // yang sudah terbit pun bisa ditelusuri per Unit Kerja Level 1 → Level 2.
+  const isAdminRekap = currentUser?.role === 'admin' && ['penyusunan', 'usulan', 'terbit'].includes(listTab);
+  // Tab usulan & terbit cukup SATU kolom jumlah (semua dokumen berstatus sama).
+  const rekapRingkas = listTab === 'usulan' || listTab === 'terbit';
   const rekapDataset = useMemo(() => (
-    listTab === 'usulan'
-      ? currentFilteredModels.filter(m => m.status === 'usulan')
-      : currentFilteredModels
+    listTab === 'usulan' ? currentFilteredModels.filter(m => m.status === 'usulan')
+      : listTab === 'terbit' ? currentFilteredModels.filter(m => m.status === 'terbit')
+      : currentFilteredModels.filter(m => m.status !== 'terbit')
   ), [currentFilteredModels, listTab]);
   const progressCounts = (docs: SOPModel[]) => ({
     usulan: docs.filter(m => m.status === 'usulan').length,
@@ -423,7 +425,6 @@ export default function SOPDashboardPage() {
     pending: docs.filter(m => m.status === 'pending').length,
     pengesahan: docs.filter(m => ['approved', 'verifikasi', 'penetapan'].includes(m.status)).length,
     revisi: docs.filter(m => m.status === 'rejected').length,
-    terbit: docs.filter(m => m.status === 'terbit').length,
     total: docs.length,
   });
   const rekapBadge = (n: number, tone: 'slate' | 'indigo' | 'blue' | 'emerald' | 'red' | 'teal') => {
@@ -1825,21 +1826,20 @@ export default function SOPDashboardPage() {
                 <button onClick={() => setRekapDrill({ l1: null, l2: null })} className={rekapDrill.l1 !== null ? 'text-emerald-600 hover:underline' : (isDarkMode ? 'text-slate-200' : 'text-[#002855]')}>Semua Unit Kerja</button>
                 {rekapDrill.l1 !== null && (<><ChevronRight className="w-4 h-4 text-slate-400" /><span className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{rekapDrill.l1}</span></>)}
               </div>
-              <p className={`text-xs mb-3 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{rekapDrill.l1 === null ? `Rekap ${listTab === 'usulan' ? 'usulan' : 'dokumen'} per Unit Kerja Level 1. Klik baris untuk melihat sub-unit (Level 2).` : 'Klik sub-unit untuk melihat daftar dokumennya.'}</p>
+              <p className={`text-xs mb-3 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{rekapDrill.l1 === null ? `Rekap ${listTab === 'usulan' ? 'usulan' : listTab === 'terbit' ? 'SOP terbit' : 'dokumen'} per Unit Kerja Level 1. Klik baris untuk melihat sub-unit (Level 2).` : 'Klik sub-unit untuk melihat daftar dokumennya.'}</p>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm text-left">
                   <thead className={`text-[10px] font-bold uppercase tracking-wide border-b ${isDarkMode ? 'text-slate-400 bg-slate-800/50 border-slate-700' : 'text-slate-500 bg-slate-50/80 border-slate-200'}`}>
                     <tr>
                       <th className="px-4 py-3 text-left">{rekapDrill.l1 === null ? 'Unit Kerja (Level 1)' : 'Sub-Unit (Level 2)'}</th>
-                      {listTab === 'usulan' ? (
-                        <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-slate-300' : 'text-slate-500'}`}>Jumlah Usulan</th>
+                      {rekapRingkas ? (
+                        <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-slate-300' : 'text-slate-500'}`}>{listTab === 'usulan' ? 'Jumlah Usulan' : 'Jumlah SOP Terbit'}</th>
                       ) : (<>
                         <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-slate-300' : 'text-slate-500'}`}>Draft Usulan</th>
                         <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-indigo-300' : 'text-indigo-500'}`}>Draft Proses</th>
                         <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-blue-300' : 'text-blue-500'}`}>Review Ortala MR</th>
                         <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-emerald-300' : 'text-emerald-500'}`}>Pengesahan Pimpinan</th>
                         <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-red-300' : 'text-red-500'}`}>Perlu Revisi</th>
-                        <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-teal-300' : 'text-teal-600'}`}>Terbit</th>
                         <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>Total</th>
                       </>)}
                       <th className="px-2 py-3"></th>
@@ -1847,19 +1847,18 @@ export default function SOPDashboardPage() {
                   </thead>
                   <tbody className={`divide-y ${isDarkMode ? 'divide-slate-800' : 'divide-slate-100'}`}>
                     {rekapRows.length === 0 ? (
-                      <tr><td colSpan={listTab === 'usulan' ? 3 : 9} className={`px-4 py-12 text-center ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{listTab === 'usulan' ? 'Belum ada usulan.' : 'Tidak ada dokumen dalam proses penyusunan.'}</td></tr>
+                      <tr><td colSpan={rekapRingkas ? 3 : 8} className={`px-4 py-12 text-center ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{listTab === 'usulan' ? 'Belum ada usulan.' : 'Tidak ada dokumen dalam proses penyusunan.'}</td></tr>
                     ) : rekapRows.map(row => (
                       <tr key={row.nama} onClick={() => setRekapDrill(rekapDrill.l1 === null ? { l1: row.nama, l2: null } : { l1: rekapDrill.l1, l2: row.nama })} className={`cursor-pointer transition-colors ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-emerald-50/50'}`}>
                         <td className={`px-4 py-3 font-bold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{row.nama}</td>
-                        {listTab === 'usulan' ? (
-                          <td className="px-2 py-3 text-center"><span className={`inline-flex min-w-8 justify-center px-2.5 py-1 rounded-lg text-xs font-black text-white ${isDarkMode ? 'bg-emerald-600' : 'bg-[#002855]'}`}>{row.usulan}</span></td>
+                        {rekapRingkas ? (
+                          <td className="px-2 py-3 text-center"><span className={`inline-flex min-w-8 justify-center px-2.5 py-1 rounded-lg text-xs font-black text-white ${listTab === 'terbit' ? 'bg-teal-600' : (isDarkMode ? 'bg-emerald-600' : 'bg-[#002855]')}`}>{listTab === 'usulan' ? row.usulan : row.total}</span></td>
                         ) : (<>
                           <td className="px-2 py-3 text-center">{rekapBadge(row.usulan, 'slate')}</td>
                           <td className="px-2 py-3 text-center">{rekapBadge(row.draft, 'indigo')}</td>
                           <td className="px-2 py-3 text-center">{rekapBadge(row.pending, 'blue')}</td>
                           <td className="px-2 py-3 text-center">{rekapBadge(row.pengesahan, 'emerald')}</td>
                           <td className="px-2 py-3 text-center">{rekapBadge(row.revisi, 'red')}</td>
-                          <td className="px-2 py-3 text-center">{rekapBadge(row.terbit, 'teal')}</td>
                           <td className="px-2 py-3 text-center"><span className={`inline-flex min-w-8 justify-center px-2.5 py-1 rounded-lg text-xs font-black text-white ${isDarkMode ? 'bg-emerald-600' : 'bg-[#002855]'}`}>{row.total}</span></td>
                         </>)}
                         <td className="px-2 py-3 text-slate-400"><ChevronRight className="w-4 h-4" /></td>

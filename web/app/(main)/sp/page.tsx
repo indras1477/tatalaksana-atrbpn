@@ -8,20 +8,20 @@ import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   Plus, CheckCircle, Search, FileEdit, FileSignature, Stamp, Trash2,
-  Calendar, ChevronRight, Building2, FileUp, ExternalLink, FileSpreadsheet,
+  Calendar, ChevronRight, Building2, FileUp, ExternalLink,
   FileStack, Clock, AlertCircle, Landmark, X, Edit, MessageSquare, RotateCcw,
-  History as HistoryIcon, GitCommit, Lock, Save, FileDown, Copy, Eye, Maximize2, Loader2, XCircle,
+  History as HistoryIcon, GitCommit, Lock, Save, FileDown, Copy, Eye, Maximize2, Loader2, XCircle, Link2,
 } from 'lucide-react';
 import DocHistoryModal from '@/components/DocHistoryModal';
 import ShareButton from '@/components/ShareButton';
+import PratinjauPdf from '@/components/PratinjauPdf';
 import TrashModal from '@/components/TrashModal';
 import { useAppContext } from '@/lib/app-context';
 import { useConfirm } from '@/components/ConfirmDialog';
 import { HIERARKI_UNIT } from '@/lib/constants';
-import { KLASIFIKASI_SP } from '@/lib/spTemplate';
+import { KLASIFIKASI_SP, parseSPDoc, type TautanDok } from '@/lib/spTemplate';
 import ManualDocModal from '@/components/ManualDocModal';
 import ManualDocDetailModal from '@/components/ManualDocDetailModal';
-import ManualDocImportModal from '@/components/ManualDocImportModal';
 
 const API_BASE = '/e-sop-atrbpn/api';
 function apiFetch(path: string, token: string, options?: RequestInit) {
@@ -64,7 +64,12 @@ export default function SPPage() {
     if (q) setSearchQuery(q);
   }, []);
   const [showManualDoc, setShowManualDoc] = useState(false);
-  const [showImport, setShowImport] = useState(false);
+  // Impor Word dari halaman daftar: berkas dibaca server lebih dulu, lalu
+  // formulir identitas SP dibuka dengan hasil bacaan terlampir.
+  const [sumberWord, setSumberWord] = useState<{ nama: string; doc: Record<string, unknown>; jumlah: number } | null>(null);
+  const [membacaWord, setMembacaWord] = useState(false);
+  const [membuatDariWord, setMembuatDariWord] = useState(false);
+  const inputWordRef = useRef<HTMLInputElement>(null);
   const [showTrash, setShowTrash] = useState(false);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
   const [detailModel, setDetailModel] = useState<SPModel | null>(null);
@@ -85,21 +90,10 @@ export default function SPPage() {
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string | null>(null);
   const [loadingPreview, setLoadingPreview] = useState(false);
   const [pdfFull, setPdfFull] = useState(false);
-  // Skala bingkai pratinjau di modal: penampil PDF tersemat tidak konsisten
-  // menghormati #view=FitH pada URL blob — bingkai dibuat 900px (muat lembar F4
-  // di zoom 100%) lalu diskalakan mengikuti lebar modal.
-  const wadahPrvRef = useRef<HTMLDivElement | null>(null);
-  const [skalaPrv, setSkalaPrv] = useState(1);
-  useEffect(() => {
-    if (!previewPdfUrl) return;
-    const hitung = () => {
-      const w = wadahPrvRef.current?.clientWidth || 0;
-      setSkalaPrv(w && w < 900 ? w / 900 : 1);
-    };
-    hitung();
-    window.addEventListener('resize', hitung);
-    return () => window.removeEventListener('resize', hitung);
-  }, [previewPdfUrl]);
+  // Keterkaitan dokumen naskah studio (SOP/Proses Bisnis), ditampilkan
+  // hanya-baca di modal detail. Disimpan di dalam sp_data — yang sengaja TIDAK
+  // ikut di daftar (payload), jadi diambil per dokumen saat modal dibuka.
+  const [tautanDok, setTautanDok] = useState<TautanDok[] | null>(null);
   const [salinBusy, setSalinBusy] = useState(false);
   const [savingUsulan, setSavingUsulan] = useState(false);
 
@@ -134,11 +128,14 @@ export default function SPPage() {
 
   const tabOf = (s?: string) => s === 'usulan' ? 'usulan' : s === 'terbit' ? 'terbit' : 'penyusunan';
 
-  // Rekap per unit (admin): tab Usulan & Penyusunan — sama seperti BPMN/SOP.
-  const isAdminRekap = isAdmin && (listTab === 'penyusunan' || listTab === 'usulan');
+  // Rekap per unit (admin) berlaku di SEMUA tab — termasuk Daftar SP Terbit, agar SP
+  // yang sudah terbit pun ditelusuri per Unit Kerja Level 1 → Level 2.
+  const isAdminRekap = isAdmin && ['penyusunan', 'usulan', 'terbit'].includes(listTab);
+  // Tab usulan & terbit cukup SATU kolom jumlah (semua dokumen berstatus sama).
+  const rekapRingkas = listTab === 'usulan' || listTab === 'terbit';
   const rekapDataset = useMemo(() => (
-    listTab === 'usulan'
-      ? filtered.filter(m => m.status === 'usulan')
+    listTab === 'usulan' ? filtered.filter(m => m.status === 'usulan')
+      : listTab === 'terbit' ? filtered.filter(m => m.status === 'terbit')
       : filtered.filter(m => m.status !== 'terbit')
   ), [filtered, listTab]);
   const progressCounts = (docs: SPModel[]) => ({
@@ -225,7 +222,15 @@ export default function SPPage() {
   // modal "Detail Dokumen SP" (dari sana baru masuk studio). Sama seperti alur
   // Proses Bisnis & SOP: klik baris memperlihatkan informasi dokumen dulu.
   const TERKUNCI = ['verifikasi', 'penetapan', 'terbit'];
-  const bisaStudio = (m: SPModel) => isSuperadmin && !m.is_manual;
+  // Studio terbuka untuk superadmin, admin, dan user terbatas. User hanya untuk
+  // dokumen unit kerjanya sendiri (batas kerasnya tetap dijaga server lewat
+  // assertModelAccess); viewer tidak punya akses naskah.
+  const bisaStudio = (m: SPModel) => {
+    if (!currentUser || currentUser.role === 'viewer' || m.is_manual) return false;
+    if (isAdmin) return true; // admin & superadmin
+    return m.created_by === currentUser.id ||
+      (!!currentUser.unit_l1 && (m.unit_l1 || '').trim().toLowerCase() === currentUser.unit_l1.trim().toLowerCase());
+  };
   const bukaStudio = (m: SPModel) =>
     router.push(`/sp/studio?id=${m.id}${TERKUNCI.includes(m.status) ? '&mode=view' : ''}`);
   const bukaDetail = (m: SPModel) => {
@@ -279,6 +284,16 @@ export default function SPPage() {
   };
 
   // Penyusun/unit boleh menanggapi catatan revisi admin saat status 'rejected'.
+  // Siapa yang boleh menghapus — SAMA dengan Buat SOP: user terbatas boleh
+  // menghapus dokumen unitnya selama belum disetujui Ortala MR. Sengaja bukan
+  // "pembuat = saya": dokumen impor dibuat superadmin & satu akun unit dipakai
+  // bersama. Batas antar-unit dijaga server (assertDeleteAccess).
+  const bolehHapus = (m: SPModel) => {
+    if (!currentUser || currentUser.role === 'viewer') return false;
+    if (isAdmin) return true; // admin & superadmin
+    return ['draft', 'usulan', 'rejected', 'pending', ''].includes(m.status || '');
+  };
+
   const bisaTanggapi = (m: SPModel) => currentUser?.role === 'user' && m.status === 'rejected';
   const submitTanggapan = async () => {
     const m = tanggapanModal.model;
@@ -326,6 +341,64 @@ export default function SPPage() {
       document.body.appendChild(a); a.click(); a.remove();
       URL.revokeObjectURL(url);
     } catch { alert('❌ Gagal mengunduh — periksa koneksi.'); }
+  };
+
+  // ── Impor Word ───────────────────────────────────────────────────────────
+  // 1) Berkas .docx dibaca server (/sp/import-docx — tidak menyimpan apa pun).
+  // 2) Formulir "Informasi SP" terbuka dengan Nama Pelayanan dari naskah Word.
+  // 3) "Buka di Studio" menyimpan draft berisi naskah hasil impor lalu membuka
+  //    studionya — naskah tidak dikirim lewat URL karena bisa sangat panjang.
+  const pilihBerkasWord = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const f = e.target.files?.[0];
+    e.target.value = '';
+    if (!f) return;
+    if (!/\.docx$/i.test(f.name)) { alert('Hanya berkas .docx (Word 2007 ke atas) yang didukung. Simpan ulang dokumen sebagai .docx.'); return; }
+    if (f.size > 8 * 1024 * 1024) { alert('Berkas Word terlalu besar (maksimal 8 MB).'); return; }
+    const pembaca = new FileReader();
+    pembaca.onload = async () => {
+      setMembacaWord(true);
+      try {
+        const res = await apiFetch('/sp/import-docx', token, {
+          method: 'POST', body: JSON.stringify({ file_data: String(pembaca.result || '').split(',').pop() || '' }),
+        });
+        const d = await res.json().catch(() => ({} as { error?: string }));
+        if (!res.ok) { alert(`❌ ${(d as { error?: string }).error || 'Gagal membaca berkas Word.'}`); return; }
+        const hasil = d as { doc: Record<string, unknown>; jumlahKomponen: number };
+        setSumberWord({ nama: f.name, doc: hasil.doc, jumlah: hasil.jumlahKomponen });
+        setKonfigSP({
+          isOpen: true, judul: String(hasil.doc.judul || '').trim(), klasifikasi: '',
+          l1: currentUser?.role === 'user' ? (currentUser.unit_l1 || '') : '', l2: '',
+        });
+      } catch { alert('❌ Gagal membaca berkas Word — periksa koneksi.'); }
+      finally { setMembacaWord(false); }
+    };
+    pembaca.onerror = () => alert('Berkas tidak dapat dibaca.');
+    pembaca.readAsDataURL(f);
+  };
+
+  const buatDariWord = async () => {
+    if (!sumberWord || !konfigSP.judul.trim() || !konfigSP.klasifikasi || !konfigSP.l1) return;
+    setMembuatDariWord(true);
+    try {
+      const naskah = {
+        ...sumberWord.doc,
+        judul: konfigSP.judul.trim(), klasifikasi: konfigSP.klasifikasi,
+        unitKerja: konfigSP.l1, subUnitKerja: konfigSP.l2 || '',
+      };
+      const res = await apiFetch('/sp/models', token, {
+        method: 'POST',
+        body: JSON.stringify({
+          process_title: konfigSP.judul.trim(), klasifikasi_proses: konfigSP.klasifikasi,
+          unit_l1: konfigSP.l1, unit_l2: konfigSP.l2 || null, status: 'draft', sp_data: JSON.stringify(naskah),
+        }),
+      });
+      const d = await res.json().catch(() => ({} as { error?: string; id?: number }));
+      if (!res.ok || !(d as { id?: number }).id) { alert(`❌ ${(d as { error?: string }).error || 'Gagal membuat dokumen dari Word.'}`); return; }
+      setKonfigSP(k => ({ ...k, isOpen: false }));
+      setSumberWord(null);
+      router.push(`/sp/studio?id=${(d as { id: number }).id}`);
+    } catch { alert('❌ Gagal membuat dokumen — periksa koneksi.'); }
+    finally { setMembuatDariWord(false); }
   };
 
   // Identitas dari modal dibawa ke studio lewat query — naskah baru langsung
@@ -423,7 +496,7 @@ export default function SPPage() {
           <ShareButton kind="sp" modelId={m.id} token={token} isDarkMode={isDarkMode} />
         </span>
       )}
-      {(isAdmin || m.created_by === currentUser?.id) && (
+      {bolehHapus(m) && (
         <button onClick={e => { e.stopPropagation(); handleDelete(m); }} title="Hapus" className={aksiIkon('red')}>
           <Trash2 className="w-3.5 h-3.5" />
         </button>
@@ -436,7 +509,7 @@ export default function SPPage() {
   useEffect(() => {
     setPreviewPdfUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null; });
     setPdfFull(false);
-    if (!previewModel?.has_studio || !token || !isSuperadmin) return;
+    if (!previewModel?.has_studio || !token || !bisaStudio(previewModel)) return;
     let aktif = true;
     setLoadingPreview(true);
     apiFetch(`/sp/models/${previewModel.id}/pdf`, token)
@@ -447,7 +520,25 @@ export default function SPPage() {
       aktif = false;
       setPreviewPdfUrl(prev => { if (prev) URL.revokeObjectURL(prev); return null; });
     };
-  }, [previewModel?.id, previewModel?.has_studio, token, isSuperadmin]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewModel?.id, previewModel?.has_studio, token, currentUser]);
+
+  // Ambil keterkaitan dokumen dari naskah (sp_data) saat modal detail dibuka.
+  useEffect(() => {
+    setTautanDok(null);
+    if (!previewModel?.has_studio || !token || !bisaStudio(previewModel)) return;
+    let aktif = true;
+    apiFetch(`/sp/models/${previewModel.id}`, token)
+      .then(async r => {
+        if (!aktif || !r.ok) return;
+        const d = await r.json();
+        const doc = parseSPDoc(d?.sp_data ?? null);
+        if (aktif) setTautanDok(doc.tautan || []);
+      })
+      .catch(() => {});
+    return () => { aktif = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [previewModel?.id, previewModel?.has_studio, token, currentUser]);
 
   // Salin dokumen → draft baru (untuk merevisi naskah yang sudah terkunci).
   const salinDokumen = async (m: SPModel) => {
@@ -467,7 +558,7 @@ export default function SPPage() {
   const handleDelete = async (m: SPModel) => {
     if (!(await confirm({
       title: 'Hapus Dokumen SP',
-      message: `Hapus "${m.process_title}"?\n\nDokumen dipindahkan ke Kotak Sampah dan masih dapat dipulihkan admin dalam 30 hari.${m.is_manual ? ' Berkas/tautan dokumen manual ikut terbawa.' : ''}`,
+      message: `Hapus "${m.process_title}"?\n\nDokumen dipindahkan ke Kotak Sampah dan masih dapat dipulihkan dari Kotak Sampah dalam 30 hari.${m.is_manual ? ' Berkas/tautan dokumen manual ikut terbawa.' : ''}`,
       tone: 'danger', confirmText: 'Ya, Hapus',
     }))) return;
     try {
@@ -507,12 +598,15 @@ export default function SPPage() {
           {isAdmin ? 'Manajemen Standar Pelayanan (Pusat)' : `${currentUser.unit_l1}${currentUser.unit_l2 ? ' › ' + currentUser.unit_l2 : ''}`}
         </p>
         <div className="flex flex-wrap items-center gap-2 self-start 2xl:self-auto 2xl:justify-end">
-          {isSuperadmin && (
-            <button onClick={() => setShowImport(true)} className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-emerald-700 text-emerald-400 hover:bg-emerald-900/30' : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'}`}>
-              <FileSpreadsheet className="w-4 h-4" /> Impor Excel
+          {currentUser.role !== 'viewer' && (<>
+            <button onClick={() => inputWordRef.current?.click()} disabled={membacaWord}
+              title="Buat naskah Standar Pelayanan dari berkas Word (.docx) yang sudah ada"
+              className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all disabled:opacity-60 ${isDarkMode ? 'border-blue-700 text-blue-400 hover:bg-blue-900/30' : 'border-blue-300 text-blue-700 hover:bg-blue-50'}`}>
+              {membacaWord ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileUp className="w-4 h-4" />} {membacaWord ? 'Membaca…' : 'Impor Word'}
             </button>
-          )}
-          {isAdmin && (
+            <input ref={inputWordRef} type="file" accept=".docx" className="hidden" onChange={pilihBerkasWord} />
+          </>)}
+          {currentUser.role !== 'viewer' && (
             <button onClick={() => setShowTrash(true)} title="Kotak Sampah — dokumen terhapus (30 hari)"
               className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/20' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
               <Trash2 className="w-4 h-4" /> <span className="hidden sm:inline">Kotak Sampah</span>
@@ -521,9 +615,8 @@ export default function SPPage() {
           <button onClick={() => setShowManualDoc(true)} className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/30' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
             <FileUp className="w-4 h-4" /> Dokumen Manual
           </button>
-          {/* Studio penyusun SP masih uji coba — sementara superadmin saja. */}
-          {isSuperadmin && (
-            <button onClick={() => setKonfigSP({ isOpen: true, judul: '', klasifikasi: '', l1: currentUser.role === 'user' ? (currentUser.unit_l1 || '') : '', l2: '' })}
+          {currentUser.role !== 'viewer' && (
+            <button onClick={() => { setSumberWord(null); setKonfigSP({ isOpen: true, judul: '', klasifikasi: '', l1: currentUser.role === 'user' ? (currentUser.unit_l1 || '') : '', l2: '' }); }}
               title="Susun naskah Standar Pelayanan di studio (kertas F4, ekspor PDF/Word)"
               className="whitespace-nowrap shrink-0 px-4 py-2.5 xl:px-5 xl:py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-xl shadow-md flex items-center gap-2 font-bold transition-all">
               <Plus size={18} /> Buat SP Baru
@@ -643,7 +736,7 @@ export default function SPPage() {
             {([
               { key: 'usulan', icon: FileEdit, label: 'Daftar Usulan', count: countUsulan },
               { key: 'penyusunan', icon: FileSignature, label: 'Proses Penyusunan', count: countPenyusunan },
-              { key: 'terbit', icon: Stamp, label: 'Daftar Standar Pelayanan', count: countTerbit },
+              { key: 'terbit', icon: Stamp, label: 'Daftar SP Terbit', count: countTerbit },
             ] as const).map(t => (
               <button key={t.key} onClick={() => setListTab(t.key)}
                 className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-bold whitespace-nowrap transition-all ${listTab === t.key ? (isDarkMode ? 'bg-slate-700 text-white shadow' : 'bg-white text-[#002855] shadow') : (isDarkMode ? 'text-slate-400 hover:text-white' : 'text-slate-500 hover:text-slate-700')}`}>
@@ -672,14 +765,14 @@ export default function SPPage() {
               <button onClick={() => setRekapDrill({ l1: null, l2: null })} className={rekapDrill.l1 !== null ? 'text-teal-600 hover:underline' : (isDarkMode ? 'text-slate-200' : 'text-[#002855]')}>Semua Unit Kerja</button>
               {rekapDrill.l1 !== null && (<><ChevronRight className="w-4 h-4 text-slate-400" /><span className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{rekapDrill.l1}</span></>)}
             </div>
-            <p className={`text-xs mb-3 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{rekapDrill.l1 === null ? `Rekap ${listTab === 'usulan' ? 'usulan' : 'dokumen'} per Unit Kerja Level 1. Klik baris untuk melihat sub-unit (Level 2).` : 'Klik sub-unit untuk melihat daftar dokumennya.'}</p>
+            <p className={`text-xs mb-3 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{rekapDrill.l1 === null ? `Rekap ${listTab === 'usulan' ? 'usulan' : listTab === 'terbit' ? 'SP terbit' : 'dokumen'} per Unit Kerja Level 1. Klik baris untuk melihat sub-unit (Level 2).` : 'Klik sub-unit untuk melihat daftar dokumennya.'}</p>
             <div className="overflow-x-auto">
               <table className="w-full text-sm text-left">
                 <thead className={`text-[10px] font-bold uppercase tracking-wide border-b ${isDarkMode ? 'text-slate-400 bg-slate-800/50 border-slate-700' : 'text-slate-500 bg-slate-50/80 border-slate-200'}`}>
                   <tr>
                     <th className="px-4 py-3 text-left">{rekapDrill.l1 === null ? 'Unit Kerja (Level 1)' : 'Sub-Unit (Level 2)'}</th>
-                    {listTab === 'usulan' ? (
-                      <th className="px-2 py-3 text-center">Jumlah Usulan</th>
+                    {rekapRingkas ? (
+                      <th className="px-2 py-3 text-center">{listTab === 'usulan' ? 'Jumlah Usulan' : 'Jumlah SP Terbit'}</th>
                     ) : (<>
                       <th className="px-2 py-3 text-center">Draft Usulan</th>
                       <th className="px-2 py-3 text-center">Draft Proses</th>
@@ -693,12 +786,12 @@ export default function SPPage() {
                 </thead>
                 <tbody className={`divide-y ${isDarkMode ? 'divide-slate-800' : 'divide-slate-100'}`}>
                   {rekapRows.length === 0 ? (
-                    <tr><td colSpan={listTab === 'usulan' ? 3 : 8} className={`px-4 py-12 text-center ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{listTab === 'usulan' ? 'Belum ada usulan.' : 'Tidak ada dokumen dalam proses penyusunan.'}</td></tr>
+                    <tr><td colSpan={rekapRingkas ? 3 : 8} className={`px-4 py-12 text-center ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{listTab === 'usulan' ? 'Belum ada usulan.' : listTab === 'terbit' ? 'Belum ada Standar Pelayanan yang terbit.' : 'Tidak ada dokumen dalam proses penyusunan.'}</td></tr>
                   ) : rekapRows.map(row => (
                     <tr key={row.nama} onClick={() => setRekapDrill(rekapDrill.l1 === null ? { l1: row.nama, l2: null } : { l1: rekapDrill.l1, l2: row.nama })} className={`cursor-pointer transition-colors ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-teal-50/50'}`}>
                       <td className={`px-4 py-3 font-bold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{row.nama}</td>
-                      {listTab === 'usulan' ? (
-                        <td className="px-2 py-3 text-center"><span className={`inline-flex min-w-8 justify-center px-2.5 py-1 rounded-lg text-xs font-black text-white ${isDarkMode ? 'bg-teal-600' : 'bg-[#002855]'}`}>{row.usulan}</span></td>
+                      {rekapRingkas ? (
+                        <td className="px-2 py-3 text-center"><span className={`inline-flex min-w-8 justify-center px-2.5 py-1 rounded-lg text-xs font-black text-white ${listTab === 'terbit' ? 'bg-teal-600' : (isDarkMode ? 'bg-teal-600' : 'bg-[#002855]')}`}>{listTab === 'usulan' ? row.usulan : row.total}</span></td>
                       ) : (<>
                         <td className="px-2 py-3 text-center">{rekapBadge(row.usulan, 'slate')}</td>
                         <td className="px-2 py-3 text-center">{rekapBadge(row.draft, 'indigo')}</td>
@@ -887,6 +980,50 @@ export default function SPPage() {
                 </div>
               </div>
 
+              {/* Keterkaitan dokumen (hanya-baca) — disunting di panel properti
+                  Studio SP. Judul dibiarkan MELIPAT, bukan dipotong titik-titik,
+                  supaya penyusun bisa membacanya utuh. */}
+              {!!tautanDok?.length && (
+                <div>
+                  <p className={`text-[10px] font-black uppercase tracking-wider mb-1.5 flex items-center gap-1.5 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                    <Link2 className="w-3.5 h-3.5 text-teal-600" /> Keterkaitan Dokumen
+                  </p>
+                  <div className="space-y-1.5">
+                    {tautanDok.map(t => {
+                      const label = t.kind === 'sop' ? 'SOP' : 'Proses Bisnis';
+                      const bisaBuka = t.sumber !== 'registri' || !!t.link;
+                      const buka = () => {
+                        if (t.sumber === 'registri') { if (t.link) window.open(t.link, '_blank', 'noopener'); return; }
+                        window.open(`/e-sop-atrbpn/${t.kind}/studio?id=${t.id}&mode=view`, '_blank');
+                      };
+                      return (
+                        <div key={`${t.sumber || 'studio'}:${t.kind}:${t.id}`}
+                          className={`flex items-start gap-2 rounded-xl border px-3 py-2.5 ${isDarkMode ? 'border-teal-800 bg-teal-900/20' : 'border-teal-200 bg-teal-50/60'}`}>
+                          <span className={`shrink-0 mt-0.5 px-1.5 py-0.5 rounded text-[10px] font-black uppercase ${t.kind === 'sop' ? 'bg-emerald-100 text-emerald-700' : 'bg-blue-100 text-blue-700'}`}>
+                            {label}
+                          </span>
+                          <span className="min-w-0 flex-1">
+                            <button onClick={buka} disabled={!bisaBuka}
+                              title={bisaBuka ? `Buka ${label} di tab baru` : 'Dokumen ini belum punya tautan berkas'}
+                              className={`block w-full text-left text-xs font-bold wrap-break-word enabled:hover:underline disabled:cursor-default ${isDarkMode ? 'text-teal-300' : 'text-teal-800'}`}>
+                              {t.judul || `${label} #${t.id}`}
+                            </button>
+                            <span className={`block text-[10px] mt-0.5 ${isDarkMode ? 'text-teal-500/80' : 'text-teal-600/80'}`}>
+                              {t.sumber === 'registri' ? 'Dashboard' : 'Naskah studio'}
+                              {t.tahun ? ` · ${t.tahun}` : ''}{t.unit ? ` · ${t.unit}` : ''}
+                            </span>
+                          </span>
+                          {bisaBuka && (
+                            <button onClick={buka} title="Buka di tab baru"
+                              className="shrink-0 p-1.5 rounded-lg text-teal-600 hover:bg-teal-100"><ExternalLink className="w-3.5 h-3.5" /></button>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              )}
+
               {/* Pratinjau naskah studio — PDF dirender server dari sp_data. */}
               {previewModel.has_studio && (
                 <div>
@@ -901,14 +1038,13 @@ export default function SPPage() {
                         className="absolute top-2 right-2 z-10 flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white/95 px-2.5 py-1.5 text-[11px] font-bold text-slate-600 shadow-md backdrop-blur-sm hover:bg-white">
                         <Maximize2 className="w-3.5 h-3.5" /> Perbesar
                       </button>
-                      <div ref={wadahPrvRef} className="w-full h-105 overflow-hidden bg-white">
-                        <iframe src={`${previewPdfUrl}#toolbar=0&navpanes=0&view=FitH`} title="Pratinjau Standar Pelayanan"
-                          style={{ width: 900, height: `calc(26.25rem / ${skalaPrv})`, transform: `scale(${skalaPrv})`, transformOrigin: 'top left', border: 0 }} />
+                      <div className="w-full h-105 overflow-hidden bg-slate-100">
+                        <PratinjauPdf url={previewPdfUrl} className="p-2" jarak={8} />
                       </div>
                     </div>
                   ) : (
                     <div className={`rounded-xl border px-3 py-6 text-center text-xs ${isDarkMode ? 'border-slate-700 text-slate-400' : 'border-slate-200 text-slate-500'}`}>
-                      {isSuperadmin ? 'Pratinjau tidak tersedia.' : 'Pratinjau naskah studio masih tahap uji coba — sementara hanya superadmin.'}
+                      {previewModel && bisaStudio(previewModel) ? 'Pratinjau tidak tersedia.' : 'Naskah milik unit kerja lain — pratinjau tidak tersedia.'}
                     </div>
                   )}
                   <div className="flex flex-wrap gap-2 mt-2">
@@ -976,7 +1112,7 @@ export default function SPPage() {
               <X className="w-4 h-4" />
             </button>
           </div>
-          <iframe src={`${previewPdfUrl}#view=FitH`} title="Pratinjau layar penuh" className="flex-1 w-full border-0 bg-white" />
+          <div className="flex-1 min-h-0 bg-slate-100"><PratinjauPdf url={previewPdfUrl} className="p-3" /></div>
         </div>
       )}
 
@@ -1054,18 +1190,27 @@ export default function SPPage() {
       {/* Modal "Informasi SP Baru" — identitas naskah sebelum masuk kanvas */}
       {konfigSP.isOpen && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
-          onClick={() => setKonfigSP(k => ({ ...k, isOpen: false }))}>
+          onClick={() => { setKonfigSP(k => ({ ...k, isOpen: false })); setSumberWord(null); }}>
           <div onClick={e => e.stopPropagation()}
             className={`w-full max-w-lg rounded-2xl shadow-2xl flex flex-col max-h-[90vh] ${isDarkMode ? 'bg-[#151F32] border border-slate-700' : 'bg-white border border-slate-200'}`}>
             <div className="flex justify-between items-center p-6 pb-3 shrink-0">
-              <h3 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>Informasi SP Baru</h3>
-              <button onClick={() => setKonfigSP(k => ({ ...k, isOpen: false }))}
+              <h3 className={`text-xl font-bold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{sumberWord ? 'Impor SP dari Word' : 'Informasi SP Baru'}</h3>
+              <button onClick={() => { setKonfigSP(k => ({ ...k, isOpen: false })); setSumberWord(null); }}
                 className={`p-2.5 rounded-lg ${isDarkMode ? 'hover:bg-slate-800 text-slate-500' : 'hover:bg-slate-100 text-slate-400'}`}><X size={20} /></button>
             </div>
             <div className="px-6 pb-4 overflow-y-auto">
               <p className={`text-sm mb-6 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
                 Lengkapi data identitas Standar Pelayanan sebelum masuk ke halaman penyusunan komponen.
               </p>
+              {sumberWord && (
+                <div className={`-mt-3 mb-5 flex items-start gap-2.5 rounded-xl border px-3.5 py-3 text-sm ${isDarkMode ? 'border-blue-800 bg-blue-900/20 text-blue-200' : 'border-blue-200 bg-blue-50 text-blue-800'}`}>
+                  <FileUp className="w-4 h-4 shrink-0 mt-0.5" />
+                  <span className="min-w-0">
+                    <b className="block wrap-break-word">{sumberWord.nama}</b>
+                    <span className="text-xs">{sumberWord.jumlah} komponen terbaca. Naskah disimpan sebagai <b>Draft</b> lalu dibuka di Studio untuk diperiksa.</span>
+                  </span>
+                </div>
+              )}
               <div className="space-y-4">
                 <div>
                   <label className={`block text-sm font-bold mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>
@@ -1113,12 +1258,13 @@ export default function SPPage() {
               </div>
             </div>
             <div className={`flex justify-end gap-2 px-6 py-4 border-t shrink-0 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-              <button onClick={() => setKonfigSP(k => ({ ...k, isOpen: false }))}
+              <button onClick={() => { setKonfigSP(k => ({ ...k, isOpen: false })); setSumberWord(null); }}
                 className={`px-5 py-2.5 rounded-xl border text-sm font-bold ${isDarkMode ? 'border-slate-700 text-slate-300' : 'border-slate-200 text-slate-500'}`}>Batal</button>
-              <button onClick={mulaiStudioSP}
-                disabled={!konfigSP.judul.trim() || !konfigSP.klasifikasi || !konfigSP.l1}
+              <button onClick={sumberWord ? buatDariWord : mulaiStudioSP}
+                disabled={!konfigSP.judul.trim() || !konfigSP.klasifikasi || !konfigSP.l1 || membuatDariWord}
                 className="px-6 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 disabled:bg-slate-300 disabled:cursor-not-allowed text-white text-sm font-bold flex items-center gap-2 shadow-md transition-all">
-                Buat SP <ChevronRight className="w-4 h-4" />
+                {membuatDariWord ? <Loader2 className="w-4 h-4 animate-spin" /> : null}
+                {sumberWord ? 'Buka di Studio' : 'Buat SP'} <ChevronRight className="w-4 h-4" />
               </button>
             </div>
           </div>
@@ -1165,20 +1311,6 @@ export default function SPPage() {
         </div>
       )}
 
-      {/* Impor Excel massal (superadmin) */}
-      {showImport && currentUser && (
-        <ManualDocImportModal
-          kind="sp"
-          token={token}
-          isDarkMode={isDarkMode}
-          onClose={() => setShowImport(false)}
-          onImported={(rows, masuk) => {
-            setModels(prev => [...(rows as unknown as SPModel[]), ...prev]);
-            setListTab(masuk === 'final' ? 'terbit' : 'penyusunan');
-          }}
-        />
-      )}
-
       {/* Popup Lihat Dokumen + alur persetujuan (baris manual) */}
       {detailModel && (
         <ManualDocDetailModal
@@ -1218,9 +1350,9 @@ export default function SPPage() {
 
       <div className={`mt-4 flex items-center gap-2 text-xs ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
         <CheckCircle className="w-3.5 h-3.5" />
-        {isSuperadmin
+        {currentUser.role !== 'viewer'
           ? <>Naskah dapat disusun langsung lewat <b>Buat SP Baru</b> (Studio SP, kertas F4 · ekspor PDF/Word), diunggah sebagai <b>Dokumen Manual</b>, atau dicatat rencananya lewat <b>Tambah Usulan SP</b>.</>
-          : <>Dokumen jadi diunggah lewat <b>Dokumen Manual</b>, dan rencana penyusunan dicatat lewat <b>Tambah Usulan SP</b>. Studio penyusun Standar Pelayanan masih tahap uji coba.</>}
+          : <>Dokumen jadi diunggah lewat <b>Dokumen Manual</b>, dan rencana penyusunan dicatat lewat <b>Tambah Usulan SP</b>.</>}
       </div>
     </div>
   );
