@@ -952,12 +952,13 @@ function DashboardBPN() {
               <a 
                 href={(() => {
                   if (!viewDoc?.link) return '#';
-                  let finalLink = viewDoc.link;
-                  if (viewDoc.jenis === 'Proses Bisnis' && finalLink.includes('bpmn?id=')) {
-                    finalLink = finalLink.startsWith('/bpmn') ? `/e-sop-atrbpn${finalLink}` : finalLink.replace('.my.id/bpmn', '.my.id/e-sop-atrbpn/bpmn');
-                    return `${finalLink}&mode=view`;
-                  }
-                  return finalLink;
+                  // Tautan internal aplikasi (studio BPMN/SOP/SP atau popup ?doc=) perlu
+                  // basePath /e-sop-atrbpn; tanpa itu tab baru menuju root domain → 404.
+                  const internal = viewDoc.link.replace(/^\/e-sop-atrbpn/, '');
+                  // ?doc= memakai penanda sekali-pakai di halaman tujuan → beri nonce
+                  // agar membuka dokumen yang sama berkali-kali tetap menampilkan popup.
+                  if (/^\/(bpmn|sop|sp)(\/|\?)/.test(internal)) return `/e-sop-atrbpn${internal}${internal.includes('doc=') ? `&n=${Date.now()}` : ''}`;
+                  return viewDoc.link;
                 })()}
                 target="_blank" 
                 rel="noreferrer" 
@@ -1492,7 +1493,7 @@ function DashboardBPN() {
                     {level === 3 && currentItems.map((doc, idx) => (
                       <tr key={doc.id} className={`border-b transition-colors ${isDarkMode ? 'border-slate-800 hover:bg-blue-900/20' : 'border-slate-50 hover:bg-blue-50/30'}`}>
                         <td className="px-6 py-4 text-center text-slate-400 font-medium">{indexOfFirstItem + idx + 1}</td>
-                        <td className={`px-6 py-4 font-bold ${isDarkMode ? 'text-blue-100' : 'text-[#002855]'}`}><button onClick={async () => { const _lnk = doc.link || ''; if (doc.jenis === 'SOP' && _lnk.includes('/sop/studio')) { router.push(_lnk.replace(/^\/e-sop-atrbpn/, '')); return; } setViewDoc(doc); setPreviewSvg(""); if (doc.jenis === 'Proses Bisnis' && doc.link.includes('id=')) { try { const bpmnId = doc.link.split('id=')[1].split('&')[0]; const res = await apiFetch(`/bpmn/models/${bpmnId}`, token); if (!res.ok) throw new Error("Gagal"); const data = await res.json(); if (data && data.svg_xml) setPreviewSvg(data.svg_xml); else setPreviewSvg(`<div class="p-6 text-center text-red-500 font-bold border border-red-200 bg-red-50 rounded-xl m-4">Diagram kosong.</div>`); } catch { setPreviewSvg(`<div class="p-6 text-center text-amber-600 font-bold border border-amber-200 bg-amber-50 rounded-xl m-4">Gagal memuat diagram secara otomatis. Silakan klik "Buka di Tab Baru".</div>`); } } }} className={`hover:underline text-left wrap-break-word ${isDarkMode ? 'hover:text-blue-400' : 'hover:text-blue-600'}`}>{doc.nama}</button></td>
+                        <td className={`px-6 py-4 font-bold ${isDarkMode ? 'text-blue-100' : 'text-[#002855]'}`}><button onClick={async () => { const _lnk = doc.link || ''; const _internal = _lnk.replace(/^\/e-sop-atrbpn/, ''); if (/^\/(bpmn|sop|sp)(\/|\?)/.test(_internal)) { router.push(_internal.includes('doc=') ? `${_internal}&n=${Date.now()}` : _internal); return; } setViewDoc(doc); setPreviewSvg(""); if (doc.jenis === 'Proses Bisnis' && doc.link.includes('id=')) { try { const bpmnId = doc.link.split('id=')[1].split('&')[0]; const res = await apiFetch(`/bpmn/models/${bpmnId}`, token); if (!res.ok) throw new Error("Gagal"); const data = await res.json(); if (data && data.svg_xml) setPreviewSvg(data.svg_xml); else setPreviewSvg(`<div class="p-6 text-center text-red-500 font-bold border border-red-200 bg-red-50 rounded-xl m-4">Diagram kosong.</div>`); } catch { setPreviewSvg(`<div class="p-6 text-center text-amber-600 font-bold border border-amber-200 bg-amber-50 rounded-xl m-4">Gagal memuat diagram secara otomatis. Silakan klik "Buka di Tab Baru".</div>`); } } }} className={`hover:underline text-left wrap-break-word ${isDarkMode ? 'hover:text-blue-400' : 'hover:text-blue-600'}`}>{doc.nama}</button></td>
                         {!selectedL1 && <td className="px-6 py-4 text-slate-500">{doc.unitL1 || '-'}</td>}
                         <td className="px-6 py-4 text-slate-500">{doc.unitL2 || '-'}</td>
                         <td className="px-6 py-4 text-slate-500">{doc.unitL3 || '-'}</td>

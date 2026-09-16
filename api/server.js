@@ -1238,9 +1238,16 @@ async function syncDokumenFromModel({ type, jenis, row, status }) {
       }
     } catch (e) { /* abaikan parse error */ }
   }
-  const link = type === 'bpmn'
-    ? `/bpmn?id=${row.id}&mode=view`
-    : `/sop/studio?id=${row.id}&mode=view`;
+  // Tautan "buka dokumen" dari Dashboard:
+  //  • Dokumen MANUAL (unggahan PDF / tautan Drive) TIDAK punya kanvas — studio akan
+  //    terbuka KOSONG. Arahkan ke halaman modul dgn ?doc=<id> supaya popup Detail
+  //    Dokumen (viewer PDF/tautan) yang muncul.
+  //  • Dokumen studio → studio mode baca. CATATAN: BPMN dulu keliru diarahkan ke
+  //    `/bpmn?...` (halaman DAFTAR, bukan kanvas) sehingga diagram tak pernah tampil;
+  //    yang benar `/bpmn/studio?...`.
+  const link = row.is_manual
+    ? `/${type}?doc=${row.id}`
+    : `/${type}/studio?id=${row.id}&mode=view`;
   const tahun = String(new Date().getFullYear());
   await pool.query(`
     INSERT INTO dokumen (nama, jenis, tahun, l1_id, l2_id, link, sumber, status, source_type, source_id, created_by)
@@ -2921,9 +2928,28 @@ async function bersihkanSampahKedaluwarsa() {
 }
 
 // Daftar isi kotak sampah — gabungan BPMN + SOP + SP.
-app.get('/api/trash', authenticate, requireRole('admin', 'superadmin'), async (req, res) => {
+app.get('/api/trash', authenticate, requireRole('admin', 'superadmin', 'user'), async (req, res) => {
   try {
     await bersihkanSampahKedaluwarsa();
+    // User unit hanya melihat sampah unit kerjanya — aturan yang sama dengan
+    // daftar dokumen (GET /api/{kind}/models): milik sendiri, unit L1 (+L2)
+    // sama, atau dokumen tanpa unit.
+    const { id: uid, role, unit_l1, unit_l2 } = req.user;
+    let filterUnit = '';
+    const params = [];
+    if (role === 'user') {
+      params.push(uid);
+      filterUnit = ' AND (m.created_by = $1';
+      if (unit_l1) {
+        params.push(unit_l1);
+        filterUnit += ' OR (u1.nama ILIKE $2';
+        if (unit_l2 && unit_l2.trim().toLowerCase() !== 'seluruh unit') {
+          params.push(unit_l2);
+          filterUnit += ' AND (u2.nama ILIKE $3 OR u2.nama IS NULL))';
+        } else filterUnit += ')';
+      }
+      filterUnit += ' OR m.l1_id IS NULL)';
+    }
     const hasil = [];
     for (const [kind, tabel] of Object.entries(TRASH_TABEL)) {
       const q = await pool.query(
@@ -2935,8 +2961,8 @@ app.get('/api/trash', authenticate, requireRole('admin', 'superadmin'), async (r
          LEFT JOIN unit_kerja_l1 u1 ON m.l1_id = u1.id
          LEFT JOIN unit_kerja_l2 u2 ON m.l2_id = u2.id
          LEFT JOIN users u ON m.deleted_by = u.id
-         WHERE m.deleted_at IS NOT NULL
-         ORDER BY m.deleted_at DESC`);
+         WHERE m.deleted_at IS NOT NULL${filterUnit}
+         ORDER BY m.deleted_at DESC`, params);
       q.rows.forEach(r => hasil.push({ ...r, kind }));
     }
     hasil.sort((a, b) => new Date(b.deleted_at) - new Date(a.deleted_at));
@@ -2945,10 +2971,19 @@ app.get('/api/trash', authenticate, requireRole('admin', 'superadmin'), async (r
 });
 
 // Pulihkan dokumen dari kotak sampah.
-app.post('/api/trash/:kind/:id/restore', authenticate, requireRole('admin', 'superadmin'), async (req, res) => {
+app.post('/api/trash/:kind/:id/restore', authenticate, requireRole('admin', 'superadmin', 'user'), async (req, res) => {
   try {
     const tabel = TRASH_TABEL[req.params.kind];
     if (!tabel) return res.status(400).json({ error: 'Jenis dokumen tidak dikenal' });
+    if (req.user.role === 'user') {
+      // Batas unit = akses dokumen; batas status = hak hapus user (dokumen yang
+      // sudah disetujui/ditetapkan hanya dipulihkan admin).
+      const acc = await assertModelAccess(req, res, req.params.kind, req.params.id, { write: false });
+      if (!acc) return;
+      if (!STATUS_BOLEH_HAPUS_USER.includes(acc.status || 'draft')) {
+        return res.status(403).json({ error: 'Dokumen yang sudah masuk proses persetujuan hanya dapat dipulihkan oleh admin.' });
+      }
+    }
     const r = await pool.query(
       `UPDATE ${tabel} SET deleted_at = NULL, deleted_by = NULL WHERE id = $1 AND deleted_at IS NOT NULL RETURNING id, process_title, status`,
       [req.params.id]);
@@ -3198,11 +3233,10 @@ app.delete('/api/sp/models/:id', authenticate, async (req, res) => {
 // Status yang mengunci naskah dari perubahan (sejajar aturan SOP).
 const SP_STATUS_TERKUNCI = ['verifikasi', 'penetapan', 'terbit'];
 
-// TAHAP PELUNCURAN: studio SP dibuka untuk SUPERADMIN lebih dulu. Admin, user
-// terbatas, dan viewer menyusul setelah alurnya mantap — cukup longgarkan
-// `requireSuperadmin` di bawah ini (mis. jadi requireRole('admin','superadmin',
-// 'user')); aturan unit kerja & status tetap dijaga assertModelAccess.
-app.get('/api/sp/models/:id', authenticate, requireSuperadmin, async (req, res) => {
+// Studio SP terbuka untuk superadmin, admin, dan user terbatas (viewer tetap
+// tanpa akses naskah). Batas unit kerja & status dijaga assertModelAccess:
+// user hanya menjangkau dokumen unit kerjanya sendiri.
+app.get('/api/sp/models/:id', authenticate, requireRole('admin', 'superadmin', 'user'), async (req, res) => {
   try {
     const acc = await assertModelAccess(req, res, 'sp', req.params.id, { write: false });
     if (!acc) return;
@@ -3218,7 +3252,7 @@ app.get('/api/sp/models/:id', authenticate, requireSuperadmin, async (req, res) 
   } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
 });
 
-app.put('/api/sp/models/:id', authenticate, requireSuperadmin, async (req, res) => {
+app.put('/api/sp/models/:id', authenticate, requireRole('admin', 'superadmin', 'user'), async (req, res) => {
   try {
     const { process_title, unit_l1, unit_l2, jenis_proses, klasifikasi_proses, sp_data, status } = req.body;
     const cur = await assertWriteAccess(req, res, 'sp', req.params.id);
@@ -3343,7 +3377,7 @@ async function renderSpPdf(spData) {
   }
 }
 
-app.get('/api/sp/models/:id/pdf', authenticate, requireSuperadmin, pdfLimiter, async (req, res) => {
+app.get('/api/sp/models/:id/pdf', authenticate, requireRole('admin', 'superadmin', 'user'), pdfLimiter, async (req, res) => {
   try {
     const acc = await assertModelAccess(req, res, 'sp', req.params.id, { write: false });
     if (!acc) return;
@@ -3363,7 +3397,7 @@ app.get('/api/sp/models/:id/pdf', authenticate, requireSuperadmin, pdfLimiter, a
 });
 
 // ── Unduh DOCX (Word asli, F4 potret + Bookman Old Style 12) ───────────────
-app.get('/api/sp/models/:id/docx', authenticate, requireSuperadmin, async (req, res) => {
+app.get('/api/sp/models/:id/docx', authenticate, requireRole('admin', 'superadmin', 'user'), async (req, res) => {
   try {
     const acc = await assertModelAccess(req, res, 'sp', req.params.id, { write: false });
     if (!acc) return;
@@ -3383,7 +3417,52 @@ app.get('/api/sp/models/:id/docx', authenticate, requireSuperadmin, async (req, 
 // Menerima .docx (base64) dan MENGEMBALIKAN struktur naskah saja — tidak
 // menyentuh basis data. Penyusun memeriksa hasilnya di studio lalu menyimpan
 // sendiri, jadi impor yang meleset tak pernah menimpa dokumen tersimpan.
-app.post('/api/sp/import-docx', authenticate, requireSuperadmin, async (req, res) => {
+// ── Pencarian dokumen untuk "Keterkaitan Dokumen" di panel properti studio ──
+// Menggabungkan DUA sumber sekaligus:
+//   1. registri  — tabel `dokumen` (yang dihitung Dashboard: hasil impor + aplikasi)
+//   2. studio    — sop_models 'terbit' & bpmn_models 'approved' yang belum masuk registri
+// Pencarian dilakukan di SERVER karena registri sudah >1600 baris (±500KB) —
+// terlalu besar untuk dikirim seluruhnya ke panel.
+// (JENIS_REGISTRI sudah dideklarasikan di blok registri terbit di atas.)
+app.get('/api/sp/keterkaitan', authenticate, requireRole('admin', 'superadmin', 'user'), async (req, res) => {
+  try {
+    const kind = req.query.kind === 'bpmn' ? 'bpmn' : 'sop';
+    const q = String(req.query.q || '').replace(/\s+/g, ' ').trim();
+    const pola = `%${q}%`;
+    const BATAS = 20;
+
+    const registri = await pool.query(
+      `SELECT d.id, d.nama AS judul, d.tahun, d.link, u1.nama AS unit
+       FROM dokumen d
+       LEFT JOIN unit_kerja_l1 u1 ON d.l1_id = u1.id
+       WHERE d.jenis = $1 AND ($2 = '' OR d.nama ILIKE $3)
+       ORDER BY d.tahun DESC NULLS LAST, d.id DESC
+       LIMIT $4`, [JENIS_REGISTRI[kind], q, pola, BATAS]);
+
+    // Naskah studio yang sudah ditetapkan tetapi belum tercatat di registri
+    // (registri mencatat asalnya lewat source_type/source_id).
+    const tabel = kind === 'sop' ? 'sop_models' : 'bpmn_models';
+    const statusFinal = kind === 'sop' ? 'terbit' : 'approved';
+    const studio = await pool.query(
+      `SELECT m.id, m.process_title AS judul, u1.nama AS unit
+       FROM ${tabel} m
+       LEFT JOIN unit_kerja_l1 u1 ON m.l1_id = u1.id
+       WHERE m.status = $1 AND m.deleted_at IS NULL AND ($2 = '' OR m.process_title ILIKE $3)
+         AND NOT EXISTS (SELECT 1 FROM dokumen d WHERE d.source_type = $4 AND d.source_id = m.id)
+       ORDER BY m.updated_at DESC NULLS LAST, m.id DESC
+       LIMIT $5`, [statusFinal, q, pola, kind, BATAS]);
+
+    res.json([
+      ...studio.rows.map(r => ({ sumber: 'studio', kind, id: r.id, judul: r.judul, unit: r.unit || null, tahun: null, link: null })),
+      ...registri.rows.map(r => ({ sumber: 'registri', kind, id: r.id, judul: r.judul, unit: r.unit || null, tahun: r.tahun || null, link: r.link || null })),
+    ].slice(0, BATAS));
+  } catch (err) {
+    console.error('[ROUTE ERROR]', req.method, req.path, err.message);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.post('/api/sp/import-docx', authenticate, requireRole('admin', 'superadmin', 'user'), async (req, res) => {
   try {
     const { file_data } = req.body;
     if (!file_data || typeof file_data !== 'string') return res.status(400).json({ error: 'Berkas Word wajib diunggah.' });
@@ -4516,5 +4595,9 @@ process.on('unhandledRejection', (reason) => {
 
 // START SERVER
 initDatabase().then(() => {
-  app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+  // Bind ke loopback saja: hanya nginx yang boleh menjangkau API ini.
+  // Sebelumnya 0.0.0.0 — siapa pun di LAN/Tailscale bisa menembak API
+  // langsung, melewati nginx, dan memalsukan header IP sehingga rate
+  // limit (loginLimiter) lumpuh.
+  app.listen(PORT, '127.0.0.1', () => console.log(`Server running on 127.0.0.1:${PORT}`));
 });

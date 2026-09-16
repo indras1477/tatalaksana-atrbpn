@@ -6,7 +6,7 @@ import {
   Plus, Edit, CheckCircle,
   Clock, XCircle, Search, X, FileEdit, FileStack, AlertCircle, Filter,
   Trash2, Calendar, GitCommit, HelpCircle, GitBranch, ChevronRight, Save, History as HistoryIcon, RotateCcw,
-  ExternalLink, Building2, Copy, Landmark, Lock, FileUp, FileSpreadsheet, FileText, MessageSquare, Eye, ZoomIn, ZoomOut, Maximize2
+  ExternalLink, Building2, Copy, Landmark, Lock, FileUp, FileText, MessageSquare, Eye, ZoomIn, ZoomOut, Maximize2
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
 import { BPMNSymbolsSection } from '@/components/PanduanSymbols';
@@ -14,7 +14,6 @@ import ManualDocModal from '@/components/ManualDocModal';
 import ManualDocDetailModal from '@/components/ManualDocDetailModal';
 import DocHistoryModal from '@/components/DocHistoryModal';
 import TrashModal from '@/components/TrashModal';
-import ManualDocImportModal from '@/components/ManualDocImportModal';
 import ShareButton from '@/components/ShareButton';
 import { useConfirm } from '@/components/ConfirmDialog';
 import { HIERARKI_UNIT } from '@/lib/constants';
@@ -150,7 +149,6 @@ export default function BPMNDashboardPage() {
   const [submittingPenetapan, setSubmittingPenetapan] = useState(false);
   const [showPanduan, setShowPanduan] = useState(false);
   const [showManualDoc, setShowManualDoc] = useState(false);
-  const [showImport, setShowImport] = useState(false);
   const [isSuperadmin, setIsSuperadmin] = useState(false);
   const [manualDetail, setManualDetail] = useState<BPMNModel | null>(null);
 
@@ -336,10 +334,13 @@ export default function BPMNDashboardPage() {
   // untuk tab Penyusunan DAN tab Usulan (usulan lahir dari Probis Level 2,
   // sehingga dikelompokkan per unit kerja).
   const isAdminRekap = currentUser?.role === 'admin' && (listTab === 'penyusunan' || listTab === 'usulan');
+  // Rekap penyusunan kini IKUT menyertakan dokumen yang sudah ditetapkan (approved)
+  // — dulu difilter keluar, sehingga unit kerja yang SELURUH dokumennya sudah terbit
+  // (mis. Ditjen Pengendalian & Penertiban Tanah dan Ruang) hilang dari tabel rekap.
   const rekapDataset = useMemo(() => (
     listTab === 'usulan'
       ? currentFilteredModels.filter(m => m.status === 'usulan')
-      : currentFilteredModels.filter(m => m.status !== 'approved')
+      : currentFilteredModels
   ), [currentFilteredModels, listTab]);
   const progressCounts = (docs: BPMNModel[]) => ({
     usulan: docs.filter(m => m.status === 'usulan').length,
@@ -347,9 +348,10 @@ export default function BPMNDashboardPage() {
     pending: docs.filter(m => m.status === 'pending').length,
     pengesahan: docs.filter(m => m.status === 'penetapan').length,
     revisi: docs.filter(m => m.status === 'rejected').length,
+    terbit: docs.filter(m => m.status === 'approved').length,
     total: docs.length,
   });
-  const rekapBadge = (n: number, tone: 'slate' | 'indigo' | 'blue' | 'violet' | 'red') => {
+  const rekapBadge = (n: number, tone: 'slate' | 'indigo' | 'blue' | 'violet' | 'red' | 'emerald') => {
     if (!n) return <span className="text-slate-300 font-bold">–</span>;
     const map = {
       slate: isDarkMode ? 'bg-slate-700/60 text-slate-200' : 'bg-slate-100 text-slate-700',
@@ -357,6 +359,7 @@ export default function BPMNDashboardPage() {
       blue: isDarkMode ? 'bg-blue-900/40 text-blue-300' : 'bg-blue-50 text-blue-700',
       violet: isDarkMode ? 'bg-violet-900/40 text-violet-300' : 'bg-violet-50 text-violet-700',
       red: isDarkMode ? 'bg-red-900/40 text-red-300' : 'bg-red-50 text-red-700',
+      emerald: isDarkMode ? 'bg-emerald-900/40 text-emerald-300' : 'bg-emerald-50 text-emerald-700',
     };
     return <span className={`inline-flex min-w-8 justify-center px-2 py-1 rounded-lg text-xs font-black ${map[tone]}`}>{n}</span>;
   };
@@ -848,19 +851,6 @@ export default function BPMNDashboardPage() {
         />
       )}
 
-      {/* Impor Excel massal (superadmin) */}
-      {showImport && currentUser && (
-        <ManualDocImportModal
-          kind="bpmn"
-          token={token}
-          isDarkMode={isDarkMode}
-          onClose={() => setShowImport(false)}
-          onImported={(rows, masuk) => {
-            setSavedModels(prev => [...(rows as unknown as BPMNModel[]), ...prev]);
-            setListTab(masuk === 'final' ? 'terbit' : 'penyusunan');
-          }}
-        />
-      )}
 
       {/* Popup Lihat Dokumen + alur persetujuan (baris dokumen manual) */}
       {manualDetail && currentUser && (
@@ -1298,11 +1288,6 @@ export default function BPMNDashboardPage() {
             <button onClick={() => setShowPanduan(true)} className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-blue-700 text-blue-400 hover:bg-blue-900/30' : 'border-blue-200 text-blue-600 hover:bg-blue-50'}`}>
               <HelpCircle className="w-4 h-4" /> Panduan
             </button>
-            {isSuperadmin && (
-              <button onClick={() => setShowImport(true)} className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-emerald-700 text-emerald-400 hover:bg-emerald-900/30' : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'}`}>
-                <FileSpreadsheet className="w-4 h-4" /> Impor Excel
-              </button>
-            )}
             {currentUser.role === 'admin' && (
               <button onClick={() => setShowTrash(true)} title="Kotak Sampah — dokumen terhapus (30 hari)" className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/20' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
                 <Trash2 className="w-4 h-4" /> <span className="hidden sm:inline">Kotak Sampah</span>
@@ -1509,6 +1494,7 @@ export default function BPMNDashboardPage() {
                         <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-blue-300' : 'text-blue-500'}`}>Review Ortala MR</th>
                         <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-violet-300' : 'text-violet-500'}`}>Pengesahan Pimpinan</th>
                         <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-red-300' : 'text-red-500'}`}>Perlu Revisi</th>
+                        <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-emerald-300' : 'text-emerald-600'}`}>Terbit</th>
                         <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>Total</th>
                       </>)}
                       <th className="px-2 py-3"></th>
@@ -1516,7 +1502,7 @@ export default function BPMNDashboardPage() {
                   </thead>
                   <tbody className={`divide-y ${isDarkMode ? 'divide-slate-800' : 'divide-slate-100'}`}>
                     {rekapRows.length === 0 ? (
-                      <tr><td colSpan={listTab === 'usulan' ? 3 : 8} className={`px-4 py-12 text-center ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{listTab === 'usulan' ? 'Belum ada usulan.' : 'Tidak ada dokumen dalam proses penyusunan.'}</td></tr>
+                      <tr><td colSpan={listTab === 'usulan' ? 3 : 9} className={`px-4 py-12 text-center ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{listTab === 'usulan' ? 'Belum ada usulan.' : 'Tidak ada dokumen dalam proses penyusunan.'}</td></tr>
                     ) : rekapRows.map(row => (
                       <tr key={row.nama} onClick={() => setRekapDrill(rekapDrill.l1 === null ? { l1: row.nama, l2: null } : { l1: rekapDrill.l1, l2: row.nama })} className={`cursor-pointer transition-colors ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-blue-50/50'}`}>
                         <td className={`px-4 py-3 font-bold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{row.nama}</td>
@@ -1528,6 +1514,7 @@ export default function BPMNDashboardPage() {
                           <td className="px-2 py-3 text-center">{rekapBadge(row.pending, 'blue')}</td>
                           <td className="px-2 py-3 text-center">{rekapBadge(row.pengesahan, 'violet')}</td>
                           <td className="px-2 py-3 text-center">{rekapBadge(row.revisi, 'red')}</td>
+                          <td className="px-2 py-3 text-center">{rekapBadge(row.terbit, 'emerald')}</td>
                           <td className="px-2 py-3 text-center"><span className={`inline-flex min-w-8 justify-center px-2.5 py-1 rounded-lg text-xs font-black text-white ${isDarkMode ? 'bg-blue-600' : 'bg-[#002855]'}`}>{row.total}</span></td>
                         </>)}
                         <td className="px-2 py-3 text-slate-400"><ChevronRight className="w-4 h-4" /></td>
