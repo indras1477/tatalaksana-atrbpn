@@ -2370,15 +2370,18 @@ app.post('/api/bpmn/pdf', authenticate, pdfLimiter, async (req, res) => {
     if (pages.length > 40) return res.status(400).json({ error: 'Terlalu banyak halaman' });
     const esc = (s) => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
-    // Orientasi F4 (215×330) dari viewBox halaman utama — pilih yang memberi
-    // skala pas-halaman terbesar (melebar → landscape, memanjang → portrait).
-    const vb = /viewBox="[\d.\-]+\s+[\d.\-]+\s+([\d.\-]+)\s+([\d.\-]+)"/.exec(pages[0].svg);
-    const dw = vb ? parseFloat(vb[1]) || 1 : 1;
-    const dh = vb ? parseFloat(vb[2]) || 1 : 1;
+    // Orientasi F4 (215×330) ditentukan PER HALAMAN dari viewBox diagramnya —
+    // pilih yang memberi skala pas-halaman terbesar (melebar → landscape,
+    // memanjang → portrait). Dulu dihitung sekali dari halaman utama sehingga
+    // halaman sub-proses ikut orientasi halaman pertama walau bentuknya beda.
     const MARGIN = 14, HEADER_EST = 42;
-    const fit = (pw, ph) => Math.min((pw - MARGIN * 2) / dw, (ph - HEADER_EST - 14) / dh);
-    const portrait = fit(215, 330) >= fit(330, 215);
-    const PW = portrait ? 215 : 330, PH = portrait ? 330 : 215;
+    const isPortrait = (svg) => {
+      const vb = /viewBox="[\d.\-]+\s+[\d.\-]+\s+([\d.\-]+)\s+([\d.\-]+)"/.exec(String(svg || ''));
+      const dw = vb ? parseFloat(vb[1]) || 1 : 1;
+      const dh = vb ? parseFloat(vb[2]) || 1 : 1;
+      const fit = (pw, ph) => Math.min((pw - MARGIN * 2) / dw, (ph - HEADER_EST - 14) / dh);
+      return fit(215, 330) >= fit(330, 215);
+    };
 
     // Buang atribut width/height agar SVG mengikuti kotak CSS (viewBox tetap →
     // preserveAspectRatio "meet" menjaga rasio; diagram menempel di atas header).
@@ -2388,7 +2391,7 @@ app.post('/api/bpmn/pdf', authenticate, pdfLimiter, async (req, res) => {
 
     const total = pages.length;
     const pagesHtml = pages.map((p, i) => `
-      <div class="page">
+      <div class="page ${isPortrait(p.svg) ? 'pt' : 'ls'}">
         <div class="head">
           <div class="label">${esc(p.label || 'PROSES BISNIS')}</div>
           <div class="judul">${esc(p.judul || title || '')}</div>
@@ -2401,10 +2404,15 @@ app.post('/api/bpmn/pdf', authenticate, pdfLimiter, async (req, res) => {
       </div>`).join('');
 
     const html = `<!doctype html><html><head><meta charset="utf-8"><style>
-      @page { size: ${PW}mm ${PH}mm; margin: 0; }
+      /* Named pages: tiap halaman memilih ukuran F4 potret/lanskap sendiri. */
+      @page { size: 215mm 330mm; margin: 0; }
+      @page f4pt { size: 215mm 330mm; margin: 0; }
+      @page f4ls { size: 330mm 215mm; margin: 0; }
       * { box-sizing: border-box; margin: 0; padding: 0; }
       body { font-family: 'URW Bookman', 'Bookman Old Style', Bookman, Georgia, serif; color: #000; }
-      .page { width: ${PW}mm; height: ${PH}mm; padding: 12mm 14mm 8mm; display: flex; flex-direction: column; page-break-after: always; }
+      .page { padding: 12mm 14mm 8mm; display: flex; flex-direction: column; page-break-after: always; }
+      .page.pt { page: f4pt; width: 215mm; height: 330mm; }
+      .page.ls { page: f4ls; width: 330mm; height: 215mm; }
       .page:last-child { page-break-after: auto; }
       .head { text-align: center; }
       /* Header hitam semua (permintaan user) — bukan abu/navy. */
@@ -2426,7 +2434,7 @@ app.post('/api/bpmn/pdf', authenticate, pdfLimiter, async (req, res) => {
       .replace(/[\\/]+/g, '_').replace(/[:*?"<>|]+/g, '').replace(/\s+/g, ' ').trim();
     await page.evaluate((t) => { document.title = t; }, safe);
     const pdf = await page.pdf({
-      width: `${PW}mm`, height: `${PH}mm`, printBackground: true,
+      preferCSSPageSize: true, printBackground: true,
       margin: { top: '0mm', right: '0mm', bottom: '0mm', left: '0mm' },
     });
     res.setHeader('Content-Type', 'application/pdf');

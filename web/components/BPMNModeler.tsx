@@ -1246,6 +1246,19 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
               }
             });
 
+          // Pendengar di atas baru terpasang SETELAH importXML, sehingga label Pool/Lane
+          // dari dokumen yang dimuat (semua plane, termasuk sub-proses) tak pernah
+          // mendapat penanda tembus-klik — kotak hit tak terlihatnya menutupi elemen di
+          // dekat pita dan membuat elemen (mis. hasil paste) tak bisa dipilih/digeser.
+          try {
+            registryAll.forEach((el) => {
+              const lb = el as BpmnElement & { labelTarget?: { type?: string } };
+              if (lb.type === 'label' && lb.labelTarget?.type === 'bpmn:Group') {
+                (canvas as unknown as { addMarker: (e: BpmnElement, m: string) => void }).addMarker(el, 'group-label-pin');
+              }
+            });
+          } catch { /* abaikan */ }
+
           // Rekatkan ulang label ke pita SETIAP kali Group berubah (digeser, di-resize,
           // di-rename) atau label-nya sendiri tergeser — teks selalu menyatu dgn pool.
           modeler.on('elements.changed', (e: { elements?: BpmnElement[] }) => {
@@ -1734,7 +1747,12 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
         .djs-popup[data-popup="element-colors"] .djs-popup-body .entry { display: flex; align-items: center; gap: 8px; }
         /* Label eksternal Pool/Lane (bpmn:Group) — tidak bisa diklik/dipilih terpisah;
            teks digambar menyatu di pita pool oleh renderer. */
-        .group-label-pin { pointer-events: none !important; }
+        /* WAJIB juga anak-anaknya: diagram-js memberi .djs-element > .djs-hit-all
+           { pointer-events: all } sendiri, yang mengalahkan nilai warisan dari induk.
+           Tanpa ini kotak hit label (tak terlihat, lebarnya = panjang nama unit)
+           menjorok ke area isi pool dan menutupi elemen yang di-paste/ditaruh di
+           dekat pita → klik memilih label, elemen tak bisa dipilih/digeser. */
+        .group-label-pin, .group-label-pin * { pointer-events: none !important; }
         .djs-palette { left: 20px !important; top: 20px !important; border-radius: 12px !important; box-shadow: 0 4px 12px rgba(0,0,0,0.1) !important; }
         .djs-palette.open { width: 94px !important; max-height: calc(100% - 48px) !important; overflow-y: auto !important; overflow-x: hidden !important; }
         .djs-palette.open::-webkit-scrollbar { width: 4px; }
