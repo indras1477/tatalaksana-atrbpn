@@ -6,17 +6,16 @@
    Pembungkus SPBuilder: memuat/menyimpan naskah, simpan otomatis, serta
    menjembatani unduh PDF/Word dan impor Word ke API.
 
-   TAHAP PELUNCURAN: hanya SUPERADMIN. Peran lain (admin, user terbatas, viewer)
-   menyusul — longgarkan `BOLEH_STUDIO` di bawah dan `requireSuperadmin` pada
-   rute /api/sp/models/:id di api/server.js secara bersamaan.
+   Terbuka untuk superadmin, admin, dan user terbatas (viewer tanpa akses) —
+   batas unit kerja dijaga server lewat assertModelAccess.
    ========================================================================== */
 
 import { useEffect, useRef, useState, Suspense, useCallback } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import SPBuilder, { type SPBuilderRef } from '@/components/SPBuilder';
-import { type SPDoc } from '@/lib/spTemplate';
+import { type SPDoc, type TautanDok } from '@/lib/spTemplate';
 
-const BOLEH_STUDIO = ['superadmin'];
+const BOLEH_STUDIO = ['superadmin', 'admin', 'user'];
 const API_BASE = '/e-sop-atrbpn/api';
 // Naskah terkunci: sedang diverifikasi/ditetapkan atau sudah terbit.
 const STATUS_TERKUNCI = ['verifikasi', 'penetapan', 'terbit'];
@@ -33,6 +32,10 @@ function StudioSPContent() {
 
   const [idDok, setIdDok] = useState<string | null>(idAwal);
   const [dataAwal, setDataAwal] = useState<string | null>(null);
+  // Identitas dokumen dari server — WAJIB jadi cadangan saat menyimpan naskah
+  // yang dibuka lewat ?id= saja: tanpa ini, dokumen lama yang belum bernaskah
+  // (sp_data kosong) kehilangan judul/unitnya begitu disimpan dari studio.
+  const [metaAwal, setMetaAwal] = useState<{ judul: string; l1: string; l2: string; klasifikasi: string } | null>(null);
   const [status, setStatus] = useState<string | null>(null);
   const [memuat, setMemuat] = useState(!!idAwal);
   const [gagalMuat, setGagalMuat] = useState<string | null>(null);
@@ -85,6 +88,10 @@ function StudioSPContent() {
       .then((d) => {
         if (d?.sp_data) setDataAwal(d.sp_data);
         if (d?.status) setStatus(d.status);
+        setMetaAwal({
+          judul: d?.process_title || '', l1: d?.unit_l1 || '', l2: d?.unit_l2 || '',
+          klasifikasi: d?.klasifikasi_proses || '',
+        });
         termuatRef.current = true;
       })
       // Jangan diam-diam menampilkan kanvas kosong: simpan otomatis bisa
@@ -98,8 +105,10 @@ function StudioSPContent() {
 
   // ── Simpan ────────────────────────────────────────────────────────────────
   const persist = useCallback(async (dataJson: string, statusBaru?: string): Promise<string> => {
-    let judul = judulAwal || 'Standar Pelayanan';
-    let unitL1 = l1Awal, unitL2 = l2Awal, klasifikasi = klasifikasiAwal;
+    let judul = judulAwal || metaAwal?.judul || 'Standar Pelayanan';
+    let unitL1 = l1Awal || metaAwal?.l1 || '';
+    let unitL2 = l2Awal || metaAwal?.l2 || '';
+    let klasifikasi = klasifikasiAwal || metaAwal?.klasifikasi || '';
     try {
       const d = JSON.parse(dataJson) as SPDoc;
       if (d.judul?.trim()) judul = d.judul.trim();
@@ -133,7 +142,7 @@ function StudioSPContent() {
     if (hasil.status) setStatus(hasil.status);
     terakhirRef.current = dataJson;
     return id as string;
-  }, [apiFetch, idDok, judulAwal, l1Awal, l2Awal, klasifikasiAwal]);
+  }, [apiFetch, idDok, judulAwal, l1Awal, l2Awal, klasifikasiAwal, metaAwal]);
 
   // Patok baseline simpan-otomatis SEGERA setelah naskah termuat. Dulu patokan
   // diambil pada detak pertama (detik ke-25) — ketikan di 25 detik pertama ikut
@@ -223,6 +232,17 @@ function StudioSPContent() {
     return res.blob();
   };
 
+  // Pencarian dokumen untuk panel "Keterkaitan Dokumen". Dicari di SERVER
+  // (registri Dashboard >1600 dokumen) dan menggabungkan dua sumber: tabel
+  // `dokumen` (Dashboard) + naskah studio yang sudah ditetapkan.
+  const cariDokumenTerkait = useCallback(async (kind: 'sop' | 'bpmn', q: string): Promise<TautanDok[]> => {
+    try {
+      const res = await apiFetch(`/sp/keterkaitan?kind=${kind}&q=${encodeURIComponent(q)}`);
+      if (!res.ok) return [];
+      return (await res.json()) as TautanDok[];
+    } catch { return []; }
+  }, [apiFetch]);
+
   const imporWord = async (base64: string) => {
     const res = await apiFetch('/sp/import-docx', { method: 'POST', body: JSON.stringify({ file_data: base64 }) });
     const d = await res.json().catch(() => ({} as { error?: string }));
@@ -234,11 +254,10 @@ function StudioSPContent() {
     return (
       <div className="h-[calc(100dvh-4rem)] flex items-center justify-center p-6">
         <div className="max-w-md text-center bg-white border border-slate-200 rounded-2xl shadow-sm p-8">
-          <h2 className="text-lg font-bold text-[#002855]">Studio Standar Pelayanan belum tersedia</h2>
+          <h2 className="text-lg font-bold text-[#002855]">Studio Standar Pelayanan tidak tersedia</h2>
           <p className="text-sm text-slate-500 mt-2">
-            Penyusunan naskah Standar Pelayanan masih dalam tahap uji coba dan sementara hanya dapat diakses
-            oleh <b>superadmin</b>. Untuk saat ini, dokumen SP yang sudah jadi dapat diunggah lewat menu
-            <b> Dokumen Manual</b>.
+            Akun <b>viewer</b> hanya dapat melihat daftar dokumen. Penyusunan naskah Standar Pelayanan
+            terbuka untuk akun superadmin, admin, dan user unit kerja.
           </p>
           <button onClick={() => router.push('/sp')}
             className="mt-5 px-5 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold">
@@ -280,10 +299,10 @@ function StudioSPContent() {
       <SPBuilder
         ref={builderRef}
         initialData={dataAwal}
-        initialTitle={judulAwal}
-        initialL1={l1Awal}
-        initialL2={l2Awal}
-        initialKlasifikasi={klasifikasiAwal}
+        initialTitle={judulAwal || metaAwal?.judul || ''}
+        initialL1={l1Awal || metaAwal?.l1 || ''}
+        initialL2={l2Awal || metaAwal?.l2 || ''}
+        initialKlasifikasi={klasifikasiAwal || metaAwal?.klasifikasi || ''}
         isViewOnly={hanyaLihat}
         saving={menyimpan}
         onSave={simpan}
@@ -294,6 +313,8 @@ function StudioSPContent() {
         onImportDocx={imporWord}
         onRenderPdf={renderPdf}
         statusDokumen={status}
+        bolehKeterkaitan
+        cariDokumenTerkait={cariDokumenTerkait}
       />
     </>
   );

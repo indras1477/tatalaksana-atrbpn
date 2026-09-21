@@ -7,6 +7,7 @@ import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import dynamic from 'next/dynamic';
 import { ExternalLink, FileText, Building2, AlertCircle, Loader2 } from 'lucide-react';
+import KreditPengembang from '@/components/KreditPengembang';
 
 const BPMNViewer = dynamic(() => import('@/components/BPMNViewer'), {
   ssr: false,
@@ -88,16 +89,7 @@ export default function SharePage() {
         <span className="block sm:inline">Tampilan baca-saja · Sistem Informasi Manajemen Prosedur dan Pelayanan (SIMPEL) ATR/BPN</span>
         <span className="hidden sm:inline"> · </span>
         <span className="block sm:inline">
-          Dibuat oleh{' '}
-          <a
-            href="https://nanda-portfolio-flax.vercel.app"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-500 hover:underline font-medium"
-          >
-            Nanda Ferdiansyah
-          </a>{' '}
-          &copy; 2025–{new Date().getFullYear()}
+          <KreditPengembang />
         </span>
       </footer>
     </div>

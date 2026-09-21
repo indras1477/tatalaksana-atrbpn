@@ -25,9 +25,11 @@ import {
   ArrowLeft, Save, Send, FileDown, FileUp, Plus, Trash2, ChevronUp, ChevronDown,
   Bold, Italic, Underline, List, ListOrdered, IndentIncrease, IndentDecrease,
   Loader2, Sparkles, FileText, Layers, ZoomIn, ZoomOut, Info, X, Undo2, Redo2, BookOpen, TableCellsMerge, Check,
+  Link2, ExternalLink, Search,
 } from 'lucide-react';
+import PratinjauPdf from '@/components/PratinjauPdf';
 import {
-  type SPDoc, type SPItem, SP_PAGE, SP_CONTENT_W, SP_CONTENT_H, SP_COL,
+  type SPDoc, type SPItem, type TautanDok, SP_PAGE, SP_CONTENT_H, SP_COL,
   SEC_SERVICE, SEC_MANUFACTURING, KOMPONEN_TAMBAHAN, KLASIFIKASI_SP,
   spId, parseSPDoc, bersihkanUraian, uraianKosong, contohIsiUntuk, hitungBaris,
 } from '@/lib/spTemplate';
@@ -54,6 +56,10 @@ interface Props {
   /** Status dokumen di server — ditampilkan di modal Simpan. */
   statusDokumen?: string | null;
   toolbarExtra?: React.ReactNode;
+  /** Tampilkan bagian Keterkaitan Dokumen (SOP / Proses Bisnis) di panel properti. */
+  bolehKeterkaitan?: boolean;
+  /** Cari dokumen SOP / Proses Bisnis yang dapat dikaitkan (pencarian di server). */
+  cariDokumenTerkait?: (kind: 'sop' | 'bpmn', q: string) => Promise<TautanDok[]>;
 }
 
 // =============================================================================
@@ -255,7 +261,7 @@ const SPBuilder = forwardRef<SPBuilderRef, Props>(function SPBuilder({
   initialData = null, initialTitle = '', initialL1 = '', initialL2 = '', initialKlasifikasi = '',
   isViewOnly = false, saving = false,
   onSave, onSubmit, onBack, onDownloadPdf, onDownloadDocx, onImportDocx, onRenderPdf,
-  statusDokumen = null, toolbarExtra = null,
+  statusDokumen = null, toolbarExtra = null, bolehKeterkaitan = false, cariDokumenTerkait,
 }, ref) {
   const [doc, setDoc] = useState<SPDoc>(() =>
     parseSPDoc(initialData, {
@@ -264,7 +270,14 @@ const SPBuilder = forwardRef<SPBuilderRef, Props>(function SPBuilder({
   const [zoom, setZoom] = useState(1);
   const [sibuk, setSibuk] = useState<'' | 'pdf' | 'docx' | 'impor'>('');
   const [pesan, setPesan] = useState<{ tone: 'ok' | 'err'; teks: string } | null>(null);
-  const [modalInfo, setModalInfo] = useState(false);
+  // Panel properti di sisi kanan (dulu modal "Edit Info"): identitas naskah +
+  // integrasi ke dokumen SOP/Proses Bisnis yang sudah ditetapkan.
+  const [panelInfo, setPanelInfo] = useState(false);
+  // Kandidat keterkaitan dicari di SERVER (registri Dashboard >1600 dokumen —
+  // terlalu besar untuk dimuat seluruhnya), dengan jeda ketik 300 ms.
+  const [kandidatTautan, setKandidatTautan] = useState<{ sop: TautanDok[]; bpmn: TautanDok[] }>({ sop: [], bpmn: [] });
+  const [memuatKandidat, setMemuatKandidat] = useState<{ sop: boolean; bpmn: boolean }>({ sop: false, bpmn: false });
+  const [cariTautan, setCariTautan] = useState<{ sop: string; bpmn: string }>({ sop: '', bpmn: '' });
   // "Simpan" membuka pilihan tindakan (draft / kirim ke Ortala) — pola yang sama
   // dengan studio BPMN & SOP, bukan dua tombol terpisah di bilah alat.
   const [barisAktif, setBarisAktif] = useState<string | null>(null);
@@ -530,24 +543,6 @@ const SPBuilder = forwardRef<SPBuilderRef, Props>(function SPBuilder({
       <Ikon className="w-4 h-4" />
     </button>
   );
-
-  // Skala bingkai pratinjau: penampil PDF tersemat tidak konsisten menghormati
-  // parameter #view=FitH pada URL blob (sebagian peramban membukanya di zoom
-  // penuh → sisi kanan lembar terpotong). Bingkainya dibuat selebar 900px —
-  // cukup untuk lembar F4 di zoom 100% — lalu DISKALAKAN agar muat wadah,
-  // sehingga selembar penuh selalu terlihat apa pun perilaku penampilnya.
-  const wadahPrvRef = useRef<HTMLDivElement>(null);
-  const [skalaPrv, setSkalaPrv] = useState(1);
-  useEffect(() => {
-    if (!pratinjauUrl) return;
-    const hitung = () => {
-      const w = wadahPrvRef.current?.clientWidth || 0;
-      setSkalaPrv(w && w < 900 ? w / 900 : 1);
-    };
-    hitung();
-    window.addEventListener('resize', hitung);
-    return () => window.removeEventListener('resize', hitung);
-  }, [pratinjauUrl]);
 
   const bukaPratinjau = async () => {
     setMemuatPratinjau(true);
@@ -963,6 +958,54 @@ const SPBuilder = forwardRef<SPBuilderRef, Props>(function SPBuilder({
   const tblKelas = 'px-3 py-2 rounded-xl border text-sm outline-none focus:ring-2 focus:ring-teal-500 bg-white border-slate-300 text-slate-800';
   const labelKelas = 'text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1 block';
 
+  // ── Keterkaitan dokumen SOP / Proses Bisnis (panel properti) ────────────
+  // Hasil HANYA muncul setelah pengguna mengetik: registri Dashboard berisi
+  // ribuan dokumen, jadi menampilkan daftar bawaan tidak membantu — dan saat
+  // kotak kosong server pun tidak dipanggil sama sekali.
+  const jalankanPencarian = useCallback((kind: 'sop' | 'bpmn', kunci: string) => {
+    if (!panelInfo || !bolehKeterkaitan || !cariDokumenTerkait) return undefined;
+    const q = kunci.trim();
+    if (!q) {
+      setKandidatTautan(k => (k[kind].length ? { ...k, [kind]: [] } : k));
+      setMemuatKandidat(m => (m[kind] ? { ...m, [kind]: false } : m));
+      return undefined;
+    }
+    let batal = false;
+    setMemuatKandidat(m => ({ ...m, [kind]: true }));
+    const jeda = setTimeout(() => {
+      cariDokumenTerkait(kind, q)
+        .then(hasil => { if (!batal) setKandidatTautan(k => ({ ...k, [kind]: hasil })); })
+        .catch(() => { if (!batal) setKandidatTautan(k => ({ ...k, [kind]: [] })); })
+        .finally(() => { if (!batal) setMemuatKandidat(m => ({ ...m, [kind]: false })); });
+    }, 300);
+    return () => { batal = true; clearTimeout(jeda); };
+  }, [panelInfo, bolehKeterkaitan, cariDokumenTerkait]);
+
+  useEffect(() => jalankanPencarian('sop', cariTautan.sop), [jalankanPencarian, cariTautan.sop]);
+  useEffect(() => jalankanPencarian('bpmn', cariTautan.bpmn), [jalankanPencarian, cariTautan.bpmn]);
+
+  const daftarTautan = doc.tautan || [];
+  // Nomor dokumen registri dan naskah studio berasal dari tabel berbeda, jadi
+  // pembanding WAJIB menyertakan `sumber` — kalau tidak, dua dokumen berbeda
+  // dengan id kebetulan sama akan dianggap satu.
+  const tambahTautan = (t: TautanDok) => setDoc(d => {
+    const ada = (d.tautan || []).some(x => kunciTautan(x) === kunciTautan(t));
+    return ada ? d : { ...d, tautan: [...(d.tautan || []), t] };
+  });
+  const hapusTautan = (t: TautanDok) =>
+    setDoc(d => ({ ...d, tautan: (d.tautan || []).filter(x => kunciTautan(x) !== kunciTautan(t)) }));
+  // Dokumen registri (Dashboard) dibuka lewat tautan berkasnya; naskah studio
+  // dibuka di studionya sendiri dalam mode hanya-lihat.
+  const bukaTautan = (t: TautanDok) => {
+    if (t.sumber === 'registri') {
+      if (t.link) window.open(t.link, '_blank', 'noopener');
+      return;
+    }
+    window.open(`/e-sop-atrbpn/${t.kind === 'sop' ? 'sop' : 'bpmn'}/studio?id=${t.id}&mode=view`, '_blank');
+  };
+  const bisaDibuka = (t: TautanDok) => t.sumber !== 'registri' || !!t.link;
+  const kunciTautan = (t: TautanDok) => `${t.sumber || 'studio'}:${t.kind}:${t.id}`;
+
   return (
     <div className="h-[calc(100dvh-4rem)] overflow-auto bg-slate-200 flex flex-col items-center p-3 sm:p-5 gap-4">
       <style>{`
@@ -1095,9 +1138,9 @@ const SPBuilder = forwardRef<SPBuilderRef, Props>(function SPBuilder({
             {pratinjauUrl ? 'Tutup Pratinjau' : 'Pratinjau Halaman'}
           </button>
 
-          <button onClick={() => setModalInfo(true)}
-            title="Ubah Nama Pelayanan, klasifikasi, kepala naskah, nomor, dan tanggal"
-            className="px-3 py-2 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 text-sm font-bold flex items-center gap-1.5 transition-colors">
+          <button onClick={() => setPanelInfo(v => !v)}
+            title="Panel properti dokumen: identitas naskah & integrasi SOP/Proses Bisnis"
+            className={`px-3 py-2 rounded-xl border text-sm font-bold flex items-center gap-1.5 transition-colors ${panelInfo ? 'border-teal-600 bg-teal-50 text-teal-700' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}>
             <FileText className="w-4 h-4" /> Edit Info
           </button>
 
@@ -1194,9 +1237,11 @@ const SPBuilder = forwardRef<SPBuilderRef, Props>(function SPBuilder({
               (NO · KOMPONEN · URAIAN) berulang di setiap halaman. Tekan <b>Tutup Pratinjau</b> untuk kembali menyunting.
             </span>
           </div>
-          <div ref={wadahPrvRef} className="w-full overflow-hidden rounded-2xl border border-slate-300 bg-white shadow-lg" style={{ height: '75vh' }}>
-            <iframe src={`${pratinjauUrl}#view=FitH`} title="Pratinjau halaman Standar Pelayanan"
-              style={{ width: 900, height: `calc(75vh / ${skalaPrv})`, transform: `scale(${skalaPrv})`, transformOrigin: 'top left', border: 0 }} />
+          {/* Dirender pdf.js ke kanvas beresolusi layar — pas lebar dan tetap
+              tajam di semua peramban (penampil PDF tersemat tiap peramban
+              berbeda perilaku zoom-nya). */}
+          <div className="w-full overflow-hidden rounded-2xl border border-slate-300 bg-slate-100 shadow-lg" style={{ height: '75vh' }}>
+            <PratinjauPdf url={pratinjauUrl} className="p-3" />
           </div>
         </div>
       )}
@@ -1263,60 +1308,153 @@ const SPBuilder = forwardRef<SPBuilderRef, Props>(function SPBuilder({
 
       <div className="h-16 shrink-0" aria-hidden />
 
-      {/* ── Edit Info: identitas naskah (dulu kartu tetap di atas kanvas) ── */}
-      {modalInfo && (
-        <div className="fixed inset-0 z-60 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4 no-print font-sans"
-          onClick={() => setModalInfo(false)}>
-          <div onClick={e => e.stopPropagation()}
-            className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl max-h-[90vh] flex flex-col overflow-hidden">
-            <div className="flex items-center justify-between gap-2 px-5 py-4 border-b border-slate-100 shrink-0">
-              <h3 className="text-lg font-black text-slate-800 flex items-center gap-2">
-                <FileText className="w-5 h-5 text-teal-600" /> Informasi Dokumen
+      {/* ── Panel Properti (kanan): identitas naskah + integrasi dokumen ──
+             Menggantikan modal "Edit Info". Di layar lebar panel menempel di
+             kanan tanpa penutup gelap sehingga kanvas tetap bisa disunting;
+             di layar sempit ia menjadi laci dengan penutup. ─────────────── */}
+      {panelInfo && (
+        <>
+          <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-[2px] xl:hidden no-print" onClick={() => setPanelInfo(false)} />
+          <aside className="fixed right-0 top-16 bottom-0 z-50 w-87.5 max-w-[92vw] bg-white border-l border-slate-200 shadow-2xl flex flex-col no-print font-sans">
+            <div className="flex items-center justify-between gap-2 px-4 py-3.5 border-b border-slate-100 shrink-0">
+              <h3 className="text-sm font-black text-slate-800 flex items-center gap-2">
+                <FileText className="w-4 h-4 text-teal-600" /> Properti Dokumen
               </h3>
-              <button onClick={() => setModalInfo(false)} className="p-2 rounded-lg text-slate-400 hover:bg-slate-100">
-                <X className="w-5 h-5" />
+              <button onClick={() => setPanelInfo(false)} className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100">
+                <X className="w-4 h-4" />
               </button>
             </div>
-            <div className="overflow-y-auto">
-<div className="p-5 grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="md:col-span-2">
-              <label className={labelKelas}>Nama Pelayanan *</label>
-              <input value={doc.judul} disabled={isViewOnly}
-                onChange={e => setDoc(d => ({ ...d, judul: e.target.value }))}
-                placeholder="mis. Pemberian Peta Analisis Penatagunaan Tanah"
-                className={`${tblKelas} w-full font-bold`} />
-            </div>
-            <div>
-              <label className={labelKelas}>Klasifikasi SP</label>
-              <select value={doc.klasifikasi} disabled={isViewOnly}
-                onChange={e => setDoc(d => ({ ...d, klasifikasi: e.target.value }))}
-                className={`${tblKelas} w-full`}>
-                <option value="">-- Pilih Klasifikasi --</option>
-                {KLASIFIKASI_SP.map(k => <option key={k} value={k}>{k}</option>)}
-              </select>
-            </div>
-            <div>
-              <label className={labelKelas}>Unit Kerja</label>
-              <input value={doc.unitKerja} disabled className={`${tblKelas} w-full opacity-70`}
-                placeholder="(mengikuti data dokumen)" />
-            </div>
-            <div className="md:col-span-2 flex items-start gap-2 text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-2.5">
-              <Info className="w-4 h-4 shrink-0 text-teal-600 mt-px" />
-              <span>
-                Kertas <b>F4 potret {SP_PAGE.w}×{SP_PAGE.h} mm</b>, margin atas {SP_PAGE.mTop / 10} · kiri {SP_PAGE.mLeft / 10} · bawah {SP_PAGE.mBottom / 10} · kanan {SP_PAGE.mRight / 10} cm,
-                huruf <b>Bookman Old Style 12</b>, spasi baris <b>1 (single)</b> tanpa jarak antar-paragraf.
-                Lebar tabel {SP_CONTENT_W} mm mengikuti margin tersebut. Garis merah putus di kanvas adalah
-                perkiraan batas halaman — pemenggalan akhir mengikuti hasil PDF/Word.
-              </span>
+
+            <div className="flex-1 overflow-y-auto p-4 space-y-5">
+              {/* Identitas naskah */}
+              <div className="space-y-3">
+                <div>
+                  <label className={labelKelas}>Nama Pelayanan *</label>
+                  <input value={doc.judul} disabled={isViewOnly}
+                    onChange={e => setDoc(d => ({ ...d, judul: e.target.value }))}
+                    placeholder="mis. Pemberian Peta Analisis Penatagunaan Tanah"
+                    className={`${tblKelas} w-full font-bold`} />
+                </div>
+                <div>
+                  <label className={labelKelas}>Klasifikasi SP</label>
+                  <select value={doc.klasifikasi} disabled={isViewOnly}
+                    onChange={e => setDoc(d => ({ ...d, klasifikasi: e.target.value }))}
+                    className={`${tblKelas} w-full`}>
+                    <option value="">-- Pilih Klasifikasi --</option>
+                    {KLASIFIKASI_SP.map(k => <option key={k} value={k}>{k}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className={labelKelas}>Unit Kerja</label>
+                  <input value={doc.unitKerja} disabled className={`${tblKelas} w-full opacity-70`}
+                    placeholder="(mengikuti data dokumen)" />
+                </div>
               </div>
+
+              {/* Keterkaitan dokumen SOP / Proses Bisnis — semua peran penyusun */}
+              {bolehKeterkaitan && (
+                <div className="border-t border-slate-100 pt-4">
+                  <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1 flex items-center gap-1.5">
+                    <Link2 className="w-3.5 h-3.5 text-teal-600" /> Keterkaitan Dokumen
+                  </p>
+                  <p className="text-[11px] text-slate-400 leading-snug mb-3">
+                    Kaitkan SP ini dengan dokumen <b>SOP</b> atau <b>Proses Bisnis</b> — termasuk seluruh dokumen
+                    yang tercatat di <b>Dashboard</b>. Keterkaitan tersimpan bersama naskah (tidak ikut tercetak).
+                  </p>
+                  {(['sop', 'bpmn'] as const).map(kind => {
+                    const label = kind === 'sop' ? 'SOP' : 'Proses Bisnis';
+                    const terpaut = daftarTautan.filter(t => t.kind === kind);
+                    const q = cariTautan[kind].trim();
+                    // Penyaringan & pembatasan dilakukan server; di sini cukup
+                    // membuang yang sudah terkait.
+                    const hasil = kandidatTautan[kind]
+                      .filter(k => !terpaut.some(t => kunciTautan(t) === kunciTautan(k)));
+                    const sedangCari = memuatKandidat[kind];
+                    return (
+                      <div key={kind} className="mb-4">
+                        <p className="text-[11px] font-bold text-slate-600 mb-1.5">{label}</p>
+                        {terpaut.length === 0 && (
+                          <p className="text-[11px] text-slate-300 italic mb-1.5">Belum ada {label} terkait.</p>
+                        )}
+                        {terpaut.map(t => (
+                          <div key={kunciTautan(t)} className="flex items-center gap-1.5 mb-1.5 rounded-xl border border-teal-200 bg-teal-50/60 px-2.5 py-2">
+                            {/* Judul MELIPAT (bukan dipotong titik-titik) supaya
+                                penyusun bisa membaca nama dokumen selengkapnya. */}
+                            <span className="min-w-0 flex-1">
+                              <button onClick={() => bukaTautan(t)} disabled={!bisaDibuka(t)}
+                                title={bisaDibuka(t) ? `Buka ${label} di tab baru` : 'Dokumen ini belum punya tautan berkas'}
+                                className="w-full text-left text-[11px] font-bold text-teal-800 leading-snug wrap-break-word enabled:hover:underline disabled:cursor-default">
+                                {t.judul || `${label} #${t.id}`}
+                              </button>
+                              <span className="block text-[10px] text-teal-600/80 mt-0.5 wrap-break-word">
+                                {t.sumber === 'registri' ? 'Dashboard' : 'Naskah studio'}
+                                {t.tahun ? ` · ${t.tahun}` : ''}{t.unit ? ` · ${t.unit}` : ''}
+                              </span>
+                            </span>
+                            {bisaDibuka(t) && (
+                              <button onClick={() => bukaTautan(t)} title="Buka di tab baru"
+                                className="p-1 rounded-md text-teal-600 hover:bg-teal-100 shrink-0"><ExternalLink className="w-3.5 h-3.5" /></button>
+                            )}
+                            {!isViewOnly && (
+                              <button onClick={() => hapusTautan(t)} title="Lepas keterkaitan"
+                                className="p-1 rounded-md text-slate-400 hover:text-red-600 hover:bg-red-50 shrink-0"><X className="w-3.5 h-3.5" /></button>
+                            )}
+                          </div>
+                        ))}
+                        {!isViewOnly && (
+                          <div className="relative">
+                            <Search className="w-3.5 h-3.5 text-slate-300 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                            <input value={cariTautan[kind]} placeholder={`Ketik untuk mencari ${label}…`}
+                              onChange={e => setCariTautan(c => ({ ...c, [kind]: e.target.value }))}
+                              className="w-full pl-8 pr-3 py-2 rounded-xl border border-slate-200 text-[11px] outline-none focus:ring-2 focus:ring-teal-500 bg-white text-slate-700" />
+                          </div>
+                        )}
+                        {!isViewOnly && sedangCari && (
+                          <p className="mt-1.5 text-[11px] text-slate-400 flex items-center gap-1.5"><Loader2 className="w-3 h-3 animate-spin" /> Mencari…</p>
+                        )}
+                        {!isViewOnly && !!q && !sedangCari && (
+                          hasil.length ? (
+                            <div className="mt-1.5 rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden max-h-72 overflow-y-auto">
+                              {hasil.map(k => (
+                                <button key={kunciTautan(k)} title={k.judul}
+                                  onClick={() => { tambahTautan(k); setCariTautan(c => ({ ...c, [kind]: '' })); }}
+                                  className="w-full text-left px-2.5 py-2 hover:bg-teal-50 group flex items-start gap-1.5">
+                                  <Plus className="w-3 h-3 text-teal-600 shrink-0 mt-0.5" />
+                                  {/* Nama dokumen ditampilkan UTUH (melipat) — nama SOP/Probis
+                                      kerap panjang, dan dipotong titik-titik membuatnya sulit dibedakan. */}
+                                  <span className="min-w-0">
+                                    <span className="block text-[11px] leading-snug text-slate-600 group-hover:text-teal-800 wrap-break-word">{k.judul}</span>
+                                    <span className="block text-[10px] text-slate-400 mt-0.5 wrap-break-word">
+                                      {k.sumber === 'registri' ? 'Dashboard' : 'Naskah studio'}
+                                      {k.tahun ? ` · ${k.tahun}` : ''}{k.unit ? ` · ${k.unit}` : ''}
+                                    </span>
+                                  </span>
+                                </button>
+                              ))}
+                            </div>
+                          ) : (
+                            <p className="mt-1.5 text-[11px] text-slate-400 italic">
+                              Tidak ada {label} yang cocok dengan &ldquo;{q}&rdquo;.
+                            </p>
+                          )
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Spesifikasi kertas */}
+              <div className="flex items-start gap-2 text-[11px] text-slate-500 bg-slate-50 border border-slate-200 rounded-xl p-2.5">
+                <Info className="w-4 h-4 shrink-0 text-teal-600 mt-px" />
+                <span>
+                  Kertas <b>F4 potret {SP_PAGE.w}×{SP_PAGE.h} mm</b>, margin atas {SP_PAGE.mTop / 10} · kiri {SP_PAGE.mLeft / 10} · bawah {SP_PAGE.mBottom / 10} · kanan {SP_PAGE.mRight / 10} cm,
+                  huruf <b>Bookman Old Style 12</b>, spasi baris <b>1 (single)</b> tanpa jarak antar-paragraf.
+                </span>
               </div>
             </div>
-            <div className="px-5 py-4 border-t border-slate-100 bg-slate-50 text-right shrink-0">
-              <button onClick={() => setModalInfo(false)}
-                className="px-6 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-sm font-bold">Selesai</button>
-            </div>
-          </div>
-        </div>
+          </aside>
+        </>
       )}
 
       {/* ── Popup Gabung Sel: pilih pasangan baris + kolom yang disatukan ── */}

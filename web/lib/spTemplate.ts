@@ -64,6 +64,22 @@ export interface SPDoc {
   unitKerja: string;
   subUnitKerja: string;
   sections: SPSection[];
+  /** Keterkaitan dokumen: tautan ke SOP / Proses Bisnis yang sudah ditetapkan.
+   *  Metadata murni (tak ikut dicetak) — dikelola dari panel properti studio. */
+  tautan?: TautanDok[];
+}
+
+/** Satu dokumen terkait. `sumber` membedakan asalnya:
+ *  - 'registri' → tabel `dokumen` (yang dihitung Dashboard; dibuka lewat `link`)
+ *  - 'studio'   → naskah sop_models/bpmn_models (dibuka di studio, mode lihat) */
+export interface TautanDok {
+  kind: 'sop' | 'bpmn';
+  id: number;
+  judul: string;
+  sumber?: 'registri' | 'studio';
+  unit?: string | null;
+  tahun?: string | null;
+  link?: string | null;
 }
 
 /** Klasifikasi SP — dipilih di modal "Informasi SP Baru". */
@@ -208,6 +224,17 @@ export function parseSPDoc(raw: string | null | undefined, opsi?: Partial<SPDoc>
       unitKerja: String(d.unitKerja ?? opsi?.unitKerja ?? ''),
       subUnitKerja: String(d.subUnitKerja ?? opsi?.subUnitKerja ?? ''),
       sections,
+      tautan: (Array.isArray(d.tautan) ? d.tautan : [])
+        .filter(t => t && (t.kind === 'sop' || t.kind === 'bpmn') && Number.isFinite(Number(t.id)))
+        .map(t => ({
+          kind: t.kind, id: Number(t.id), judul: String(t.judul || ''),
+          // Tautan lama (sebelum registri didukung) tidak menyimpan `sumber`;
+          // semuanya berasal dari naskah studio.
+          sumber: t.sumber === 'registri' ? 'registri' as const : 'studio' as const,
+          ...(t.unit ? { unit: String(t.unit) } : {}),
+          ...(t.tahun ? { tahun: String(t.tahun) } : {}),
+          ...(t.link ? { link: String(t.link) } : {}),
+        })),
     };
   } catch {
     return templateSPBaru(opsi);

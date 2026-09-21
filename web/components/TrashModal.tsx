@@ -1,6 +1,6 @@
 'use client';
 
-// KOTAK SAMPAH (admin & superadmin) — dokumen BPMN/SOP/SP yang dihapus disimpan
+// KOTAK SAMPAH (admin, superadmin & user unit — user hanya melihat unitnya) — dokumen BPMN/SOP/SP yang dihapus disimpan
 // 30 hari sebelum dibuang permanen, sehingga penghapusan tak sengaja bisa dipulihkan.
 import { useEffect, useState, useCallback } from 'react';
 import { Trash2, RotateCcw, X, GitBranch, FileText, ClipboardList, AlertTriangle, Clock } from 'lucide-react';
@@ -146,7 +146,7 @@ export default function TrashModal({ token, role, isDarkMode, onClose, onRestore
           {items !== null && items.length > 0 && (
             <p className={`text-[11px] mt-4 pt-3 border-t flex items-start gap-1.5 leading-relaxed ${isDarkMode ? 'text-slate-500 border-slate-800' : 'text-slate-400 border-slate-100'}`}>
               <AlertTriangle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-              Dokumen dibuang permanen otomatis setelah {retensi} hari sejak dihapus.{isSuperadmin ? ' Tombol merah menghapus permanen seketika (khusus superadmin).' : ''}
+              Dokumen dibuang permanen otomatis setelah {retensi} hari sejak dihapus.{isSuperadmin ? ' Tombol merah menghapus permanen seketika (khusus superadmin).' : ''}{role === 'user' ? ' Hanya dokumen unit kerja Anda yang ditampilkan.' : ''}
             </p>
           )}
         </div>

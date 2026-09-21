@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { usePathname } from 'next/navigation';
 import { Clock } from 'lucide-react';
+import KreditPengembang from '@/components/KreditPengembang';
 import { AppProvider, useAppContext } from '@/lib/app-context';
 import AppSidebar from '@/components/layout/AppSidebar';
 import AppHeader from '@/components/layout/AppHeader';
@@ -182,16 +183,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
               : 'border-slate-200 text-slate-400 bg-white'
           }`}
         >
-          Dibuat oleh{' '}
-          <a
-            href="https://nanda-portfolio-flax.vercel.app"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-500 hover:underline font-medium"
-          >
-            Nanda Ferdiansyah
-          </a>{' '}
-          &copy; 2025–{new Date().getFullYear()}
+          <KreditPengembang isDarkMode={isDarkMode} />
         </footer>
       </div>
     </div>

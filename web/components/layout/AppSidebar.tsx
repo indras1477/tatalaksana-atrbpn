@@ -3,7 +3,7 @@
 import { usePathname, useRouter } from 'next/navigation';
 import {
   Home, FileSignature, GitBranch, Users, LogOut,
-  HelpCircle, X, FilePlus, ScrollText, Landmark, Network, ClipboardCheck,
+  HelpCircle, X, FilePlus, ScrollText, Landmark, Network, ClipboardCheck, Info,
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
 
@@ -204,14 +204,33 @@ export default function AppSidebar({ isOpen, onClose }: Props) {
                 onClick={() => navigate('/panduan')}
                 title={!isOpen ? 'Panduan Penggunaan' : undefined}
                 className={`
-                  w-full flex items-center py-3 mb-1 rounded-2xl text-slate-400 hover:bg-white/5 hover:text-white transition-all text-sm font-medium
+                  w-full flex items-center py-3 mb-1 rounded-2xl transition-all text-sm
                   ${isOpen ? 'gap-3 px-4' : 'justify-center px-3'}
+                  ${pathname.startsWith('/panduan')
+                    ? 'bg-linear-to-r from-[#A29061] to-[#8c7a4b] text-white font-bold shadow-lg shadow-[#A29061]/25'
+                    : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'}
                 `}
               >
                 <HelpCircle className="w-5 h-5 shrink-0" />
                 {isOpen && <span>Panduan Penggunaan</span>}
               </button>
             )}
+
+            {/* About — tentang aplikasi ini */}
+            <button
+              onClick={() => navigate('/about')}
+              title={!isOpen ? 'About' : undefined}
+              className={`
+                w-full flex items-center py-3 mb-1 rounded-2xl transition-all text-sm
+                ${isOpen ? 'gap-3 px-4' : 'justify-center px-3'}
+                ${pathname.startsWith('/about')
+                  ? 'bg-linear-to-r from-[#A29061] to-[#8c7a4b] text-white font-bold shadow-lg shadow-[#A29061]/25'
+                  : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'}
+              `}
+            >
+              <Info className="w-5 h-5 shrink-0" />
+              {isOpen && <span>About</span>}
+            </button>
 
             <button
               onClick={handleLogout}

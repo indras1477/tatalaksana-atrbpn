@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import {
   HelpCircle, BookOpen, GitBranch, FileSignature, ScrollText,
-  Users, FilePlus, X, ChevronRight,
+  Users, FilePlus, X, ChevronRight, Headphones, MessageCircle,
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
 import { SOPSymbolsSection, BPMNSymbolsSection } from '@/components/PanduanSymbols';
@@ -683,6 +683,12 @@ function PanduanModal({ item, onClose }: { item: typeof PANDUAN_ITEMS[0]; onClos
 export default function PanduanPage() {
   const { isDarkMode, currentUser } = useAppContext();
   const [activeItem, setActiveItem] = useState<typeof PANDUAN_ITEMS[0] | null>(null);
+  const [showCallCenter, setShowCallCenter] = useState(false);
+
+  const ADMINS = [
+    { name: 'Bima Karismanto', phone: '6285292724654' },
+    { name: 'Nanda Ferdiansyah', phone: '6285713595915' },
+  ];
   // Non-admin: sembunyikan Manajemen Pengguna & Upload Manual (Tambah Dokumen).
   const visibleItems = (currentUser?.role === 'admin' || currentUser?.role === 'superadmin')
     ? PANDUAN_ITEMS
@@ -762,11 +768,92 @@ export default function PanduanPage() {
           <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
             Hubungi tim Biro Organisasi, Tata Laksana, dan Manajemen Risiko (Ortala MR) ATR/BPN
           </p>
+          <button
+            type="button"
+            onClick={() => setShowCallCenter(true)}
+            title="Hubungi Admin via WhatsApp"
+            className={`mt-4 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border transition-all active:scale-95 ${
+              isDarkMode
+                ? 'bg-green-900/20 border-green-800/40 text-green-400 hover:bg-green-900/40 hover:border-green-700'
+                : 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100 hover:border-green-300'
+            }`}
+          >
+            <MessageCircle className="w-4 h-4" />
+            Hubungi Admin
+          </button>
         </div>
       </div>
 
       {/* Modal popup panduan */}
       {activeItem && <PanduanModal item={activeItem} onClose={() => setActiveItem(null)} />}
+
+      {/* Popup Call Center */}
+      {showCallCenter && (
+        <div
+          className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+          onClick={() => setShowCallCenter(false)}
+        >
+          <div
+            className={`w-full max-w-sm rounded-2xl shadow-2xl overflow-hidden ${isDarkMode ? 'bg-[#151F32]' : 'bg-white'}`}
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Header popup */}
+            <div className={`flex items-center justify-between px-5 py-4 border-b ${isDarkMode ? 'border-slate-800' : 'border-gray-100'}`}>
+              <div className="flex items-center gap-3">
+                <div className={`w-9 h-9 rounded-xl flex items-center justify-center ${isDarkMode ? 'bg-green-900/40' : 'bg-green-100'}`}>
+                  <Headphones className={`w-5 h-5 ${isDarkMode ? 'text-green-400' : 'text-green-600'}`} />
+                </div>
+                <div>
+                  <p className={`font-bold text-sm ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>Butuh Bantuan?</p>
+                  <p className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>Hubungi admin Biro ORTALAMR</p>
+                </div>
+              </div>
+              <button
+                onClick={() => setShowCallCenter(false)}
+                className={`p-1.5 rounded-lg transition-colors ${isDarkMode ? 'text-slate-400 hover:text-white hover:bg-slate-800' : 'text-gray-400 hover:text-gray-700 hover:bg-gray-100'}`}
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* Daftar kontak */}
+            <div className="p-4 space-y-3">
+              <p className={`text-xs text-center mb-1 ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>
+                Pilih admin yang ingin dihubungi via WhatsApp
+              </p>
+              {ADMINS.map((admin) => (
+                <a
+                  key={admin.phone}
+                  href={`https://wa.me/${admin.phone}?text=${encodeURIComponent('Halo, saya butuh bantuan terkait aplikasi SIMPEL ATR/BPN. Mohon bantuannya.')}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className={`flex items-center gap-4 p-4 rounded-xl border transition-all group ${
+                    isDarkMode
+                      ? 'border-slate-800 hover:border-green-800/60 hover:bg-green-900/20'
+                      : 'border-gray-100 hover:border-green-200 hover:bg-green-50'
+                  }`}
+                >
+                  {/* Avatar */}
+                  <div className="w-11 h-11 rounded-full bg-linear-to-br from-green-400 to-emerald-600 flex items-center justify-center font-bold text-white text-base shrink-0">
+                    {admin.name.split(' ').map(n => n[0]).join('').slice(0, 2)}
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <p className={`font-semibold text-sm truncate ${isDarkMode ? 'text-white' : 'text-gray-900'}`}>{admin.name}</p>
+                    <p className={`text-xs mt-0.5 ${isDarkMode ? 'text-slate-400' : 'text-gray-500'}`}>+{admin.phone}</p>
+                  </div>
+                  <MessageCircle className={`w-5 h-5 shrink-0 ${isDarkMode ? 'text-green-500' : 'text-green-500 group-hover:text-green-600'}`} />
+                </a>
+              ))}
+            </div>
+
+            <div className="px-5 pb-4 pt-1">
+              <p className={`text-[11px] text-center leading-relaxed ${isDarkMode ? 'text-slate-500' : 'text-gray-400'}`}>
+                Jam kerja: Senin–Jumat, 08.00–16.00 WIB
+              </p>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

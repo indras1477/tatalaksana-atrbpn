@@ -1,6 +1,7 @@
 "use client";
 import React, { useState, useEffect } from 'react';
 import { Eye, EyeOff, Loader2, Headphones, X, MessageCircle } from 'lucide-react';
+import KreditPengembang from '@/components/KreditPengembang';
 
 export default function LoginPage() {
   const [username, setUsername] = useState('');
@@ -273,16 +274,7 @@ export default function LoginPage() {
         </div>
 
         <p className="text-center text-sm text-gray-500 mt-6 leading-relaxed">
-          Dibuat oleh{' '}
-          <a
-            href="https://nanda-portfolio-flax.vercel.app"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-500 hover:underline font-medium"
-          >
-            Nanda Ferdiansyah
-          </a>{' '}
-          &copy; 2025–{new Date().getFullYear()}
+          <KreditPengembang />
         </p>
       </div>
     </div>
