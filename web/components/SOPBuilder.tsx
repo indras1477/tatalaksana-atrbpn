@@ -6,7 +6,7 @@ import {
   Plus, Trash2, UserPlus, UserMinus, Save,
   Circle, Square, Diamond, Shield,
   FileSpreadsheet, ArrowDownToLine, Send, ArrowLeft, Info, MousePointer2, X, ChevronLeft, ChevronRight,
-  Edit2, FileDown, Loader2, ChevronDown
+  Edit2, FileDown, Loader2, ChevronDown, Undo2, Redo2, Bold, Italic
 } from 'lucide-react';
 import { HIERARKI_UNIT } from '@/lib/constants';
 import ShareButton from '@/components/ShareButton';
@@ -1098,6 +1098,129 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
 
   useImperativeHandle(ref, () => ({ saveFlow: () => handleSaveFlow(false), exportExcel: handleExportExcel, getSOPData: getSOPData }));
 
+  // ── UNDO / REDO ────────────────────────────────────────────────────────────
+  // Riwayat berbasis snapshot getSOPData() (seluruh isi kanvas: cover + alur).
+  // Perubahan beruntun (mis. mengetik satu kalimat) digabung jadi satu langkah
+  // lewat jeda HIST_DEBOUNCE_MS. Undo/Redo bawaan browser TIDAK dipakai untuk sel
+  // contentEditable karena isinya dikelola React (formatContent) — hasilnya kacau.
+  const HIST_DEBOUNCE_MS = 450;
+  const HIST_MAX = 100;
+  const histPastRef = useRef<string[]>([]);
+  const histFutureRef = useRef<string[]>([]);
+  const histLastRef = useRef<string | null>(null);
+  const histTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const getDataRef = useRef(getSOPData);
+  getDataRef.current = getSOPData;
+  const [histFlags, setHistFlags] = useState({ canUndo: false, canRedo: false });
+  const refreshHistFlags = () => setHistFlags({ canUndo: histPastRef.current.length > 0, canRedo: histFutureRef.current.length > 0 });
+
+  // Catat snapshot baru bila isi berubah (setelah jeda). Snapshot pertama = kondisi awal.
+  const commitSnapshot = () => {
+    const cur = getDataRef.current();
+    if (histLastRef.current === null) { histLastRef.current = cur; return; }
+    if (cur === histLastRef.current) return;
+    histPastRef.current.push(histLastRef.current);
+    if (histPastRef.current.length > HIST_MAX) histPastRef.current.shift();
+    histLastRef.current = cur;
+    histFutureRef.current = [];
+    refreshHistFlags();
+  };
+  useEffect(() => {
+    if (histTimerRef.current) clearTimeout(histTimerRef.current);
+    histTimerRef.current = setTimeout(commitSnapshot, HIST_DEBOUNCE_MS);
+    return () => { if (histTimerRef.current) clearTimeout(histTimerRef.current); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [judul, nomor, unitKerja, subUnitKerja, jenisSOP, klasifikasiSOP, pelaksanaHeaders, jabatanPengesah, namaPengesah, nipPengesah, tglPembuatan, tglRevisi, tglEfektif, dasarHukum, kualifikasi, keterkaitan, peralatan, peringatan, pencatatan, steps, coverBreaks, coverCont]);
+
+  const applySnapshot = (json: string) => {
+    let d: Record<string, unknown>;
+    try { d = JSON.parse(json); } catch { return; }
+    // Lepas fokus dulu: sel yang sedang difokus tidak menyegarkan isinya dari state.
+    const ae = document.activeElement as HTMLElement | null;
+    if (ae && ae.isContentEditable) ae.blur();
+    const s = (k: string) => (typeof d[k] === 'string' ? (d[k] as string) : '');
+    setJudul(s('judul')); setNomor(s('nomor')); setUnitKerja(s('unitKerja')); setSubUnitKerja(s('subUnitKerja'));
+    setJenisSOP(s('jenisSOP')); setKlasifikasiSOP(s('klasifikasiSOP'));
+    setJabatanPengesah(s('jabatanPengesah')); setNamaPengesah(s('namaPengesah')); setNipPengesah(s('nipPengesah'));
+    setTglPembuatan(s('tglPembuatan')); setTglRevisi(s('tglRevisi')); setTglEfektif(s('tglEfektif'));
+    setDasarHukum(s('dasarHukum')); setKualifikasi(s('kualifikasi')); setKeterkaitan(s('keterkaitan'));
+    setPeralatan(s('peralatan')); setPeringatan(s('peringatan')); setPencatatan(s('pencatatan'));
+    if (Array.isArray(d.pelaksanaHeaders)) setPelaksanaHeaders(d.pelaksanaHeaders as string[][]);
+    if (Array.isArray(d.steps)) setSteps(d.steps as SOPStep[]);
+    setCoverBreaks((d.coverBreaks as { [key: string]: boolean }) || {});
+    setCoverCont((d.coverCont as Record<number, { left: string; right: string }[]>) || {});
+  };
+
+  const undo = () => {
+    if (isViewOnly) return;
+    if (histTimerRef.current) { clearTimeout(histTimerRef.current); histTimerRef.current = null; }
+    commitSnapshot(); // ikutkan ketikan yang belum sempat tercatat
+    const target = histPastRef.current.pop();
+    if (target === undefined || histLastRef.current === null) { refreshHistFlags(); return; }
+    histFutureRef.current.push(histLastRef.current);
+    histLastRef.current = target;
+    applySnapshot(target);
+    refreshHistFlags();
+  };
+  const redo = () => {
+    if (isViewOnly) return;
+    if (histTimerRef.current) { clearTimeout(histTimerRef.current); histTimerRef.current = null; }
+    const target = histFutureRef.current.pop();
+    if (target === undefined || histLastRef.current === null) { refreshHistFlags(); return; }
+    histPastRef.current.push(histLastRef.current);
+    histLastRef.current = target;
+    applySnapshot(target);
+    refreshHistFlags();
+  };
+  const undoRef = useRef(undo); undoRef.current = undo;
+  const redoRef = useRef(redo); redoRef.current = redo;
+
+  // Pintasan: Ctrl/Cmd+Z = undo, Ctrl+Y atau Ctrl/Cmd+Shift+Z = redo. Isian form biasa
+  // (input/textarea di modal) tetap memakai undo bawaan browser.
+  useEffect(() => {
+    if (isViewOnly) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.tagName === 'SELECT')) return;
+      const k = e.key.toLowerCase();
+      if (k === 'z' && !e.shiftKey) { e.preventDefault(); undoRef.current(); }
+      else if (k === 'y' || (k === 'z' && e.shiftKey)) { e.preventDefault(); redoRef.current(); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isViewOnly]);
+
+  // ── TEBAL / MIRING dari toolbar ────────────────────────────────────────────
+  // Berlaku pada teks yang sedang diblok di sel mana pun. Status tombol (aktif /
+  // bisa dipakai) mengikuti posisi kursor.
+  const [fmtState, setFmtState] = useState({ inCell: false, bold: false, italic: false });
+  useEffect(() => {
+    if (isViewOnly) return;
+    const onSel = () => {
+      const sel = window.getSelection();
+      const node = sel && sel.anchorNode;
+      const el = node ? (node.nodeType === 1 ? node as HTMLElement : node.parentElement) : null;
+      const cell = el ? el.closest('[contenteditable="true"]') : null;
+      if (!cell) { setFmtState(s => (s.inCell ? { inCell: false, bold: false, italic: false } : s)); return; }
+      let bold = false, italic = false;
+      try { bold = document.queryCommandState('bold'); italic = document.queryCommandState('italic'); } catch { /* abaikan */ }
+      setFmtState({ inCell: true, bold, italic });
+    };
+    document.addEventListener('selectionchange', onSel);
+    return () => document.removeEventListener('selectionchange', onSel);
+  }, [isViewOnly]);
+  const applyToolbarFormat = (cmd: 'bold' | 'italic') => {
+    const sel = window.getSelection();
+    const node = sel && sel.anchorNode;
+    const el = node ? (node.nodeType === 1 ? node as HTMLElement : node.parentElement) : null;
+    const cell = el ? el.closest('[contenteditable="true"]') as HTMLElement | null : null;
+    if (!cell) return;
+    // execCommand memicu event 'input' → EditableCell menyimpan hasilnya ke state.
+    document.execCommand(cmd);
+    try { setFmtState({ inCell: true, bold: document.queryCommandState('bold'), italic: document.queryCommandState('italic') }); } catch { /* abaikan */ }
+  };
+
   const handleHeaderChange = (chunkIdx: number, colIdx: number, val: string) => {
     setPelaksanaHeaders(prev => {
       const next = [...prev];
@@ -1834,6 +1957,15 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
             <button onClick={handleGoBack} className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95 border border-slate-200"><ArrowLeft size={16} /> Kembali</button>
             {!isViewOnly && (
               <>
+                {/* Undo/Redo + Tebal/Miring. onMouseDown+preventDefault pada B/I agar
+                    blok teks di sel tidak hilang saat tombol ditekan. */}
+                <div className="flex items-center gap-0.5 bg-slate-100 border border-slate-200 rounded-lg p-0.5">
+                  <button onClick={undo} disabled={!histFlags.canUndo} title="Urungkan (Ctrl+Z)" className="p-1.5 rounded-md text-slate-700 hover:bg-white disabled:opacity-35 disabled:hover:bg-transparent transition-colors"><Undo2 size={16} /></button>
+                  <button onClick={redo} disabled={!histFlags.canRedo} title="Ulangi (Ctrl+Y / Ctrl+Shift+Z)" className="p-1.5 rounded-md text-slate-700 hover:bg-white disabled:opacity-35 disabled:hover:bg-transparent transition-colors"><Redo2 size={16} /></button>
+                  <span className="w-px h-5 bg-slate-300 mx-0.5" />
+                  <button onMouseDown={(e) => { e.preventDefault(); applyToolbarFormat('bold'); }} disabled={!fmtState.inCell} title="Tebal (Ctrl+B) — blok teks dulu" className={`p-1.5 rounded-md transition-colors disabled:opacity-35 ${fmtState.bold ? 'bg-slate-700 text-white' : 'text-slate-700 hover:bg-white'}`}><Bold size={16} /></button>
+                  <button onMouseDown={(e) => { e.preventDefault(); applyToolbarFormat('italic'); }} disabled={!fmtState.inCell} title="Miring (Ctrl+I) — blok teks dulu" className={`p-1.5 rounded-md transition-colors disabled:opacity-35 ${fmtState.italic ? 'bg-slate-700 text-white' : 'text-slate-700 hover:bg-white'}`}><Italic size={16} /></button>
+                </div>
                 <button
                   onClick={() => {
                     setInfoForm({ judul, nomor, unitKerja, subUnitKerja, jenisSOP, klasifikasiSOP, jabatanPengesah, namaPengesah, nipPengesah });

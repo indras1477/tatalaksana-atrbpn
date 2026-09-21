@@ -3,6 +3,7 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import NavigatedViewer from 'bpmn-js/lib/NavigatedViewer';
 import poolGroupRendererModule from './bpmnPoolGroupRenderer';
+import { simpelModdleDescriptor, fontStyleModule } from './bpmnFontStyle';
 import { enableTouchInteraction } from './bpmnTouch';
 import { ChevronRight, ZoomIn, ZoomOut, Maximize2, Home } from 'lucide-react';
 import 'bpmn-js/dist/assets/diagram-js.css';
@@ -178,7 +179,9 @@ export default function BPMNViewer({ xml, registerExportApi }: BPMNViewerProps) 
 
     const viewer = new NavigatedViewer({
       container: containerRef.current,
-      additionalModules: [poolGroupRendererModule],
+      // Gaya tebal/miring teks (atribut DI simpel:bold/italic) — sama dgn editor.
+      moddleExtensions: { simpel: simpelModdleDescriptor },
+      additionalModules: [poolGroupRendererModule, fontStyleModule],
       // Samakan font & metrik pemenggalan label dgn editor + server PDF (webfont
       // URW Bookman) — tanpa ini viewer memakai Arial → SVG ekspor mode baca beda.
       textRenderer: {

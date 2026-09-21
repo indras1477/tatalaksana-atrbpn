@@ -2,12 +2,13 @@
 import React, { useEffect, useRef, useState } from 'react';
 import BpmnModeler from 'bpmn-js/lib/Modeler';
 import NavigatedViewer from 'bpmn-js/lib/NavigatedViewer';
-import { Undo2, Redo2, ChevronRight, Save, LayoutGrid, X, ZoomIn, ZoomOut, Maximize2 } from 'lucide-react';
+import { Undo2, Redo2, ChevronRight, Save, LayoutGrid, X, ZoomIn, ZoomOut, Maximize2, Bold, Italic } from 'lucide-react';
 import RuleProvider from 'diagram-js/lib/features/rules/RuleProvider';
 import BpmnRules from 'bpmn-js/lib/features/rules/BpmnRules';
 import CommandInterceptor from 'diagram-js/lib/command/CommandInterceptor';
 import OrderingProvider from 'diagram-js/lib/features/ordering/OrderingProvider';
 import poolGroupRendererModule from './bpmnPoolGroupRenderer';
+import { simpelModdleDescriptor, fontStyleModule, toggleFontStyle, readFontStyle } from './bpmnFontStyle';
 import { enableTouchInteraction } from './bpmnTouch';
 
 import 'bpmn-js/dist/assets/diagram-js.css';
@@ -948,6 +949,8 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
   const onBeforeDeleteRef = useRef(onBeforeDelete);
   useEffect(() => { onBeforeDeleteRef.current = onBeforeDelete; });
   const [canUndo, setCanUndo] = useState(false);
+  // Status tombol Tebal/Miring: aktif bila ada elemen terpilih; tersorot bila semua bergaya.
+  const [fontSel, setFontSel] = useState({ any: false, bold: false, italic: false });
   const [canRedo, setCanRedo] = useState(false);
   const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbItem[]>([]);
   const [isExporting, setIsExporting] = useState(false);
@@ -969,10 +972,13 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
       },
       // poolGroupRendererModule: bpmn:Group digambar sebagai Pool/Swimlane — aktif
       // di mode edit MAUPUN view agar pool di dalam SubProcess tetap tampil saat dilihat.
+      // Ekstensi moddle 'simpel' menyimpan gaya tebal/miring teks per elemen di DI.
+      moddleExtensions: { simpel: simpelModdleDescriptor },
       additionalModules: isViewOnly
-        ? [poolGroupRendererModule]
+        ? [poolGroupRendererModule, fontStyleModule]
         : [
             poolGroupRendererModule,
+            fontStyleModule,
             {
               __init__: ['customPaletteProvider', 'customRules', 'customContextPadProvider', 'groupDropBehavior', 'colorPickerProvider', 'groupOrderingProvider'],
               customPaletteProvider: ['type', CustomPaletteProvider],
@@ -1186,6 +1192,8 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
         // sub-process pada Peta Proses Bisnis berjenjang).
         modeler.on('selection.changed', (evt: { newSelection?: BpmnElement[] }) => {
           if (!isMounted) return;
+          const els = (evt.newSelection || []).filter(e => (e as { parent?: unknown }).parent);
+          setFontSel({ any: els.length > 0, bold: els.length > 0 && els.every(e => readFontStyle(e).bold), italic: els.length > 0 && els.every(e => readFontStyle(e).italic) });
           const sel = evt.newSelection && evt.newSelection[0] as (BpmnElement & { parent?: BpmnElement }) | undefined;
           onSelectionChangeRef.current?.(
             sel && sel.type
@@ -1394,6 +1402,36 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
     modeling.createShape(group, { x: cx, y: cy }, root);
     modeling.updateLabel(group, 'Pool');
   };
+
+  // Tebal/miring teks elemen terpilih (tombol toolbar & Ctrl+B / Ctrl+I).
+  const toggleFontStyleSel = (key: 'bold' | 'italic') => {
+    const m = modelerRef.current;
+    if (!m || isViewOnly) return;
+    toggleFontStyle(m, key);
+    const els = ((m.get('selection') as { get: () => BpmnElement[] }).get() || []).filter(e => (e as { parent?: unknown }).parent);
+    setFontSel({ any: els.length > 0, bold: els.length > 0 && els.every(e => readFontStyle(e).bold), italic: els.length > 0 && els.every(e => readFontStyle(e).italic) });
+  };
+  const toggleFontStyleSelRef = useRef(toggleFontStyleSel);
+  toggleFontStyleSelRef.current = toggleFontStyleSel;
+  useEffect(() => {
+    if (isViewOnly) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.altKey || e.shiftKey) return;
+      const k = e.key.toLowerCase();
+      if (k !== 'b' && k !== 'i') return;
+      const t = e.target as HTMLElement | null;
+      // Jangan ganggu isian form / kotak ketik label (direct editing).
+      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      const m = modelerRef.current;
+      if (!m) return;
+      const sel = ((m.get('selection') as { get: () => BpmnElement[] }).get() || []);
+      if (!sel.length) return;
+      e.preventDefault();
+      toggleFontStyleSelRef.current(k === 'b' ? 'bold' : 'italic');
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [isViewOnly]);
 
   const handleExport = async () => {
     if (!modelerRef.current || !onSave) return;
@@ -1649,7 +1687,9 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
           {!isViewOnly && (
             <div className="flex overflow-hidden rounded-lg border bg-white shadow-sm shrink-0">
               <button onClick={() => { const cs = modelerRef.current?.get('commandStack') as BpmnCommandStack | undefined; cs?.undo(); }} disabled={!canUndo} title="Undo (Ctrl+Z)" className="border-r p-2 hover:bg-slate-50 disabled:opacity-30"><Undo2 size={16} /></button>
-              <button onClick={() => { const cs = modelerRef.current?.get('commandStack') as BpmnCommandStack | undefined; cs?.redo(); }} disabled={!canRedo} title="Redo (Ctrl+Y)" className="p-2 hover:bg-slate-50 disabled:opacity-30"><Redo2 size={16} /></button>
+              <button onClick={() => { const cs = modelerRef.current?.get('commandStack') as BpmnCommandStack | undefined; cs?.redo(); }} disabled={!canRedo} title="Redo (Ctrl+Y)" className="border-r p-2 hover:bg-slate-50 disabled:opacity-30"><Redo2 size={16} /></button>
+              <button onClick={() => toggleFontStyleSel('bold')} disabled={!fontSel.any} title="Teks tebal (Ctrl+B) — pilih elemen dulu" className={`border-r p-2 disabled:opacity-30 ${fontSel.bold ? 'bg-slate-700 text-white' : 'hover:bg-slate-50'}`}><Bold size={16} /></button>
+              <button onClick={() => toggleFontStyleSel('italic')} disabled={!fontSel.any} title="Teks miring (Ctrl+I) — pilih elemen dulu" className={`p-2 disabled:opacity-30 ${fontSel.italic ? 'bg-slate-700 text-white' : 'hover:bg-slate-50'}`}><Italic size={16} /></button>
             </div>
           )}
           <nav className="flex items-center text-sm border-l pl-4 min-w-0 overflow-hidden">
