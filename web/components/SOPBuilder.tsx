@@ -1,12 +1,12 @@
 "use client";
 
-import React, { useState, useEffect, useRef, forwardRef, useImperativeHandle, useMemo, createContext, useContext } from 'react';
+import React, { useState, useEffect, useLayoutEffect, useRef, forwardRef, useImperativeHandle, useMemo, createContext, useContext } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
   Plus, Trash2, UserPlus, UserMinus, Save,
   Circle, Square, Diamond, Shield,
   FileSpreadsheet, ArrowDownToLine, Send, ArrowLeft, Info, MousePointer2, X, ChevronLeft, ChevronRight,
-  Edit2, FileDown, Loader2, ChevronDown, Undo2, Redo2, Bold, Italic
+  Edit2, FileDown, Loader2, ChevronDown, Undo2, Redo2, Bold, Italic, Minus, Type
 } from 'lucide-react';
 import { HIERARKI_UNIT } from '@/lib/constants';
 import ShareButton from '@/components/ShareButton';
@@ -58,6 +58,8 @@ interface ExtraShape {
   branchText?: string;
   branchTextOffset?: { x: number; y: number };
   extraBranches?: BranchDef[];
+  shapeText?: string;
+  shapeTextSize?: number;
 }
 
 interface SOPStep {
@@ -84,6 +86,9 @@ interface SOPStep {
   ket: string;
   isPageBreak?: boolean;
   extraShapes?: ExtraShape[];
+  // Teks di dalam bentuk (mis. "Lengkap?" pada decision) + ukuran hurufnya (px).
+  shapeText?: string;
+  shapeTextSize?: number;
 }
 
 export interface SOPBuilderRef {
@@ -186,6 +191,9 @@ const DraggableLabel = ({
   );
 };
 
+
+// Tombol bulat kecil "+" yang menempel di garis batas baris/kolom tabel alur.
+const EDGE_BTN = 'absolute z-40 no-print w-4 h-4 rounded-full bg-sky-500 hover:bg-sky-600 text-white shadow flex items-center justify-center transition-opacity active:scale-110 [@media(hover:none)]:opacity-60';
 
 // --- KOMPONEN SVG PANAH KELUAR (ORTHOGONAL C-ROUTING KETAT) ---
 const BranchArrowLocal = ({ 
@@ -704,6 +712,23 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   });
   const colCount = pelaksanaHeaders[0]?.length || 3;
 
+  // Tinggi aktual bentuk yang berisi teks (tingginya ikut isi) — dipakai agar ujung
+  // panah atas/bawah tetap menempel di tepi bentuk. Diukur ulang setiap render;
+  // halaman alur yang tersembunyi (display:none) bernilai 0 → dilewati.
+  const [shapeHeights, setShapeHeights] = useState<Record<string, number>>({});
+  const [, setFontsTick] = useState(0);
+  useEffect(() => { document.fonts?.ready.then(() => setFontsTick(t => t + 1)).catch(() => {}); }, []);
+  useLayoutEffect(() => {
+    let changed = false;
+    const next: Record<string, number> = { ...shapeHeights };
+    document.querySelectorAll<HTMLElement>('[data-shape-h-key]').forEach(el => {
+      const h = el.offsetHeight; const k = el.dataset.shapeHKey;
+      if (!h || !k || next[k] === h) return;
+      next[k] = h; changed = true;
+    });
+    if (changed) setShapeHeights(next);
+  });
+
   const [jabatanPengesah, setJabatanPengesah] = useState<string>(parsedData?.jabatanPengesah || searchParams.get('jabatan') || '');
   const [namaPengesah, setNamaPengesah] = useState<string>(parsedData?.namaPengesah || searchParams.get('nama') || '');
   const [nipPengesah, setNipPengesah] = useState<string>(parsedData?.nipPengesah || searchParams.get('nip') || '');
@@ -1072,7 +1097,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         let startIndex = 0; for(let i=0; i<chunkIdx; i++) startIndex += chunkedSteps[i].length;
         const chunkRows = chunk.map((step, localIdx) => {
           const absIdx = startIndex + localIdx;
-          return `<tr><td style="text-align: center; vertical-align: middle;">${displayNumbers[absIdx] || ""}</td><td>${xl(step.kegiatan)}</td>${currentH.map((_, i) => `<td style="text-align: center; vertical-align: middle; font-size: 14pt;">${step.pelaksanaCol === i ? getExcelSymbol(step.symbol) : ''}</td>`).join('')}<td>${xl(step.syarat)}</td><td style="text-align: center; vertical-align: middle;">${xl(step.waktu)}</td><td>${xl(step.output)}</td><td>${xl(step.ket)}</td></tr>`;
+          return `<tr><td style="text-align: center; vertical-align: middle;">${displayNumbers[absIdx] || ""}</td><td>${xl(step.kegiatan)}</td>${currentH.map((_, i) => `<td style="text-align: center; vertical-align: middle; font-size: 14pt;">${step.pelaksanaCol === i ? getExcelSymbol(step.symbol) + (step.shapeText ? `<br><span style="font-size: 9pt;">${xl(step.shapeText)}</span>` : '') : ''}</td>`).join('')}<td>${xl(step.syarat)}</td><td style="text-align: center; vertical-align: middle;">${xl(step.waktu)}</td><td>${xl(step.output)}</td><td>${xl(step.ket)}</td></tr>`;
         }).join('');
         return (chunkIdx === 0 ? '' : `<tr><th colspan="2" style="background-color: #f8fafc; font-size: 9pt;">[Alur ${chunkIdx + 1}]</th>${currentH.map(h => `<th style="background-color: #f8fafc; font-size: 9pt;">${h || '-'}</th>`).join('')}<th colspan="4" style="background-color: #f8fafc;"></th></tr>`) + chunkRows;
       }).join('')}</tbody></table></body></html>`;
@@ -1230,14 +1255,48 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   };
 
   const addColumn = () => setPelaksanaHeaders(prev => prev.map(row => [...row, '']));
-  const removeColumn = (colIdxToRemove: number) => {
-    setPelaksanaHeaders(prev => prev.map(row => row.filter((_, i) => i !== colIdxToRemove)));
-    setSteps(steps.map(step => {
-      if (step.pelaksanaCol === colIdxToRemove) return { ...step, pelaksanaCol: Math.max(0, colIdxToRemove - 1) };
-      if (step.pelaksanaCol > colIdxToRemove) return { ...step, pelaksanaCol: step.pelaksanaCol - 1 };
-      return step;
-    }));
+
+  // Geser seluruh rujukan indeks kolom pelaksana pada langkah (bentuk utama, bentuk
+  // tambahan, dan target cabang). map() mengembalikan null = kolom itu dihapus.
+  const remapStepCols = (list: SOPStep[], map: (c: number) => number | null): SOPStep[] => list.map(step => {
+    const tc = (c?: number) => { if (c === undefined) return undefined; const m = map(c); return m === null ? undefined : m; };
+    const mapBranches = (bs?: BranchDef[]) => bs?.map(b => ({ ...b, targetCol: tc(b.targetCol) }));
+    const mc = map(step.pelaksanaCol);
+    const mainCol = mc === null ? Math.max(0, step.pelaksanaCol - 1) : mc;
+    let extraShapes: ExtraShape[] | undefined;
+    if (step.extraShapes) {
+      extraShapes = [];
+      for (const ex of step.extraShapes) {
+        const c = map(ex.colIdx);
+        // Kolomnya dihapus, atau bertumpuk dgn kolom bentuk utama → buang.
+        if (c === null || c === mainCol) continue;
+        extraShapes.push({ ...ex, colIdx: c, loopTargetCol: tc(ex.loopTargetCol), extraBranches: mapBranches(ex.extraBranches) });
+      }
+    }
+    return { ...step, pelaksanaCol: mainCol, loopTargetCol: tc(step.loopTargetCol), extraBranches: mapBranches(step.extraBranches), extraShapes };
+  });
+
+  // Sisipkan kolom pelaksana kosong pada posisi `at` (0 = paling kiri).
+  const insertColumnAt = (at: number) => {
+    setPelaksanaHeaders(prev => prev.map(row => { const r = [...row]; r.splice(at, 0, ''); return r; }));
+    setSteps(prev => remapStepCols(prev, c => (c >= at ? c + 1 : c)));
   };
+  const removeColumn = (colIdxToRemove: number) => {
+    if (colCount <= 1) return;
+    setPelaksanaHeaders(prev => prev.map(row => row.filter((_, i) => i !== colIdxToRemove)));
+    setSteps(prev => remapStepCols(prev, c => (c === colIdxToRemove ? null : c > colIdxToRemove ? c - 1 : c)));
+  };
+
+  // Sisip baris kosong pada indeks `at` — kolom pelaksana mengikuti baris di atasnya.
+  const insertRowAt = (at: number) => {
+    setSteps(prev => {
+      const col = at > 0 ? prev[Math.min(at, prev.length) - 1].pelaksanaCol : (prev[0]?.pelaksanaCol ?? 0);
+      const next = [...prev];
+      next.splice(at, 0, { id: genStepId(), kegiatan: '', pelaksanaCol: col, symbol: 'process', arrowDown: true, waktu: '', syarat: '', output: '', ket: '' });
+      return next;
+    });
+  };
+  const removeRowAt = (at: number) => setSteps(prev => prev.filter((_, i) => i !== at));
 
   const updateStep = (index: number, updates: Partial<SOPStep>) => {
     setSteps(prev => {
@@ -1322,6 +1381,9 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     }
   };
 
+  const defaultShapeTextSize = colCount > 7 ? 7 : colCount > 5 ? 8 : 9;
+  const SHAPE_TEXT_MIN = 5, SHAPE_TEXT_MAX = 20;
+
   const renderSymbolBox = (step: SOPStep, absIdx: number, colIdx: number, localIdx: number, chunkLength: number, chunkStart: number, chunkEnd: number) => {
     const isMainShape = step.pelaksanaCol === colIdx;
     const extraShapeObj = step.extraShapes?.find(s => s.colIdx === colIdx);
@@ -1377,7 +1439,31 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     let Shape;
     const commonClass = `mx-auto bg-white border-2 border-black z-30 relative flex items-center justify-center ${shapeClass}`;
     const shapeId = isMainShape ? `shape-${absIdx}` : `shape-extra-${absIdx}-${colIdx}`;
-    switch (currentSymbol) {
+    const shapeText = (isMainShape ? step.shapeText : extraShapeObj?.shapeText) || '';
+    const shapeTextSize = (isMainShape ? step.shapeTextSize : extraShapeObj?.shapeTextSize) || defaultShapeTextSize;
+    const hasShapeText = shapeText.trim() !== '';
+    if (hasShapeText) {
+      // Bentuk BERTEKS: ukurannya mengikuti isi (minimal sebesar bentuk polos) dan
+      // dibatasi lebar kolom. Bentuk tanpa teks tetap memakai tampilan lama.
+      const [baseW, baseH] = colCount > 7 ? [32, 24] : colCount > 5 ? [40, 24] : [56, 32];
+      const baseD = colCount > 7 ? 24 : colCount > 5 ? 28 : 32;
+      const textEl = <span className="relative z-10 leading-tight whitespace-pre-wrap wrap-break-word text-center" dangerouslySetInnerHTML={{ __html: inlineFmtHtml(escapeHtmlText(shapeText)) }} />;
+      const boxProps = { id: shapeId, 'data-shape-h-key': shapeId };
+      switch (currentSymbol) {
+        case 'start': case 'end':
+          Shape = <div {...boxProps} className="mx-auto max-w-full bg-white border-2 border-black z-30 relative flex items-center justify-center rounded-full px-[0.8em] py-[0.25em]" style={{ minWidth: baseW, minHeight: baseH, fontSize: shapeTextSize }}>{textEl}</div>; break;
+        case 'decision':
+          // Belah ketupat SVG (bukan div diputar) agar teks tetap tegak; padding em
+          // memberi ruang sudut supaya teks muat di dalam belah ketupat.
+          Shape = <div {...boxProps} className="mx-auto max-w-full z-30 relative flex items-center justify-center px-[1.6em] py-[0.9em]" style={{ minWidth: Math.round(baseD * 1.41), minHeight: Math.round(baseD * 1.41), fontSize: shapeTextSize }}><svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 w-full h-full overflow-visible"><polygon points="50,0 100,50 50,100 0,50" fill="white" stroke="black" strokeWidth="2" vectorEffect="non-scaling-stroke" /></svg>{textEl}</div>; break;
+        case 'connector':
+          Shape = <div {...boxProps} className="mx-auto max-w-full z-30 relative flex items-center justify-center px-[0.4em] pt-[0.3em] pb-[1em]" style={{ minWidth: baseD, minHeight: baseD, fontSize: shapeTextSize }}><svg viewBox="0 0 100 100" preserveAspectRatio="none" className="absolute inset-0 w-full h-full overflow-visible"><polygon points="0,0 100,0 100,65 50,100 0,65" fill="white" stroke="black" strokeWidth="2" vectorEffect="non-scaling-stroke" /></svg>{textEl}</div>; break;
+        default:
+          Shape = <div {...boxProps} className="mx-auto max-w-full bg-white border-2 border-black z-30 relative flex items-center justify-center px-[0.35em] py-[0.2em]" style={{ minWidth: baseW, minHeight: baseH, fontSize: shapeTextSize }}>{textEl}</div>;
+      }
+      const measured = shapeHeights[shapeId];
+      if (measured) offsetH = Math.max(1, Math.round(measured / 2) - 1);
+    } else switch (currentSymbol) {
       case 'start': case 'end': Shape = <div id={shapeId} className={`${commonClass} rounded-full`}></div>; break;
       case 'decision': Shape = <div id={shapeId} className={`${commonClass.replace(/w-\d+ h-\d+/, diamondClass)} rotate-45`}></div>; break;
       case 'connector': Shape = <div id={shapeId} className={`${diamondClass} relative flex items-center justify-center mx-auto z-30 bg-white`}><svg viewBox="0 0 100 100" className="absolute inset-0 w-full h-full overflow-visible"><polygon points="0,0 100,0 100,65 50,100 0,65" fill="white" stroke="black" strokeWidth="8" /></svg></div>; break;
@@ -1511,6 +1597,19 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
       }
     };
 
+    const updateShapeProps = (patch: Pick<ExtraShape, 'shapeText' | 'shapeTextSize'>) => {
+      if (isMainShape) updateStep(absIdx, patch);
+      else {
+        const ex = [...(step.extraShapes || [])];
+        const sIdx = ex.findIndex(x => x.colIdx === colIdx);
+        if (sIdx !== -1) { ex[sIdx] = { ...ex[sIdx], ...patch }; updateStep(absIdx, { extraShapes: ex }); }
+      }
+    };
+    const bumpShapeTextSize = (d: number) => {
+      const v = Math.min(SHAPE_TEXT_MAX, Math.max(SHAPE_TEXT_MIN, shapeTextSize + d));
+      updateShapeProps({ shapeTextSize: v === defaultShapeTextSize ? undefined : v });
+    };
+
     const handleDownTextChange = (val: string) => {
       if (isMainShape) updateStep(absIdx, { downText: val });
       else {
@@ -1634,7 +1733,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         )}
 
         <div
-          className="shape-menu-trigger relative z-30 pointer-events-auto cursor-pointer"
+          className="shape-menu-trigger relative z-30 pointer-events-auto cursor-pointer max-w-[calc(100%-6px)]"
           onClick={(e) => {
             e.stopPropagation();
             if (activeTool || connectingFrom !== null) { handleCellAction(absIdx, colIdx); return; }
@@ -1644,7 +1743,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         >
           {Shape}
           {!effectiveIsViewOnly && connectingFrom === null && !activeTool && openShapeMenu?.row === absIdx && openShapeMenu?.col === colIdx && (
-            <div onClick={(e) => e.stopPropagation()} className={`shape-menu-popup absolute ${localIdx === 0 ? 'top-full mt-2' : '-top-24'} left-1/2 -translate-x-1/2 flex flex-col gap-1 bg-white border border-slate-300 p-1.5 rounded-lg shadow-xl transition-opacity z-50 no-print font-sans pointer-events-auto animate-in fade-in zoom-in-95 duration-150`}>
+            <div onClick={(e) => e.stopPropagation()} className={`shape-menu-popup absolute ${localIdx === 0 ? 'top-full mt-2' : 'bottom-full mb-2'} left-1/2 -translate-x-1/2 w-max flex flex-col gap-1 bg-white border border-slate-300 p-1.5 rounded-lg shadow-xl transition-opacity z-50 no-print font-sans pointer-events-auto animate-in fade-in zoom-in-95 duration-150`}>
               
               <div className="flex gap-1 border-b border-slate-200 pb-1.5">
                 <button onClick={(e) => { e.stopPropagation(); updateShapeSymbol('start'); }} className="p-1 hover:bg-slate-100 rounded" title="Start/End"><Circle size={14}/></button>
@@ -1675,6 +1774,26 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                 );
               })}
               
+              {/* Teks di dalam bentuk + ukuran huruf */}
+              <div className="flex flex-col gap-1 pt-1.5 border-t border-slate-200 mt-1">
+                <label className="text-[9px] font-bold text-slate-500 flex items-center gap-1"><Type size={10} /> Teks dalam bentuk</label>
+                <textarea
+                  value={shapeText}
+                  onChange={(e) => updateShapeProps({ shapeText: e.target.value || undefined })}
+                  rows={2}
+                  placeholder="mis. Lengkap?"
+                  className="w-52 text-base leading-snug border border-slate-300 rounded-md px-1.5 py-1 resize-none focus:outline-none focus:ring-2 focus:ring-blue-300 font-sans"
+                />
+                <div className="flex items-center justify-between gap-1">
+                  <span className="text-[9px] font-bold text-slate-500">Ukuran teks</span>
+                  <div className="flex items-center gap-1">
+                    <button onClick={(e) => { e.stopPropagation(); bumpShapeTextSize(-1); }} disabled={shapeTextSize <= SHAPE_TEXT_MIN} title="Perkecil teks" className="p-1 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-40"><Minus size={11} /></button>
+                    <span className="text-[10px] font-bold text-slate-700 w-8 text-center tabular-nums">{shapeTextSize}px</span>
+                    <button onClick={(e) => { e.stopPropagation(); bumpShapeTextSize(1); }} disabled={shapeTextSize >= SHAPE_TEXT_MAX} title="Perbesar teks" className="p-1 rounded bg-slate-100 hover:bg-slate-200 disabled:opacity-40"><Plus size={11} /></button>
+                  </div>
+                </div>
+              </div>
+
               {!isMainShape && (
                 <div className="flex gap-1 pt-1 justify-center border-t border-slate-200 mt-1">
                   <button onClick={(e) => { e.stopPropagation(); const extras = (step.extraShapes || []).filter(s => s.colIdx !== colIdx); updateStep(absIdx, { extraShapes: extras }); }} className="text-[9px] font-bold px-2 py-1 rounded bg-red-50 text-red-600 hover:bg-red-500 hover:text-white transition-colors w-full flex items-center justify-center gap-1"><Trash2 size={10}/> Hapus</button>
@@ -2029,7 +2148,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
       {!effectiveIsViewOnly && activeTab !== 'cover' && (
         <div className="w-full max-w-[330mm] bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-sans p-3 rounded-xl mb-4 print:hidden flex items-start gap-2 shadow-sm">
           <MousePointer2 size={16} className="shrink-0 mt-0.5" />
-          <p><b>Tips:</b> <b>Klik/ketuk</b> sebuah bentuk pada kolom untuk membuka menu ganti bentuk, arah panah, atau cabang. Klik di luar bentuk untuk menutup menu.</p>
+          <p><b>Tips:</b> <b>Klik/ketuk</b> sebuah bentuk pada kolom untuk membuka menu ganti bentuk, <b>teks di dalam bentuk &amp; ukurannya</b>, arah panah, atau cabang. Arahkan kursor ke <b>nomor baris</b> atau <b>judul kolom pelaksana</b> untuk tombol <b>+</b> (sisip baris/kolom) dan <b>×</b> (hapus).</p>
         </div>
       )}
 
@@ -2192,7 +2311,10 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                     {currentHeaders.map((h, i) => (
                       <th key={i} className={`border-b-2 border-r-2 border-black p-1 relative group/h ${i === colCount - 1 ? '' : 'border-r-2 border-black'}`}>
                         <EditableCell value={h} onChange={(val) => handleHeaderChange(chunkIdx, i, val)} center={true} placeholder={`P${i+1}`} className="font-black text-center wrap-break-word" />
-                        {!effectiveIsViewOnly && <button onClick={() => removeColumn(i)} title="Hapus kolom pelaksana ini" className="absolute -top-1 -right-1 text-red-600 no-print opacity-40 group-hover/h:opacity-100 active:scale-125 bg-white rounded-full z-30"><UserMinus size={10}/></button>}
+                        {!effectiveIsViewOnly && colCount > 1 && <button onClick={() => removeColumn(i)} title="Hapus kolom pelaksana ini (bisa diurungkan Ctrl+Z)" className="absolute -top-1 -right-1 text-red-600 no-print opacity-40 group-hover/h:opacity-100 active:scale-125 bg-white rounded-full z-30"><UserMinus size={10}/></button>}
+                        {/* Sisip kolom: tombol + di garis batas kolom (kiri kolom pertama, kanan tiap kolom). */}
+                        {!effectiveIsViewOnly && i === 0 && <button onClick={() => insertColumnAt(0)} title="Sisipkan kolom pelaksana di kiri" className={`${EDGE_BTN} top-1/2 -left-2 -translate-y-1/2 opacity-0 group-hover/h:opacity-100`}><Plus size={10} strokeWidth={3}/></button>}
+                        {!effectiveIsViewOnly && <button onClick={() => insertColumnAt(i + 1)} title="Sisipkan kolom pelaksana di kanan" className={`${EDGE_BTN} top-1/2 -right-2 -translate-y-1/2 opacity-0 group-hover/h:opacity-100`}><Plus size={10} strokeWidth={3}/></button>}
                       </th>
                     ))}
                     <th className={`border-b-2 border-r-2 border-black p-1 ${getWaktuFontClass()}`}>Kelengkapan</th>
@@ -2204,9 +2326,17 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                   {chunk.map((step, localIdx) => {
                     const absIdx = startAbsIdx + localIdx;
                     return (
-                      <tr key={step.id} className="overflow-visible relative" style={{ height: shouldStretch ? `${100 / Math.max(chunk.length, 1)}%` : '22.8mm' /* 1/7 tinggi isi tabel — sama dgn baris halaman penuh agar konsisten */ }}>
+                      <tr key={step.id} className="overflow-visible relative group/row" style={{ height: shouldStretch ? `${100 / Math.max(chunk.length, 1)}%` : '22.8mm' /* 1/7 tinggi isi tabel — sama dgn baris halaman penuh agar konsisten */ }}>
                         <td className="border-r-2 border-black p-2 text-center font-normal relative h-px" title="Ketik 'auto' untuk mengembalikan ke urutan otomatis">
                           <EditableCell value={displayNumbers[absIdx]} onChange={(val) => updateStep(absIdx, { nomorOverride: val.trim().toLowerCase() === 'auto' ? undefined : val })} center={true} className="text-[13px] h-full" />
+                          {/* Aksi cepat baris: sisip di atas/bawah (tombol + di garis batas) & hapus. */}
+                          {!effectiveIsViewOnly && (
+                            <>
+                              {absIdx === 0 && <button onClick={() => insertRowAt(0)} title="Sisipkan baris di atas" className={`${EDGE_BTN} -top-2 left-1/2 -translate-x-1/2 opacity-0 group-hover/row:opacity-100`}><Plus size={10} strokeWidth={3}/></button>}
+                              <button onClick={() => insertRowAt(absIdx + 1)} title="Sisipkan baris di bawah" className={`${EDGE_BTN} -bottom-2 left-1/2 -translate-x-1/2 opacity-0 group-hover/row:opacity-100`}><Plus size={10} strokeWidth={3}/></button>
+                              {steps.length > 1 && <button onClick={() => removeRowAt(absIdx)} title="Hapus baris ini (bisa diurungkan Ctrl+Z)" className="absolute top-0.5 left-0.5 z-40 no-print text-red-600 bg-white rounded-full opacity-0 group-hover/row:opacity-100 [@media(hover:none)]:opacity-50 active:scale-125 transition-opacity"><X size={11} strokeWidth={3}/></button>}
+                            </>
+                          )}
                         </td>
                         <td className="border-r-2 border-black p-2 px-1.5 font-normal leading-snug relative overflow-visible align-top h-px">
                           <EditableCell value={step.kegiatan} onChange={(val) => updateStep(absIdx, { kegiatan: val })} placeholder="..." justify={true} className="text-[12px] h-full" />
