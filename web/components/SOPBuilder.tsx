@@ -3,9 +3,9 @@
 import React, { useState, useEffect, useLayoutEffect, useRef, forwardRef, useImperativeHandle, useMemo, createContext, useContext } from 'react';
 import { useSearchParams } from 'next/navigation';
 import {
-  Plus, Trash2, UserPlus, UserMinus, Save,
+  Plus, Trash2, UserMinus, Save,
   Circle, Square, Diamond, Shield,
-  FileSpreadsheet, ArrowDownToLine, Send, ArrowLeft, Info, MousePointer2, X, ChevronLeft, ChevronRight,
+  FileSpreadsheet, Send, ArrowLeft, Info, MousePointer2, X, ChevronLeft, ChevronRight,
   Edit2, FileDown, Loader2, ChevronDown, Undo2, Redo2, Bold, Italic, Minus, Type
 } from 'lucide-react';
 import { HIERARKI_UNIT } from '@/lib/constants';
@@ -1254,8 +1254,6 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     });
   };
 
-  const addColumn = () => setPelaksanaHeaders(prev => prev.map(row => [...row, '']));
-
   // Geser seluruh rujukan indeks kolom pelaksana pada langkah (bentuk utama, bentuk
   // tambahan, dan target cabang). map() mengembalikan null = kolom itu dihapus.
   const remapStepCols = (list: SOPStep[], map: (c: number) => number | null): SOPStep[] => list.map(step => {
@@ -1304,18 +1302,6 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
       newSteps[index] = { ...newSteps[index], ...updates };
       return newSteps;
     });
-  };
-
-  const handleInsertRow = () => {
-    const target = window.prompt("Masukkan NOMOR baris untuk menyisipkan:");
-    if (!target) return;
-    const targetNum = parseInt(target, 10);
-    if (isNaN(targetNum) || targetNum < 1 || targetNum > steps.length + 1) return alert("Nomor tidak valid!");
-    const insertIndex = targetNum - 1;
-    const prevCol = insertIndex > 0 ? steps[insertIndex - 1].pelaksanaCol : 0;
-    const newSteps = [...steps];
-    newSteps.splice(insertIndex, 0, { id: genStepId(), kegiatan: '', pelaksanaCol: prevCol, symbol: 'process', arrowDown: true, waktu: '', syarat: '', output: '', ket: '' });
-    setSteps(newSteps);
   };
 
   const getExecutorStyles = () => colCount > 6 ? "text-[8px] leading-tight" : colCount > 5 ? "text-[9px] leading-tight" : colCount > 4 ? "text-[9px] leading-tight" : colCount > 3 ? "text-[10px] leading-tight" : "text-[11px] leading-tight";
@@ -2097,8 +2083,6 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                 </button>
                 <button onClick={() => setIsSaveModalOpen(true)} className="px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95"><Save size={16} /> Simpan</button>
                 <button onClick={() => setSteps([...steps, { id: genStepId(), kegiatan: '', pelaksanaCol: 0, symbol: 'process', arrowDown: true, waktu: '', syarat: '', output: '', ket: '' }])} className="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95"><Plus size={16} /> Baris Baru</button>
-                <button onClick={handleInsertRow} className="px-3 py-1.5 bg-sky-500 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95"><ArrowDownToLine size={16} /> Sisip Baris</button>
-                <button onClick={addColumn} className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95"><UserPlus size={16} /> Kolom</button>
               </>
             )}
           </div>
