@@ -675,6 +675,8 @@ const ACCESS_COLS_RINGAN = 'm.id, m.status, m.created_by, m.l1_id, m.l2_id, m.de
 // BELUM disetujui Ortala MR — termasuk yang masih menunggu review ('pending').
 // Dokumen approved/verifikasi/penetapan/terbit hanya boleh dihapus admin/superadmin.
 const STATUS_BOLEH_HAPUS_USER = ['draft', 'usulan', 'rejected', 'pending'];
+// Status dokumen final/ditetapkan (BPMN 'approved', SOP & SP 'terbit').
+const STATUS_TERBIT = ['approved', 'terbit'];
 async function assertDeleteAccess(req, res, kind, id, cols = ACCESS_COLS_RINGAN) {
   const row = await assertModelAccess(req, res, kind, id, { cols });
   if (!row) return null;
@@ -703,6 +705,10 @@ async function assertModelAccess(req, res, kind, id, { write = true, cols = ACCE
   const role = req.user.role;
   if (role === 'admin' || role === 'superadmin') return row;
   if (write && role !== 'user') { res.status(403).json({ error: 'Akses hanya-baca — tidak boleh mengubah dokumen.' }); return null; }
+  // Dokumen yang SUDAH DITETAPKAN (BPMN 'approved', SOP/SP 'terbit') boleh DIBACA
+  // semua pengguna yang login, lintas unit — dokumen itu memang tampil di Dashboard
+  // dan dapat dibagikan lewat tautan publik. Mengubahnya tetap dibatasi unit.
+  if (!write && STATUS_TERBIT.includes(row.status)) return row;
   const norm = (v) => String(v || '').replace(/\s+/g, ' ').trim().toLowerCase();
   const sameL1 = norm(row._unit_l1_nama) === norm(req.user.unit_l1);
   const l2ok = !req.user.unit_l2 || norm(req.user.unit_l2) === 'seluruh unit' ||
