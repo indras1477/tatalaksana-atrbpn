@@ -83,6 +83,42 @@ function repairBpmnXml(xml: string): string {
     }
   }
 
+
+  // Buang panah "menggantung": sequenceFlow/messageFlow yang sourceRef/targetRef-nya
+  // sudah tidak ada elemennya. Ini muncul ketika sebuah elemen/sub-proses dihapus
+  // sementara panahnya TIDAK ikut terhapus karena panah itu tidak punya DI (tak
+  // tergambar di kanvas, jadi tidak dikenal bpmn-js). XML seperti itu tidak sah:
+  // bpmn-moddle memberi "unresolved reference" dan aplikasi BPMN lain menolaknya.
+  {
+    const allIds = new Set<string>();
+    for (const el of Array.from(defs.getElementsByTagName('*'))) {
+      const id = el.getAttribute('id');
+      if (id && el.namespaceURI === BPMN) allIds.add(id);
+    }
+    const dropIds = new Set<string>();
+    for (const tag of ['sequenceFlow', 'messageFlow']) {
+      for (const flow of Array.from(defs.getElementsByTagNameNS(BPMN, tag))) {
+        const s = flow.getAttribute('sourceRef');
+        const t = flow.getAttribute('targetRef');
+        if ((s && !allIds.has(s)) || (t && !allIds.has(t))) {
+          const fid = flow.getAttribute('id');
+          if (fid) dropIds.add(fid);
+          flow.parentElement?.removeChild(flow);
+        }
+      }
+    }
+    if (dropIds.size > 0) {
+      for (const edge of Array.from(defs.getElementsByTagNameNS(BPMNDI, 'BPMNEdge'))) {
+        if (dropIds.has(edge.getAttribute('bpmnElement') || '')) edge.parentElement?.removeChild(edge);
+      }
+      for (const tag of ['incoming', 'outgoing']) {
+        for (const ref of Array.from(defs.getElementsByTagNameNS(BPMN, tag))) {
+          if (dropIds.has((ref.textContent || '').trim())) ref.parentElement?.removeChild(ref);
+        }
+      }
+    }
+  }
+
   return new XMLSerializer().serializeToString(doc);
 }
 

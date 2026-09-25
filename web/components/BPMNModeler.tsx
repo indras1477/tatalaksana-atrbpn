@@ -112,6 +112,42 @@ function repairBpmnXml(xml: string): string {
     }
   }
 
+
+  // Buang panah "menggantung": sequenceFlow/messageFlow yang sourceRef/targetRef-nya
+  // sudah tidak ada elemennya. Ini muncul ketika sebuah elemen/sub-proses dihapus
+  // sementara panahnya TIDAK ikut terhapus karena panah itu tidak punya DI (tak
+  // tergambar di kanvas, jadi tidak dikenal bpmn-js). XML seperti itu tidak sah:
+  // bpmn-moddle memberi "unresolved reference" dan aplikasi BPMN lain menolaknya.
+  {
+    const allIds = new Set<string>();
+    for (const el of Array.from(defs.getElementsByTagName('*'))) {
+      const id = el.getAttribute('id');
+      if (id && el.namespaceURI === BPMN) allIds.add(id);
+    }
+    const dropIds = new Set<string>();
+    for (const tag of ['sequenceFlow', 'messageFlow']) {
+      for (const flow of Array.from(defs.getElementsByTagNameNS(BPMN, tag))) {
+        const s = flow.getAttribute('sourceRef');
+        const t = flow.getAttribute('targetRef');
+        if ((s && !allIds.has(s)) || (t && !allIds.has(t))) {
+          const fid = flow.getAttribute('id');
+          if (fid) dropIds.add(fid);
+          flow.parentElement?.removeChild(flow);
+        }
+      }
+    }
+    if (dropIds.size > 0) {
+      for (const edge of Array.from(defs.getElementsByTagNameNS(BPMNDI, 'BPMNEdge'))) {
+        if (dropIds.has(edge.getAttribute('bpmnElement') || '')) edge.parentElement?.removeChild(edge);
+      }
+      for (const tag of ['incoming', 'outgoing']) {
+        for (const ref of Array.from(defs.getElementsByTagNameNS(BPMN, tag))) {
+          if (dropIds.has((ref.textContent || '').trim())) ref.parentElement?.removeChild(ref);
+        }
+      }
+    }
+  }
+
   return new XMLSerializer().serializeToString(doc);
 }
 
@@ -955,6 +991,9 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
   const [breadcrumbs, setBreadcrumbs] = useState<BreadcrumbItem[]>([]);
   const [isExporting, setIsExporting] = useState(false);
   const [showElementPicker, setShowElementPicker] = useState(false);
+  // Diagram gagal dimuat (XML rusak) → kanvas dikunci agar isinya tidak tertimpa.
+  const [loadError, setLoadError] = useState<string | null>(null);
+  const loadErrorRef = useRef<string | null>(null); loadErrorRef.current = loadError;
 
   useEffect(() => {
     if (!containerRef.current) return;
@@ -1018,6 +1057,7 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
     document.addEventListener('keydown', enterNewlineForGroup, true);
 
     const initCanvas = async () => {
+      setLoadError(null);
       try {
         let xmlToLoad = (xml && xml.includes('bpmn:definitions')) ? xml : DEFAULT_XML;
         if (projectNameRef.current && xmlToLoad.includes('id="Process_1"') && !xmlToLoad.includes('id="Process_1" name=')) {
@@ -1369,7 +1409,15 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
         }, 300);
       } catch (err) {
         console.error("Gagal muat diagram:", err);
-        if (isMounted) await modeler.importXML(DEFAULT_XML);
+        if (!isMounted) return;
+        // Dokumen yang SUDAH ADA gagal dimuat → JANGAN ganti dengan diagram kosong.
+        // Kalau diganti, kanvas tampak blank dan penyimpanan berikutnya (termasuk
+        // simpan-otomatis) akan menimpa isi dokumen dengan diagram kosong.
+        if (xml && xml.includes('bpmn:definitions')) {
+          setLoadError(err instanceof Error ? err.message : String(err));
+          return;
+        }
+        await modeler.importXML(DEFAULT_XML);
       }
     };
 
@@ -1435,6 +1483,7 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
 
   const handleExport = async () => {
     if (!modelerRef.current || !onSave) return;
+    if (loadErrorRef.current) { alert('Diagram gagal dimuat — penyimpanan dinonaktifkan agar isi dokumen tidak tertimpa. Muat ulang halaman terlebih dulu.'); return; }
     setIsExporting(true);
     try {
       const modeler = modelerRef.current;
@@ -1572,6 +1621,7 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
       exportSilent: async () => {
         const modeler = modelerRef.current as BpmnModeler | null;
         if (!modeler) return null;
+        if (loadErrorRef.current) return null; // diagram gagal dimuat → jangan autosave
         try {
           const { xml: savedXml } = await modeler.saveXML({ format: true });
           if (!savedXml) return null;
@@ -1645,11 +1695,21 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
     // (yang membuat elemen tertutup pool / model tidak valid).
     const registry = modeler.get('elementRegistry') as BpmnElementRegistry;
     const CONTAINERS = ['bpmn:Participant', 'bpmn:Lane', 'bpmn:SubProcess'];
+    // Hanya container pada PLANE YANG SEDANG DIBUKA. Tanpa syarat ini, elemen baru
+    // bisa nyangkut ke sub-proses milik plane lain (koordinat antarplane saling
+    // tumpang tindih) → elemen langsung "hilang" dari layar dan panah yang terlanjur
+    // dibuat jadi lintas-plane (sumber korupsi XML).
+    const rootOfEl = (el: { parent?: unknown }): unknown => {
+      let t: { parent?: unknown } | undefined = el;
+      while (t && t.parent) t = t.parent as { parent?: unknown };
+      return t;
+    };
     const findContainerAt = (p: { x: number; y: number }): BpmnShapeElement | null => {
       let best: BpmnShapeElement | null = null;
       let bestArea = Infinity;
       registry.forEach((el) => {
         if (!el.type || !CONTAINERS.includes(el.type) || el.x == null) return;
+        if (rootOfEl(el) !== root) return; // container di plane lain → abaikan
         if (el.type === shape.type) return; // jangan sarangkan pool ke pool
         if (p.x > el.x && p.x < el.x + el.width && p.y > el.y && p.y < el.y + el.height) {
           const area = el.width * el.height;
@@ -1720,7 +1780,7 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
             {/* Slot tombol tambahan dari pemakai komponen (mis. 🗺 Lihat Peta Relasi) */}
             {toolbarExtra}
             {onSave && (
-              <button onClick={handleExport} disabled={isExporting} className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow transition-all active:scale-95 disabled:bg-slate-400 hover:bg-blue-700">
+              <button onClick={handleExport} disabled={isExporting || !!loadError} title={loadError ? 'Diagram gagal dimuat — simpan dinonaktifkan' : undefined} className="flex items-center gap-2 rounded-lg bg-blue-600 px-4 py-2 text-sm font-bold text-white shadow transition-all active:scale-95 disabled:bg-slate-400 hover:bg-blue-700">
                 <Save size={15} /> {isExporting ? 'Menyimpan...' : 'Simpan Alur'}
               </button>
             )}
@@ -1730,6 +1790,19 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
 
       <div className="relative min-h-125 flex-1 bg-white">
         <div ref={containerRef} className="absolute inset-0" />
+
+        {/* Diagram gagal dimuat: beri tahu dengan jelas, JANGAN biarkan kanvas kosong
+            terlihat seperti dokumen yang hilang — dan penyimpanan sudah dikunci. */}
+        {loadError && (
+          <div className="absolute inset-0 z-40 flex items-center justify-center bg-white/95 p-6">
+            <div className="max-w-md rounded-2xl border border-red-200 bg-red-50 p-5 text-center shadow-lg">
+              <p className="text-base font-bold text-red-700">Diagram gagal dimuat</p>
+              <p className="mt-2 text-sm text-red-600">Isi dokumen di server TIDAK diubah dan tombol Simpan dinonaktifkan agar tidak tertimpa diagram kosong.</p>
+              <p className="mt-2 text-xs text-slate-500 break-words">{loadError}</p>
+              <button onClick={() => window.location.reload()} className="mt-4 rounded-lg bg-red-600 px-4 py-2 text-sm font-bold text-white hover:bg-red-700">Muat Ulang Halaman</button>
+            </div>
+          </div>
+        )}
 
         {/* Zoom controls — pojok kanan bawah, muncul untuk semua mode */}
         <div className="absolute bottom-4 right-4 z-30 flex flex-col overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg">
