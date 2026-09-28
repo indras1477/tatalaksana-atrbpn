@@ -6,7 +6,7 @@ import {
   Plus, Edit, CheckCircle,
   Clock, XCircle, Search, X, FileEdit, FileStack, AlertCircle, Filter,
   Trash2, Calendar, GitCommit, HelpCircle, GitBranch, ChevronRight, Save, History as HistoryIcon, RotateCcw,
-  ExternalLink, Building2, Copy, Landmark, Lock, FileUp, FileText, MessageSquare, Eye, ZoomIn, ZoomOut, Maximize2
+  ExternalLink, Building2, Copy, Landmark, Lock, FileUp, FileText, MessageSquare, Eye, ZoomIn, ZoomOut, Maximize2, FileSpreadsheet
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
 import { BPMNSymbolsSection } from '@/components/PanduanSymbols';
@@ -373,6 +373,60 @@ export default function BPMNDashboardPage() {
     });
     return Object.entries(groups).map(([nama, docs]) => ({ nama, ...progressCounts(docs) })).sort((a, b) => a.nama.localeCompare(b.nama));
   }, [rekapDataset, rekapDrill]);
+
+  // EKSPOR EXCEL rekap satu Unit Kerja Level 1 (admin/superadmin) — muncul setelah
+  // sebuah Unit Kerja Level 1 diklik. Isinya seluruh dokumen pada tab yang sedang
+  // dibuka, dikelompokkan per Sub-Unit (Level 2), plus rekap jumlah per sub-unit.
+  const [exportingRekap, setExportingRekap] = useState(false);
+  const tahapLabel = listTab === 'usulan' ? 'Usulan' : listTab === 'terbit' ? 'Telah Ditetapkan' : 'Proses Penyusunan';
+  const exportRekapL1 = async () => {
+    const l1 = rekapDrill.l1;
+    if (!l1) return;
+    const docs = rekapDataset.filter(m => (m.unit_l1 || '(Tanpa Unit)') === l1);
+    if (docs.length === 0) { alert('Tidak ada dokumen untuk diekspor pada unit kerja ini.'); return; }
+    setExportingRekap(true);
+    try {
+      const XLSX = await import('xlsx');
+      const subUnit = (m: BPMNModel) => m.unit_l2 || '(Tanpa Sub-Unit)';
+      const label = (m: BPMNModel) => m.status === 'usulan' ? 'USULAN' : statusLabel(m.status, m.is_manual);
+      const urut = [...docs].sort((a, b) =>
+        subUnit(a).localeCompare(subUnit(b), 'id') || a.process_title.localeCompare(b.process_title, 'id'));
+
+      const HEAD = ['No', 'Proses Bisnis (Level 3)', 'Unit Kerja', 'Status Dokumen'];
+      const aoa: (string | number)[][] = [
+        [`Daftar Proses Bisnis ${l1}`],
+        [`Tahap: ${tahapLabel}  •  Jumlah: ${urut.length} dokumen  •  Diekspor: ${new Date().toLocaleString('id-ID')}`],
+        [],
+        HEAD,
+      ];
+      urut.forEach((m, i) => aoa.push([i + 1, m.process_title, subUnit(m), label(m)]));
+
+      // Rekap per Sub-Unit (Level 2) di bawah daftar.
+      const perSub = new Map<string, number>();
+      urut.forEach(m => perSub.set(subUnit(m), (perSub.get(subUnit(m)) || 0) + 1));
+      aoa.push([], ['Rekapitulasi per Sub-Unit (Level 2)'], ['No', 'Sub-Unit (Level 2)', 'Jumlah Proses Bisnis', '']);
+      [...perSub.entries()].sort((a, b) => a[0].localeCompare(b[0], 'id'))
+        .forEach(([nama, n], i) => aoa.push([i + 1, nama, n, '']));
+      aoa.push(['', 'TOTAL', urut.length, '']);
+
+      const ws = XLSX.utils.aoa_to_sheet(aoa);
+      ws['!cols'] = [{ wch: 5 }, { wch: 70 }, { wch: 45 }, { wch: 36 }];
+      ws['!merges'] = [
+        { s: { r: 0, c: 0 }, e: { r: 0, c: 3 } },
+        { s: { r: 1, c: 0 }, e: { r: 1, c: 3 } },
+        { s: { r: aoa.length - perSub.size - 3, c: 0 }, e: { r: aoa.length - perSub.size - 3, c: 3 } },
+      ];
+      const wb = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(wb, ws, 'Proses Bisnis');
+      const slug = (v: string) => v.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_').slice(0, 60);
+      XLSX.writeFile(wb, `Daftar_Proses_Bisnis_${slug(l1)}_${slug(tahapLabel)}.xlsx`);
+    } catch (e) {
+      console.error(e);
+      alert('Gagal membuat file Excel: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setExportingRekap(false);
+    }
+  };
 
   // Pengurutan daftar dokumen — dokumen terbaru/baru diperbarui di paling atas.
   const waktu = (v?: string) => (v ? new Date(v).getTime() : 0);
@@ -1476,9 +1530,17 @@ export default function BPMNDashboardPage() {
                   <button onClick={openUsulanModal} className="px-4 py-2.5 text-sm font-bold bg-blue-600 hover:bg-blue-700 text-white rounded-xl shadow-sm flex items-center justify-center gap-2 shrink-0"><Plus className="w-4 h-4" /> Tambah Usulan</button>
                 </div>
               )}
-              <div className="flex items-center gap-1.5 text-sm font-semibold mb-1 flex-wrap">
-                <button onClick={() => setRekapDrill({ l1: null, l2: null })} className={rekapDrill.l1 !== null ? 'text-blue-600 hover:underline' : (isDarkMode ? 'text-slate-200' : 'text-[#002855]')}>Semua Unit Kerja</button>
-                {rekapDrill.l1 !== null && (<><ChevronRight className="w-4 h-4 text-slate-400" /><span className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{rekapDrill.l1}</span></>)}
+              <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
+                <div className="flex items-center gap-1.5 text-sm font-semibold flex-wrap">
+                  <button onClick={() => setRekapDrill({ l1: null, l2: null })} className={rekapDrill.l1 !== null ? 'text-blue-600 hover:underline' : (isDarkMode ? 'text-slate-200' : 'text-[#002855]')}>Semua Unit Kerja</button>
+                  {rekapDrill.l1 !== null && (<><ChevronRight className="w-4 h-4 text-slate-400" /><span className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{rekapDrill.l1}</span></>)}
+                </div>
+                {/* Ekspor Excel — hanya setelah sebuah Unit Kerja Level 1 dipilih. */}
+                {rekapDrill.l1 !== null && (
+                  <button onClick={exportRekapL1} disabled={exportingRekap} title={`Ekspor daftar Proses Bisnis ${rekapDrill.l1} (seluruh sub-unit) ke Excel`} className="px-3.5 py-2 text-xs font-bold bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white rounded-xl shadow-sm flex items-center gap-2 shrink-0">
+                    <FileSpreadsheet className="w-4 h-4" /> {exportingRekap ? 'Menyiapkan…' : 'Ekspor Excel'}
+                  </button>
+                )}
               </div>
               <p className={`text-xs mb-3 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{rekapDrill.l1 === null ? `Rekap ${listTab === 'usulan' ? 'usulan' : listTab === 'terbit' ? 'Proses Bisnis terbit' : 'dokumen'} per Unit Kerja Level 1. Klik baris untuk melihat sub-unit (Level 2).` : 'Klik sub-unit untuk melihat daftar dokumennya.'}</p>
               <div className="overflow-x-auto">
