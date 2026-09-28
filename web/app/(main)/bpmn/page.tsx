@@ -379,6 +379,22 @@ export default function BPMNDashboardPage() {
   // dibuka, dikelompokkan per Sub-Unit (Level 2), plus rekap jumlah per sub-unit.
   const [exportingRekap, setExportingRekap] = useState(false);
   const tahapLabel = listTab === 'usulan' ? 'Usulan' : listTab === 'terbit' ? 'Telah Ditetapkan' : 'Proses Penyusunan';
+  // Palet fill warna Unit Kerja (Level 2) — tiap sub-unit dapat satu warna tetap
+  // (siklus 8 warna pastel) supaya baris yang sesekaqli tersebar di tabel daftar
+  // tetap gampang dikenali kelompoknya, dan warnanya SAMA dengan warna di tabel
+  // rekap agar dua tabel itu nyambung secara visual.
+  const REKAP_L2_PALETTE = ['FFDCEAFE', 'FFD1FAE5', 'FFFEF3C7', 'FFFCE7F3', 'FFE0E7FF', 'FFE2E8F0', 'FFFFE1E1', 'FFECFCCB'];
+  // Warna TEKS status dokumen — selaras dgn statusBadgeClass() di layar (emerald/violet/cyan/blue/red/slate).
+  const statusExcelColor = (m: BPMNModel): string => {
+    if (m.status === 'usulan') return 'FFB45309'; // amber-700
+    if (m.status === 'approved') return 'FF047857'; // emerald-700
+    if (m.status === 'penetapan') return 'FF6D28D9'; // violet-700
+    if (m.status === 'verifikasi') return 'FF0E7490'; // cyan-700
+    if (m.status === 'pending') return 'FF1D4ED8'; // blue-700
+    if (m.status === 'rejected') return 'FFB91C1C'; // red-700
+    return 'FF475569'; // slate-600 (draft)
+  };
+
   const exportRekapL1 = async () => {
     const l1 = rekapDrill.l1;
     if (!l1) return;
@@ -386,40 +402,88 @@ export default function BPMNDashboardPage() {
     if (docs.length === 0) { alert('Tidak ada dokumen untuk diekspor pada unit kerja ini.'); return; }
     setExportingRekap(true);
     try {
-      const XLSX = await import('xlsx');
+      // xlsx (SheetJS community) tidak bisa MENULIS style (fill/border/font warna) —
+      // hanya membaca. Pakai exceljs (open-source, full styling) khusus fitur ini.
+      const mod = await import('exceljs');
+      const ExcelJS = (mod as unknown as { default?: typeof mod }).default ?? mod;
       const subUnit = (m: BPMNModel) => m.unit_l2 || '(Tanpa Sub-Unit)';
       const label = (m: BPMNModel) => m.status === 'usulan' ? 'USULAN' : statusLabel(m.status, m.is_manual);
       const urut = [...docs].sort((a, b) =>
         subUnit(a).localeCompare(subUnit(b), 'id') || a.process_title.localeCompare(b.process_title, 'id'));
 
-      const HEAD = ['No', 'Proses Bisnis (Level 3)', 'Unit Kerja', 'Status Dokumen'];
-      const aoa: (string | number)[][] = [
-        [`Daftar Proses Bisnis ${l1}`],
-        [`Tahap: ${tahapLabel}  •  Jumlah: ${urut.length} dokumen  •  Diekspor: ${new Date().toLocaleString('id-ID')}`],
-        [],
-        HEAD,
-      ];
-      urut.forEach((m, i) => aoa.push([i + 1, m.process_title, subUnit(m), label(m)]));
-
-      // Rekap per Sub-Unit (Level 2) di bawah daftar.
       const perSub = new Map<string, number>();
       urut.forEach(m => perSub.set(subUnit(m), (perSub.get(subUnit(m)) || 0) + 1));
-      aoa.push([], ['Rekapitulasi per Sub-Unit (Level 2)'], ['No', 'Sub-Unit (Level 2)', 'Jumlah Proses Bisnis', '']);
-      [...perSub.entries()].sort((a, b) => a[0].localeCompare(b[0], 'id'))
-        .forEach(([nama, n], i) => aoa.push([i + 1, nama, n, '']));
-      aoa.push(['', 'TOTAL', urut.length, '']);
+      const subNames = [...perSub.keys()].sort((a, b) => a.localeCompare(b, 'id'));
+      const fillOf = new Map(subNames.map((nama, i) => [nama, REKAP_L2_PALETTE[i % REKAP_L2_PALETTE.length]]));
 
-      const ws = XLSX.utils.aoa_to_sheet(aoa);
-      ws['!cols'] = [{ wch: 5 }, { wch: 70 }, { wch: 45 }, { wch: 36 }];
-      ws['!merges'] = [
-        { s: { r: 0, c: 0 }, e: { r: 0, c: 3 } },
-        { s: { r: 1, c: 0 }, e: { r: 1, c: 3 } },
-        { s: { r: aoa.length - perSub.size - 3, c: 0 }, e: { r: aoa.length - perSub.size - 3, c: 3 } },
-      ];
-      const wb = XLSX.utils.book_new();
-      XLSX.utils.book_append_sheet(wb, ws, 'Proses Bisnis');
+      const workbook = new ExcelJS.Workbook();
+      const ws = workbook.addWorksheet('Proses Bisnis', { views: [{ showGridLines: false }] });
+      ws.columns = [{ width: 5 }, { width: 70 }, { width: 45 }, { width: 36 }];
+
+      const THIN = { style: 'thin' as const, color: { argb: 'FF94A3B8' } };
+      const BORDER_ALL = { top: THIN, left: THIN, bottom: THIN, right: THIN };
+      const titleFont = { bold: true, size: 14, color: { argb: 'FF002855' } };
+      const styleHeaderRow = (row: import('exceljs').Row) => {
+        row.eachCell(cell => {
+          cell.font = { bold: true, color: { argb: 'FF1E293B' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+          cell.border = BORDER_ALL;
+          cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        });
+      };
+
+      const titleRow = ws.addRow([`Daftar Proses Bisnis ${l1}`]);
+      ws.mergeCells(titleRow.number, 1, titleRow.number, 4);
+      titleRow.font = titleFont;
+      titleRow.height = 22;
+      const infoRow = ws.addRow([`Tahap: ${tahapLabel}  •  Jumlah: ${urut.length} dokumen  •  Diekspor: ${new Date().toLocaleString('id-ID')}`]);
+      ws.mergeCells(infoRow.number, 1, infoRow.number, 4);
+      infoRow.font = { italic: true, size: 10, color: { argb: 'FF64748B' } };
+      ws.addRow([]);
+
+      // 1) REKAPITULASI PER SUB-UNIT (LEVEL 2) DULU — sesuai permintaan, ringkasan
+      // tampil di atas sebelum daftar rinciannya.
+      const recapTitleRow = ws.addRow(['Rekapitulasi per Sub-Unit (Level 2)']);
+      ws.mergeCells(recapTitleRow.number, 1, recapTitleRow.number, 4);
+      recapTitleRow.font = { bold: true, size: 12, color: { argb: 'FF002855' } };
+      const recapHeadRow = ws.addRow(['No', 'Sub-Unit (Level 2)', 'Jumlah Proses Bisnis', '']);
+      styleHeaderRow(recapHeadRow);
+      subNames.forEach((nama, i) => {
+        const row = ws.addRow([i + 1, nama, perSub.get(nama) || 0, '']);
+        row.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', wrapText: true }; });
+        row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+        row.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillOf.get(nama) || 'FFFFFFFF' } };
+        row.getCell(3).alignment = { vertical: 'middle', horizontal: 'center' };
+      });
+      const totalRow = ws.addRow(['', 'TOTAL', urut.length, '']);
+      totalRow.font = { bold: true };
+      totalRow.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', horizontal: 'center' }; });
+      ws.addRow([]);
+
+      // 2) DAFTAR PROSES BISNIS (RINCIAN) — kolom Unit Kerja (L2) diberi fill color
+      // sesuai palet di atas, kolom Status Dokumen diberi warna TEKS sesuai status.
+      const HEAD = ['No', 'Proses Bisnis (Level 3)', 'Unit Kerja', 'Status Dokumen'];
+      const headRow = ws.addRow(HEAD);
+      styleHeaderRow(headRow);
+      urut.forEach((m, i) => {
+        const su = subUnit(m);
+        const row = ws.addRow([i + 1, m.process_title, su, label(m)]);
+        row.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', wrapText: true }; });
+        row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        row.getCell(3).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        row.getCell(3).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillOf.get(su) || 'FFFFFFFF' } };
+        row.getCell(4).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        row.getCell(4).font = { bold: true, color: { argb: statusExcelColor(m) } };
+      });
+
+      const buf = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
       const slug = (v: string) => v.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_').slice(0, 60);
-      XLSX.writeFile(wb, `Daftar_Proses_Bisnis_${slug(l1)}_${slug(tahapLabel)}.xlsx`);
+      const a = document.createElement('a');
+      a.href = url; a.download = `Daftar_Proses_Bisnis_${slug(l1)}_${slug(tahapLabel)}.xlsx`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
     } catch (e) {
       console.error(e);
       alert('Gagal membuat file Excel: ' + (e instanceof Error ? e.message : String(e)));

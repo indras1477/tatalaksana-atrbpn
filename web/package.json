@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "bpmn-js": "^17.11.1",
+    "exceljs": "^4.4.0",
     "html2canvas": "^1.4.1",
     "html2canvas-pro": "^2.2.1",
     "jspdf": "^2.5.2",
