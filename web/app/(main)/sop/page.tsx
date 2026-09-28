@@ -6,7 +6,7 @@ import {
   ArrowLeft, Plus, Edit, CheckCircle,
   Clock, XCircle, Search, X, FileEdit, FileStack, AlertCircle, Filter,
   Trash2, Calendar, GitCommit, FileSignature, Lock, HelpCircle, ChevronRight, History as HistoryIcon, RotateCcw,
-  Save, ExternalLink, Building2, Copy, Upload, Stamp, Eye, ClipboardCheck, Landmark, FileUp, FileText, MessageSquare, RefreshCw, Maximize2
+  Save, ExternalLink, Building2, Copy, Upload, Stamp, Eye, ClipboardCheck, Landmark, FileUp, FileText, MessageSquare, RefreshCw, Maximize2, FileSpreadsheet
 } from 'lucide-react';
 import { SOPSymbolsSection } from '@/components/PanduanSymbols';
 import ManualDocModal from '@/components/ManualDocModal';
@@ -449,6 +449,152 @@ export default function SOPDashboardPage() {
     });
     return Object.entries(groups).map(([nama, docs]) => ({ nama, ...progressCounts(docs) })).sort((a, b) => a.nama.localeCompare(b.nama));
   }, [rekapDataset, rekapDrill]);
+
+  // EKSPOR EXCEL rekap satu Unit Kerja Level 1 (admin/superadmin) — sama seperti
+  // fitur di Buat Proses Bisnis (BPMN): muncul setelah sebuah Unit Kerja Level 1
+  // diklik pada rekap, isinya seluruh SOP pada tab yang sedang dibuka + rekap per
+  // Sub-Unit (Level 2) + rekap per Status Dokumen.
+  const [exportingRekap, setExportingRekap] = useState(false);
+  const tahapLabel = listTab === 'usulan' ? 'Usulan' : listTab === 'terbit' ? 'Telah Ditetapkan' : 'Proses Penyusunan';
+  // Palet fill warna Unit Kerja (Level 2) — identik dgn BPMN, siklus 8 warna pastel.
+  const REKAP_L2_PALETTE = ['FFDCEAFE', 'FFD1FAE5', 'FFFEF3C7', 'FFFCE7F3', 'FFE0E7FF', 'FFE2E8F0', 'FFFFE1E1', 'FFECFCCB'];
+  // Warna TEKS status dokumen — selaras statusBadgeClass() SOP (emerald/violet/indigo/amber/blue/red/slate).
+  const statusExcelColor = (m: SOPModel): string => {
+    if (m.status === 'usulan') return 'FFA21CAF'; // fuchsia-700
+    if (m.status === 'terbit') return 'FF047857'; // emerald-700
+    if (m.status === 'penetapan') return 'FF6D28D9'; // violet-700
+    if (m.status === 'verifikasi') return 'FF4338CA'; // indigo-700
+    if (m.status === 'approved') return 'FFB45309'; // amber-700
+    if (m.status === 'pending') return 'FF1D4ED8'; // blue-700
+    if (m.status === 'rejected') return 'FFB91C1C'; // red-700
+    return 'FF475569'; // slate-600 (draft)
+  };
+
+  const exportRekapL1 = async () => {
+    const l1 = rekapDrill.l1;
+    if (!l1) return;
+    const docs = rekapDataset.filter(m => getDisplayUnitL1(m) === l1);
+    if (docs.length === 0) { alert('Tidak ada dokumen untuk diekspor pada unit kerja ini.'); return; }
+    setExportingRekap(true);
+    try {
+      // xlsx (SheetJS community) tidak bisa MENULIS style (fill/border/font warna) —
+      // hanya membaca. Pakai exceljs (open-source, full styling) khusus fitur ini.
+      const mod = await import('exceljs');
+      const ExcelJS = (mod as unknown as { default?: typeof mod }).default ?? mod;
+      const subUnit = (m: SOPModel) => getDisplayUnitL2(m) || '(Tanpa Sub-Unit)';
+      const label = (m: SOPModel) => m.status === 'usulan' ? 'USULAN' : statusLabel(m.status, m.is_manual);
+      const urut = [...docs].sort((a, b) =>
+        subUnit(a).localeCompare(subUnit(b), 'id') || a.process_title.localeCompare(b.process_title, 'id'));
+
+      const perSub = new Map<string, number>();
+      urut.forEach(m => perSub.set(subUnit(m), (perSub.get(subUnit(m)) || 0) + 1));
+      const subNames = [...perSub.keys()].sort((a, b) => a.localeCompare(b, 'id'));
+      const fillOf = new Map(subNames.map((nama, i) => [nama, REKAP_L2_PALETTE[i % REKAP_L2_PALETTE.length]]));
+
+      const workbook = new ExcelJS.Workbook();
+      const ws = workbook.addWorksheet('SOP', { views: [{ showGridLines: false }] });
+      ws.columns = [{ width: 5 }, { width: 70 }, { width: 45 }, { width: 36 }];
+
+      const THIN = { style: 'thin' as const, color: { argb: 'FF94A3B8' } };
+      const BORDER_ALL = { top: THIN, left: THIN, bottom: THIN, right: THIN };
+      const titleFont = { bold: true, size: 14, color: { argb: 'FF002855' } };
+      const styleHeaderRow = (row: import('exceljs').Row) => {
+        row.eachCell(cell => {
+          cell.font = { bold: true, color: { argb: 'FF1E293B' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+          cell.border = BORDER_ALL;
+          cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        });
+      };
+
+      const titleRow = ws.addRow([`Daftar SOP ${l1}`]);
+      ws.mergeCells(titleRow.number, 1, titleRow.number, 4);
+      titleRow.font = titleFont;
+      titleRow.height = 22;
+      const infoRow = ws.addRow([`Tahap: ${tahapLabel}  •  Jumlah: ${urut.length} dokumen  •  Diekspor: ${new Date().toLocaleString('id-ID')}`]);
+      ws.mergeCells(infoRow.number, 1, infoRow.number, 4);
+      infoRow.font = { italic: true, size: 10, color: { argb: 'FF64748B' } };
+      ws.addRow([]);
+
+      // 1) REKAPITULASI PER SUB-UNIT (LEVEL 2) DULU — ringkasan tampil di atas
+      // sebelum daftar rinciannya.
+      const recapTitleRow = ws.addRow(['Rekapitulasi per Sub-Unit (Level 2)']);
+      ws.mergeCells(recapTitleRow.number, 1, recapTitleRow.number, 4);
+      recapTitleRow.font = { bold: true, size: 12, color: { argb: 'FF002855' } };
+      const recapHeadRow = ws.addRow(['No', 'Sub-Unit (Level 2)', 'Jumlah SOP', '']);
+      styleHeaderRow(recapHeadRow);
+      subNames.forEach((nama, i) => {
+        const row = ws.addRow([i + 1, nama, perSub.get(nama) || 0, '']);
+        row.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', wrapText: true }; });
+        row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+        row.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillOf.get(nama) || 'FFFFFFFF' } };
+        row.getCell(3).alignment = { vertical: 'middle', horizontal: 'center' };
+      });
+      const totalRow = ws.addRow(['', 'TOTAL', urut.length, '']);
+      totalRow.font = { bold: true };
+      totalRow.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', horizontal: 'center' }; });
+      ws.addRow([]);
+
+      // 1b) REKAPITULASI PER STATUS DOKUMEN — urutan tetap mengikuti alur proses,
+      // BUKAN alfabet, supaya masuk akal dibaca. Warna teks sama dgn kolom Status
+      // Dokumen di tabel daftar di bawah.
+      const STATUS_ORDER = ['USULAN', 'DRAFT', 'MENUNGGU', 'MENUNGGU VERIFIKASI ADMIN', 'VERIFIKASI TTD', 'MENUNGGU PENGESAHAN PIMPINAN', 'MENUNGGU PROSES PENETAPAN MENTERI', 'PERLU REVISI', 'TERBIT'];
+      const perStatus = new Map<string, { count: number; color: string }>();
+      urut.forEach(m => {
+        const lbl = label(m);
+        perStatus.set(lbl, { count: (perStatus.get(lbl)?.count || 0) + 1, color: statusExcelColor(m) });
+      });
+      const statusNames = [...perStatus.keys()].sort((a, b) => {
+        const ia = STATUS_ORDER.indexOf(a), ib = STATUS_ORDER.indexOf(b);
+        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+      });
+      const recap2TitleRow = ws.addRow(['Rekapitulasi per Status Dokumen']);
+      ws.mergeCells(recap2TitleRow.number, 1, recap2TitleRow.number, 4);
+      recap2TitleRow.font = { bold: true, size: 12, color: { argb: 'FF002855' } };
+      const recap2HeadRow = ws.addRow(['No', 'Status Dokumen', 'Jumlah SOP', '']);
+      styleHeaderRow(recap2HeadRow);
+      statusNames.forEach((nama, i) => {
+        const info = perStatus.get(nama)!;
+        const row = ws.addRow([i + 1, nama, info.count, '']);
+        row.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }; });
+        row.getCell(2).font = { bold: true, color: { argb: info.color } };
+      });
+      const total2Row = ws.addRow(['', 'TOTAL', urut.length, '']);
+      total2Row.font = { bold: true };
+      total2Row.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', horizontal: 'center' }; });
+      ws.addRow([]);
+
+      // 2) DAFTAR SOP (RINCIAN) — kolom Unit Kerja (L2) diberi fill color sesuai
+      // palet di atas, kolom Status Dokumen diberi warna TEKS sesuai status.
+      const HEAD = ['No', 'Judul SOP', 'Unit Kerja', 'Status Dokumen'];
+      const headRow = ws.addRow(HEAD);
+      styleHeaderRow(headRow);
+      urut.forEach((m, i) => {
+        const su = subUnit(m);
+        const row = ws.addRow([i + 1, m.process_title, su, label(m)]);
+        row.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', wrapText: true }; });
+        row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        row.getCell(3).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        row.getCell(3).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillOf.get(su) || 'FFFFFFFF' } };
+        row.getCell(4).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        row.getCell(4).font = { bold: true, color: { argb: statusExcelColor(m) } };
+      });
+
+      const buf = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const slug = (v: string) => v.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_').slice(0, 60);
+      const a = document.createElement('a');
+      a.href = url; a.download = `Daftar_SOP_${slug(l1)}_${slug(tahapLabel)}.xlsx`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } catch (e) {
+      console.error(e);
+      alert('Gagal membuat file Excel: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setExportingRekap(false);
+    }
+  };
 
   // Pengurutan daftar dokumen — dokumen terbaru/baru diperbarui di paling atas.
   const waktu = (v?: string) => (v ? new Date(v).getTime() : 0);
@@ -1822,9 +1968,17 @@ export default function SOPDashboardPage() {
                   <button onClick={openUsulanModal} className="px-4 py-2.5 text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-sm flex items-center justify-center gap-2 shrink-0"><Plus className="w-4 h-4" /> Tambah Usulan</button>
                 </div>
               )}
-              <div className="flex items-center gap-1.5 text-sm font-semibold mb-1 flex-wrap">
-                <button onClick={() => setRekapDrill({ l1: null, l2: null })} className={rekapDrill.l1 !== null ? 'text-emerald-600 hover:underline' : (isDarkMode ? 'text-slate-200' : 'text-[#002855]')}>Semua Unit Kerja</button>
-                {rekapDrill.l1 !== null && (<><ChevronRight className="w-4 h-4 text-slate-400" /><span className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{rekapDrill.l1}</span></>)}
+              <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
+                <div className="flex items-center gap-1.5 text-sm font-semibold flex-wrap">
+                  <button onClick={() => setRekapDrill({ l1: null, l2: null })} className={rekapDrill.l1 !== null ? 'text-emerald-600 hover:underline' : (isDarkMode ? 'text-slate-200' : 'text-[#002855]')}>Semua Unit Kerja</button>
+                  {rekapDrill.l1 !== null && (<><ChevronRight className="w-4 h-4 text-slate-400" /><span className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{rekapDrill.l1}</span></>)}
+                </div>
+                {/* Ekspor Excel — hanya setelah sebuah Unit Kerja Level 1 dipilih. */}
+                {rekapDrill.l1 !== null && (
+                  <button onClick={exportRekapL1} disabled={exportingRekap} title={`Ekspor daftar SOP ${rekapDrill.l1} (seluruh sub-unit) ke Excel`} className="px-3.5 py-2 text-xs font-bold bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white rounded-xl shadow-sm flex items-center gap-2 shrink-0">
+                    <FileSpreadsheet className="w-4 h-4" /> {exportingRekap ? 'Menyiapkan…' : 'Ekspor Excel'}
+                  </button>
+                )}
               </div>
               <p className={`text-xs mb-3 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{rekapDrill.l1 === null ? `Rekap ${listTab === 'usulan' ? 'usulan' : listTab === 'terbit' ? 'SOP terbit' : 'dokumen'} per Unit Kerja Level 1. Klik baris untuk melihat sub-unit (Level 2).` : 'Klik sub-unit untuk melihat daftar dokumennya.'}</p>
               <div className="overflow-x-auto">

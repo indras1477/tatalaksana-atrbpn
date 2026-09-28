@@ -11,6 +11,7 @@ import {
   Calendar, ChevronRight, Building2, FileUp, ExternalLink,
   FileStack, Clock, AlertCircle, Landmark, X, Edit, MessageSquare, RotateCcw,
   History as HistoryIcon, GitCommit, Lock, Save, FileDown, Copy, Eye, Maximize2, Loader2, XCircle, Link2,
+  BookOpen, ClipboardList, FileSpreadsheet,
 } from 'lucide-react';
 import DocHistoryModal from '@/components/DocHistoryModal';
 import ShareButton from '@/components/ShareButton';
@@ -64,6 +65,7 @@ export default function SPPage() {
     if (q) setSearchQuery(q);
   }, []);
   const [showManualDoc, setShowManualDoc] = useState(false);
+  const [showPanduan, setShowPanduan] = useState(false);
   // Impor Word dari halaman daftar: berkas dibaca server lebih dulu, lalu
   // formulir identitas SP dibuka dengan hasil bacaan terlampir.
   const [sumberWord, setSumberWord] = useState<{ nama: string; doc: Record<string, unknown>; jumlah: number } | null>(null);
@@ -167,6 +169,155 @@ export default function SPPage() {
     });
     return Object.entries(groups).map(([nama, docs]) => ({ nama, ...progressCounts(docs) })).sort((a, b) => a.nama.localeCompare(b.nama));
   }, [rekapDataset, rekapDrill]);
+
+  // EKSPOR EXCEL rekap satu Unit Kerja Level 1 (admin/superadmin) — sama seperti
+  // fitur di Buat Proses Bisnis (BPMN) & Buat SOP: muncul setelah sebuah Unit Kerja
+  // Level 1 diklik pada rekap, isinya seluruh SP pada tab yang sedang dibuka + rekap
+  // per Sub-Unit (Level 2) + rekap per Status Dokumen.
+  const [exportingRekap, setExportingRekap] = useState(false);
+  const tahapLabel = listTab === 'usulan' ? 'Usulan' : listTab === 'terbit' ? 'Telah Ditetapkan' : 'Proses Penyusunan';
+  // Palet fill warna Unit Kerja (Level 2) — identik dgn BPMN/SOP, siklus 8 warna pastel.
+  const REKAP_L2_PALETTE = ['FFDCEAFE', 'FFD1FAE5', 'FFFEF3C7', 'FFFCE7F3', 'FFE0E7FF', 'FFE2E8F0', 'FFFFE1E1', 'FFECFCCB'];
+  // Label & warna teks status — selaras persis dgn statusBadge() di layar (map di atas).
+  const statusExcelLabel = (m: SPModel): string => {
+    const MAP: Record<string, string> = { usulan: 'USULAN', pending: 'REVIEW ORTALA MR', approved: 'PENGESAHAN PIMPINAN', penetapan: 'PENETAPAN MENTERI', verifikasi: 'VERIFIKASI TTD', rejected: 'PERLU REVISI', terbit: 'TERBIT' };
+    return MAP[m.status || 'draft'] || (m.status || 'draft').toUpperCase();
+  };
+  const statusExcelColor = (m: SPModel): string => {
+    const s = m.status || 'draft';
+    if (s === 'usulan') return 'FF475569'; // slate-600
+    if (s === 'terbit' || s === 'approved') return 'FF047857'; // emerald-700 (sama persis di statusBadge())
+    if (s === 'penetapan') return 'FF6D28D9'; // violet-700
+    if (s === 'verifikasi') return 'FF0E7490'; // cyan-700
+    if (s === 'pending') return 'FF1D4ED8'; // blue-700
+    if (s === 'rejected') return 'FFB91C1C'; // red-700
+    return 'FF4338CA'; // indigo-700 (draft)
+  };
+
+  const exportRekapL1 = async () => {
+    const l1 = rekapDrill.l1;
+    if (!l1) return;
+    const docs = rekapDataset.filter(m => (m.unit_l1 || '(Tanpa Unit)') === l1);
+    if (docs.length === 0) { alert('Tidak ada dokumen untuk diekspor pada unit kerja ini.'); return; }
+    setExportingRekap(true);
+    try {
+      // xlsx (SheetJS community) tidak bisa MENULIS style (fill/border/font warna) —
+      // hanya membaca. Pakai exceljs (open-source, full styling) khusus fitur ini.
+      const mod = await import('exceljs');
+      const ExcelJS = (mod as unknown as { default?: typeof mod }).default ?? mod;
+      const subUnit = (m: SPModel) => m.unit_l2 || '(Tanpa Sub-Unit)';
+      const urut = [...docs].sort((a, b) =>
+        subUnit(a).localeCompare(subUnit(b), 'id') || a.process_title.localeCompare(b.process_title, 'id'));
+
+      const perSub = new Map<string, number>();
+      urut.forEach(m => perSub.set(subUnit(m), (perSub.get(subUnit(m)) || 0) + 1));
+      const subNames = [...perSub.keys()].sort((a, b) => a.localeCompare(b, 'id'));
+      const fillOf = new Map(subNames.map((nama, i) => [nama, REKAP_L2_PALETTE[i % REKAP_L2_PALETTE.length]]));
+
+      const workbook = new ExcelJS.Workbook();
+      const ws = workbook.addWorksheet('Standar Pelayanan', { views: [{ showGridLines: false }] });
+      ws.columns = [{ width: 5 }, { width: 70 }, { width: 45 }, { width: 36 }];
+
+      const THIN = { style: 'thin' as const, color: { argb: 'FF94A3B8' } };
+      const BORDER_ALL = { top: THIN, left: THIN, bottom: THIN, right: THIN };
+      const titleFont = { bold: true, size: 14, color: { argb: 'FF002855' } };
+      const styleHeaderRow = (row: import('exceljs').Row) => {
+        row.eachCell(cell => {
+          cell.font = { bold: true, color: { argb: 'FF1E293B' } };
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFE2E8F0' } };
+          cell.border = BORDER_ALL;
+          cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        });
+      };
+
+      const titleRow = ws.addRow([`Daftar Standar Pelayanan ${l1}`]);
+      ws.mergeCells(titleRow.number, 1, titleRow.number, 4);
+      titleRow.font = titleFont;
+      titleRow.height = 22;
+      const infoRow = ws.addRow([`Tahap: ${tahapLabel}  •  Jumlah: ${urut.length} dokumen  •  Diekspor: ${new Date().toLocaleString('id-ID')}`]);
+      ws.mergeCells(infoRow.number, 1, infoRow.number, 4);
+      infoRow.font = { italic: true, size: 10, color: { argb: 'FF64748B' } };
+      ws.addRow([]);
+
+      // 1) REKAPITULASI PER SUB-UNIT (LEVEL 2) DULU — ringkasan tampil di atas
+      // sebelum daftar rinciannya.
+      const recapTitleRow = ws.addRow(['Rekapitulasi per Sub-Unit (Level 2)']);
+      ws.mergeCells(recapTitleRow.number, 1, recapTitleRow.number, 4);
+      recapTitleRow.font = { bold: true, size: 12, color: { argb: 'FF002855' } };
+      const recapHeadRow = ws.addRow(['No', 'Sub-Unit (Level 2)', 'Jumlah SP', '']);
+      styleHeaderRow(recapHeadRow);
+      subNames.forEach((nama, i) => {
+        const row = ws.addRow([i + 1, nama, perSub.get(nama) || 0, '']);
+        row.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', wrapText: true }; });
+        row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+        row.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillOf.get(nama) || 'FFFFFFFF' } };
+        row.getCell(3).alignment = { vertical: 'middle', horizontal: 'center' };
+      });
+      const totalRow = ws.addRow(['', 'TOTAL', urut.length, '']);
+      totalRow.font = { bold: true };
+      totalRow.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', horizontal: 'center' }; });
+      ws.addRow([]);
+
+      // 1b) REKAPITULASI PER STATUS DOKUMEN — urutan tetap mengikuti alur proses,
+      // BUKAN alfabet, supaya masuk akal dibaca. Warna teks sama dgn kolom Status
+      // Dokumen di tabel daftar di bawah.
+      const STATUS_ORDER = ['USULAN', 'DRAFT', 'REVIEW ORTALA MR', 'VERIFIKASI TTD', 'PENGESAHAN PIMPINAN', 'PENETAPAN MENTERI', 'PERLU REVISI', 'TERBIT'];
+      const perStatus = new Map<string, { count: number; color: string }>();
+      urut.forEach(m => {
+        const lbl = statusExcelLabel(m);
+        perStatus.set(lbl, { count: (perStatus.get(lbl)?.count || 0) + 1, color: statusExcelColor(m) });
+      });
+      const statusNames = [...perStatus.keys()].sort((a, b) => {
+        const ia = STATUS_ORDER.indexOf(a), ib = STATUS_ORDER.indexOf(b);
+        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+      });
+      const recap2TitleRow = ws.addRow(['Rekapitulasi per Status Dokumen']);
+      ws.mergeCells(recap2TitleRow.number, 1, recap2TitleRow.number, 4);
+      recap2TitleRow.font = { bold: true, size: 12, color: { argb: 'FF002855' } };
+      const recap2HeadRow = ws.addRow(['No', 'Status Dokumen', 'Jumlah SP', '']);
+      styleHeaderRow(recap2HeadRow);
+      statusNames.forEach((nama, i) => {
+        const info = perStatus.get(nama)!;
+        const row = ws.addRow([i + 1, nama, info.count, '']);
+        row.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }; });
+        row.getCell(2).font = { bold: true, color: { argb: info.color } };
+      });
+      const total2Row = ws.addRow(['', 'TOTAL', urut.length, '']);
+      total2Row.font = { bold: true };
+      total2Row.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', horizontal: 'center' }; });
+      ws.addRow([]);
+
+      // 2) DAFTAR SP (RINCIAN) — kolom Unit Kerja (L2) diberi fill color sesuai
+      // palet di atas, kolom Status Dokumen diberi warna TEKS sesuai status.
+      const HEAD = ['No', 'Nama Pelayanan', 'Unit Kerja', 'Status Dokumen'];
+      const headRow = ws.addRow(HEAD);
+      styleHeaderRow(headRow);
+      urut.forEach((m, i) => {
+        const su = subUnit(m);
+        const row = ws.addRow([i + 1, m.process_title, su, statusExcelLabel(m)]);
+        row.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', wrapText: true }; });
+        row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        row.getCell(3).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        row.getCell(3).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillOf.get(su) || 'FFFFFFFF' } };
+        row.getCell(4).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        row.getCell(4).font = { bold: true, color: { argb: statusExcelColor(m) } };
+      });
+
+      const buf = await workbook.xlsx.writeBuffer();
+      const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+      const url = URL.createObjectURL(blob);
+      const slug = (v: string) => v.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_').slice(0, 60);
+      const a = document.createElement('a');
+      a.href = url; a.download = `Daftar_Standar_Pelayanan_${slug(l1)}_${slug(tahapLabel)}.xlsx`;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } catch (e) {
+      console.error(e);
+      alert('Gagal membuat file Excel: ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setExportingRekap(false);
+    }
+  };
 
   const visibleModels = useMemo(() => {
     if (isAdminRekap && rekapDrill.l2 !== null) {
@@ -593,32 +744,40 @@ export default function SPPage() {
     <div className="@container max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6">
       {confirmNode}
       {/* Header */}
-      <div className="flex flex-col 2xl:flex-row 2xl:items-center justify-between gap-3 2xl:gap-4 mb-6">
-        <p className={`text-sm font-medium ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+      {/* Header: teks unit di kiri, tombol SEJAJAR di kanan mulai layar lg
+          (dulu baru sejajar di 2xl sehingga tombol turun ke baris bawah pada
+          laptop biasa). Di bawah lg tombol turun tapi tetap rata kanan, dan
+          label panjang disingkat agar satu baris tetap muat. */}
+      <div className="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-3 mb-6">
+        <p className={`text-sm font-medium lg:shrink-0 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
           {isAdmin ? 'Manajemen Standar Pelayanan (Pusat)' : `${currentUser.unit_l1}${currentUser.unit_l2 ? ' › ' + currentUser.unit_l2 : ''}`}
         </p>
-        <div className="flex flex-wrap items-center gap-2 self-start 2xl:self-auto 2xl:justify-end">
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end lg:ml-auto">
+          <button onClick={() => setShowPanduan(true)} title="Panduan penyusunan Standar Pelayanan"
+            className={`whitespace-nowrap shrink-0 min-h-11 sm:min-h-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-indigo-700 text-indigo-400 hover:bg-indigo-900/30' : 'border-indigo-200 text-indigo-600 hover:bg-indigo-50'}`}>
+            <BookOpen className="w-4 h-4" /> Panduan
+          </button>
           {currentUser.role !== 'viewer' && (<>
             <button onClick={() => inputWordRef.current?.click()} disabled={membacaWord}
               title="Buat naskah Standar Pelayanan dari berkas Word (.docx) yang sudah ada"
-              className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all disabled:opacity-60 ${isDarkMode ? 'border-blue-700 text-blue-400 hover:bg-blue-900/30' : 'border-blue-300 text-blue-700 hover:bg-blue-50'}`}>
+              className={`whitespace-nowrap shrink-0 min-h-11 sm:min-h-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all disabled:opacity-60 ${isDarkMode ? 'border-blue-700 text-blue-400 hover:bg-blue-900/30' : 'border-blue-300 text-blue-700 hover:bg-blue-50'}`}>
               {membacaWord ? <Loader2 className="w-4 h-4 animate-spin" /> : <FileUp className="w-4 h-4" />} {membacaWord ? 'Membaca…' : 'Impor Word'}
             </button>
             <input ref={inputWordRef} type="file" accept=".docx" className="hidden" onChange={pilihBerkasWord} />
           </>)}
           {currentUser.role !== 'viewer' && (
             <button onClick={() => setShowTrash(true)} title="Kotak Sampah — dokumen terhapus (30 hari)"
-              className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/20' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
-              <Trash2 className="w-4 h-4" /> <span className="hidden sm:inline">Kotak Sampah</span>
+              className={`whitespace-nowrap shrink-0 min-h-11 sm:min-h-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/20' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
+              <Trash2 className="w-4 h-4" /> <span className="hidden sm:inline xl:hidden">Sampah</span><span className="hidden xl:inline">Kotak Sampah</span>
             </button>
           )}
-          <button onClick={() => setShowManualDoc(true)} className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/30' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
-            <FileUp className="w-4 h-4" /> Dokumen Manual
+          <button onClick={() => setShowManualDoc(true)} className={`whitespace-nowrap shrink-0 min-h-11 sm:min-h-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/30' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
+            <FileUp className="w-4 h-4" /> <span className="xl:hidden">Manual</span><span className="hidden xl:inline">Dokumen Manual</span>
           </button>
           {currentUser.role !== 'viewer' && (
             <button onClick={() => { setSumberWord(null); setKonfigSP({ isOpen: true, judul: '', klasifikasi: '', l1: currentUser.role === 'user' ? (currentUser.unit_l1 || '') : '', l2: '' }); }}
               title="Susun naskah Standar Pelayanan di studio (kertas F4, ekspor PDF/Word)"
-              className="whitespace-nowrap shrink-0 px-4 py-2.5 xl:px-5 xl:py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-xl shadow-md flex items-center gap-2 font-bold transition-all">
+              className="whitespace-nowrap shrink-0 min-h-11 sm:min-h-0 px-4 py-2.5 xl:px-5 xl:py-3 bg-teal-600 hover:bg-teal-700 text-white rounded-xl shadow-md flex items-center gap-2 font-bold transition-all">
               <Plus size={18} /> Buat SP Baru
             </button>
           )}
@@ -761,9 +920,17 @@ export default function SPPage() {
                 <button onClick={() => setUsulanForm(f => ({ ...f, isOpen: true, l1: currentUser.role === 'user' ? (currentUser.unit_l1 || '') : '' }))} className="px-4 py-2.5 text-sm font-bold bg-teal-600 hover:bg-teal-700 text-white rounded-xl shadow-sm flex items-center justify-center gap-2 shrink-0"><Plus className="w-4 h-4" /> Tambah Usulan SP</button>
               </div>
             )}
-            <div className="flex items-center gap-1.5 text-sm font-semibold mb-1 flex-wrap">
-              <button onClick={() => setRekapDrill({ l1: null, l2: null })} className={rekapDrill.l1 !== null ? 'text-teal-600 hover:underline' : (isDarkMode ? 'text-slate-200' : 'text-[#002855]')}>Semua Unit Kerja</button>
-              {rekapDrill.l1 !== null && (<><ChevronRight className="w-4 h-4 text-slate-400" /><span className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{rekapDrill.l1}</span></>)}
+            <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
+              <div className="flex items-center gap-1.5 text-sm font-semibold flex-wrap">
+                <button onClick={() => setRekapDrill({ l1: null, l2: null })} className={rekapDrill.l1 !== null ? 'text-teal-600 hover:underline' : (isDarkMode ? 'text-slate-200' : 'text-[#002855]')}>Semua Unit Kerja</button>
+                {rekapDrill.l1 !== null && (<><ChevronRight className="w-4 h-4 text-slate-400" /><span className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{rekapDrill.l1}</span></>)}
+              </div>
+              {/* Ekspor Excel — hanya setelah sebuah Unit Kerja Level 1 dipilih. */}
+              {rekapDrill.l1 !== null && (
+                <button onClick={exportRekapL1} disabled={exportingRekap} title={`Ekspor daftar SP ${rekapDrill.l1} (seluruh sub-unit) ke Excel`} className="px-3.5 py-2 text-xs font-bold bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white rounded-xl shadow-sm flex items-center gap-2 shrink-0">
+                  <FileSpreadsheet className="w-4 h-4" /> {exportingRekap ? 'Menyiapkan…' : 'Ekspor Excel'}
+                </button>
+              )}
             </div>
             <p className={`text-xs mb-3 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{rekapDrill.l1 === null ? `Rekap ${listTab === 'usulan' ? 'usulan' : listTab === 'terbit' ? 'SP terbit' : 'dokumen'} per Unit Kerja Level 1. Klik baris untuk melihat sub-unit (Level 2).` : 'Klik sub-unit untuk melihat daftar dokumennya.'}</p>
             <div className="overflow-x-auto">
@@ -1326,6 +1493,55 @@ export default function SPPage() {
             setDetailModel(prev => prev ? { ...prev, ...upd } : prev);
           }}
         />
+      )}
+
+      {/* Panduan Standar Pelayanan — pola sama dgn tombol Panduan di modul BPMN */}
+      {showPanduan && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => setShowPanduan(false)}>
+          <div onClick={e => e.stopPropagation()}
+            className={`w-full max-w-2xl rounded-2xl shadow-2xl overflow-hidden max-h-[90vh] flex flex-col ${isDarkMode ? 'bg-[#151F32] border border-slate-700' : 'bg-white'}`}>
+            <div className={`flex items-center justify-between gap-2 p-5 border-b shrink-0 ${isDarkMode ? 'border-slate-700 bg-[#0F172A]' : 'border-slate-100 bg-slate-50'}`}>
+              <div className="flex items-center gap-3 min-w-0">
+                <div className={`p-2.5 rounded-xl shrink-0 ${isDarkMode ? 'bg-indigo-900/30 text-indigo-400' : 'bg-indigo-50 text-indigo-600'}`}>
+                  <ClipboardList className="w-5 h-5" />
+                </div>
+                <div className="min-w-0">
+                  <h3 className={`text-base sm:text-lg font-extrabold truncate ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>Panduan Standar Pelayanan</h3>
+                  <p className={`text-[11px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Komponen wajib, cara memasukkan dokumen, dan alur penetapan</p>
+                </div>
+              </div>
+              <button onClick={() => setShowPanduan(false)} className={`p-2.5 rounded-xl shrink-0 transition-colors ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-400'}`}>
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <div className="overflow-y-auto flex-1 p-5 space-y-5">
+              {[
+                { j: 'Komponen Standar Pelayanan', d: 'Mengikuti Permenpan RB 15/2014: 6 komponen Service Delivery yang WAJIB dipublikasikan kepada masyarakat (Persyaratan; Sistem, mekanisme, dan prosedur; Jangka waktu penyelesaian; Biaya/tarif; Produk pelayanan; Penanganan pengaduan, saran, dan masukan) dan 8 komponen Manufacturing untuk kepentingan internal (mulai Dasar Hukum sampai Evaluasi kinerja pelaksana). Komponen tambahan seperti "Peringatan" dapat disisipkan bila diperlukan.' },
+                { j: 'Tiga cara memasukkan dokumen', d: 'Buat SP Baru — menyusun naskah langsung di Studio SP (kertas F4 210×330 mm, Bookman Old Style 12). Impor Word — mengambil naskah dari berkas .docx yang sudah ada, lalu diperiksa di Studio. Dokumen Manual — mencatat dokumen jadi berupa unggahan PDF atau tautan Google Drive, tanpa disusun ulang.' },
+                { j: 'Alur penetapan', d: 'Draft → Review Biro Ortala MR → Pengesahan pimpinan → Penetapan Menteri → Telah Ditetapkan (Terbit). Bila dikembalikan, dokumen berstatus Perlu Revisi dan penyusun dapat menanggapi catatan review lewat tombol Tanggapi. Naskah terkunci begitu masuk verifikasi, penetapan, atau terbit — gunakan Salin untuk merevisi.' },
+                { j: 'Di dalam Studio SP', d: 'Halaman terpotong otomatis setiap kertas penuh dengan kepala tabel (NO · KOMPONEN · URAIAN) berulang, sama seperti hasil cetak. Tersedia penomoran bertingkat (1. → a. → 1) lewat Tab), gabung sel, urungkan/ulangi, panel Properti Dokumen untuk identitas dan Keterkaitan Dokumen ke SOP/Proses Bisnis, serta ekspor PDF dan Word. Naskah tersimpan otomatis tiap 25 detik, dan sistem memperingatkan bila keluar sebelum menyimpan.' },
+                { j: 'Kotak Sampah', d: 'Dokumen yang dihapus disimpan 30 hari sebelum dibuang permanen, sehingga penghapusan tak sengaja masih dapat dipulihkan. Pengguna unit hanya melihat dokumen unit kerjanya sendiri.' },
+              ].map(x => (
+                <div key={x.j}>
+                  <h4 className={`text-sm font-extrabold mb-1 ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{x.j}</h4>
+                  <p className={`text-[13px] leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>{x.d}</p>
+                </div>
+              ))}
+            </div>
+
+            <div className={`px-5 py-4 border-t shrink-0 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-2 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+              <button onClick={() => { setShowPanduan(false); router.push('/panduan'); }}
+                className={`text-xs font-bold underline-offset-2 hover:underline text-left ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                Buka Panduan Penggunaan lengkap
+              </button>
+              <button onClick={() => setShowPanduan(false)}
+                className={`px-5 py-2.5 rounded-xl font-bold text-sm flex items-center justify-center gap-2 transition-colors ${isDarkMode ? 'bg-blue-600 hover:bg-blue-500 text-white' : 'bg-[#002855] hover:bg-[#001b3a] text-white'}`}>
+                Mengerti <ChevronRight className="w-4 h-4" />
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       {/* Kotak Sampah — dokumen terhapus (30 hari) lintas BPMN/SOP/SP */}
