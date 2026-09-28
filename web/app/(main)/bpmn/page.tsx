@@ -460,6 +460,36 @@ export default function BPMNDashboardPage() {
       totalRow.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', horizontal: 'center' }; });
       ws.addRow([]);
 
+      // 1b) REKAPITULASI PER STATUS DOKUMEN — urutan tetap mengikuti alur proses
+      // (usulan → draft → menunggu → verifikasi → pengesahan → perlu revisi → ditetapkan),
+      // BUKAN alfabet, supaya urutannya masuk akal dibaca. Warna teks Status Dokumen
+      // sama persis dengan warna di kolom Status Dokumen pada tabel daftar di bawah.
+      const STATUS_ORDER = ['USULAN', 'DRAFT', 'MENUNGGU', 'VERIFIKASI TTD', 'MENUNGGU PENGESAHAN PIMPINAN', 'MENUNGGU PROSES PENETAPAN MENTERI', 'PERLU REVISI', 'DITETAPKAN'];
+      const perStatus = new Map<string, { count: number; color: string }>();
+      urut.forEach(m => {
+        const lbl = label(m);
+        perStatus.set(lbl, { count: (perStatus.get(lbl)?.count || 0) + 1, color: statusExcelColor(m) });
+      });
+      const statusNames = [...perStatus.keys()].sort((a, b) => {
+        const ia = STATUS_ORDER.indexOf(a), ib = STATUS_ORDER.indexOf(b);
+        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+      });
+      const recap2TitleRow = ws.addRow(['Rekapitulasi per Status Dokumen']);
+      ws.mergeCells(recap2TitleRow.number, 1, recap2TitleRow.number, 4);
+      recap2TitleRow.font = { bold: true, size: 12, color: { argb: 'FF002855' } };
+      const recap2HeadRow = ws.addRow(['No', 'Status Dokumen', 'Jumlah Proses Bisnis', '']);
+      styleHeaderRow(recap2HeadRow);
+      statusNames.forEach((nama, i) => {
+        const info = perStatus.get(nama)!;
+        const row = ws.addRow([i + 1, nama, info.count, '']);
+        row.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }; });
+        row.getCell(2).font = { bold: true, color: { argb: info.color } };
+      });
+      const total2Row = ws.addRow(['', 'TOTAL', urut.length, '']);
+      total2Row.font = { bold: true };
+      total2Row.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', horizontal: 'center' }; });
+      ws.addRow([]);
+
       // 2) DAFTAR PROSES BISNIS (RINCIAN) — kolom Unit Kerja (L2) diberi fill color
       // sesuai palet di atas, kolom Status Dokumen diberi warna TEKS sesuai status.
       const HEAD = ['No', 'Proses Bisnis (Level 3)', 'Unit Kerja', 'Status Dokumen'];
