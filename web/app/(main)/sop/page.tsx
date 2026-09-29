@@ -1975,8 +1975,9 @@ export default function SOPDashboardPage() {
                 </div>
                 {/* Ekspor Excel — hanya setelah sebuah Unit Kerja Level 1 dipilih. */}
                 {rekapDrill.l1 !== null && (
-                  <button onClick={exportRekapL1} disabled={exportingRekap} title={`Ekspor daftar SOP ${rekapDrill.l1} (seluruh sub-unit) ke Excel`} className="px-3.5 py-2 text-xs font-bold bg-green-600 hover:bg-green-700 disabled:opacity-60 text-white rounded-xl shadow-sm flex items-center gap-2 shrink-0">
-                    <FileSpreadsheet className="w-4 h-4" /> {exportingRekap ? 'Menyiapkan…' : 'Ekspor Excel'}
+                  <button onClick={exportRekapL1} disabled={exportingRekap} title={`Ekspor daftar SOP ${rekapDrill.l1} (seluruh sub-unit) ke Excel`} className="group inline-flex items-center gap-2 pl-2.5 pr-4 py-2 text-xs font-bold text-white bg-[#6a994e] hover:bg-[#5d8745] active:scale-95 rounded-full shadow-sm hover:shadow-md transition-all duration-150 disabled:opacity-60 disabled:active:scale-100 disabled:cursor-not-allowed shrink-0">
+                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-white/20 group-hover:bg-white/30 transition-colors"><FileSpreadsheet className="w-3 h-3" /></span>
+                    {exportingRekap ? 'Menyiapkan…' : 'Ekspor Excel'}
                   </button>
                 )}
               </div>
