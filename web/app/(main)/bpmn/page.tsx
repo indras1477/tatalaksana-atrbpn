@@ -347,11 +347,12 @@ export default function BPMNDashboardPage() {
     usulan: docs.filter(m => m.status === 'usulan').length,
     draft: docs.filter(m => !m.status || m.status === 'draft').length,
     pending: docs.filter(m => m.status === 'pending').length,
-    pengesahan: docs.filter(m => ['fisik', 'penetapan'].includes(m.status || '')).length,
+    fisik: docs.filter(m => m.status === 'fisik').length,
+    penetapan: docs.filter(m => m.status === 'penetapan').length,
     revisi: docs.filter(m => m.status === 'rejected').length,
     total: docs.length,
   });
-  const rekapBadge = (n: number, tone: 'slate' | 'indigo' | 'blue' | 'violet' | 'red' | 'emerald') => {
+  const rekapBadge = (n: number, tone: 'orange' | 'slate' | 'indigo' | 'blue' | 'violet' | 'red' | 'emerald') => {
     if (!n) return <span className="text-slate-300 font-bold">–</span>;
     const map = {
       slate: isDarkMode ? 'bg-slate-700/60 text-slate-200' : 'bg-slate-100 text-slate-700',
@@ -359,6 +360,7 @@ export default function BPMNDashboardPage() {
       blue: isDarkMode ? 'bg-blue-900/40 text-blue-300' : 'bg-blue-50 text-blue-700',
       violet: isDarkMode ? 'bg-violet-900/40 text-violet-300' : 'bg-violet-50 text-violet-700',
       red: isDarkMode ? 'bg-red-900/40 text-red-300' : 'bg-red-50 text-red-700',
+      orange: isDarkMode ? 'bg-orange-900/40 text-orange-300' : 'bg-orange-50 text-orange-700',
       emerald: isDarkMode ? 'bg-emerald-900/40 text-emerald-300' : 'bg-emerald-50 text-emerald-700',
     };
     return <span className={`inline-flex min-w-8 justify-center px-2 py-1 rounded-lg text-xs font-black ${map[tone]}`}>{n}</span>;
@@ -1684,8 +1686,9 @@ export default function BPMNDashboardPage() {
                         <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-slate-300' : 'text-slate-500'}`}>Draft Usulan</th>
                         <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-indigo-300' : 'text-indigo-500'}`}>Draft Proses</th>
                         <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-blue-300' : 'text-blue-500'}`}>Review Ortala MR</th>
-                        <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-violet-300' : 'text-violet-500'}`}>Pengesahan Pimpinan</th>
                         <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-red-300' : 'text-red-500'}`}>Perlu Revisi</th>
+                        <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-orange-300' : 'text-orange-600'}`}>Dokumen Fisik</th>
+                        <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-violet-300' : 'text-violet-500'}`}>Penetapan Menteri</th>
                         <th className={`px-2 py-3 text-center ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>Total</th>
                       </>)}
                       <th className="px-2 py-3"></th>
@@ -1693,7 +1696,7 @@ export default function BPMNDashboardPage() {
                   </thead>
                   <tbody className={`divide-y ${isDarkMode ? 'divide-slate-800' : 'divide-slate-100'}`}>
                     {rekapRows.length === 0 ? (
-                      <tr><td colSpan={rekapRingkas ? 3 : 8} className={`px-4 py-12 text-center ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{listTab === 'usulan' ? 'Belum ada usulan.' : listTab === 'terbit' ? 'Belum ada Proses Bisnis yang ditetapkan.' : 'Tidak ada dokumen dalam proses penyusunan.'}</td></tr>
+                      <tr><td colSpan={rekapRingkas ? 3 : 9} className={`px-4 py-12 text-center ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{listTab === 'usulan' ? 'Belum ada usulan.' : listTab === 'terbit' ? 'Belum ada Proses Bisnis yang ditetapkan.' : 'Tidak ada dokumen dalam proses penyusunan.'}</td></tr>
                     ) : rekapRows.map(row => (
                       <tr key={row.nama} onClick={() => setRekapDrill(rekapDrill.l1 === null ? { l1: row.nama, l2: null } : { l1: rekapDrill.l1, l2: row.nama })} className={`cursor-pointer transition-colors ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-blue-50/50'}`}>
                         <td className={`px-4 py-3 font-bold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{row.nama}</td>
@@ -1703,8 +1706,9 @@ export default function BPMNDashboardPage() {
                           <td className="px-2 py-3 text-center">{rekapBadge(row.usulan, 'slate')}</td>
                           <td className="px-2 py-3 text-center">{rekapBadge(row.draft, 'indigo')}</td>
                           <td className="px-2 py-3 text-center">{rekapBadge(row.pending, 'blue')}</td>
-                          <td className="px-2 py-3 text-center">{rekapBadge(row.pengesahan, 'violet')}</td>
                           <td className="px-2 py-3 text-center">{rekapBadge(row.revisi, 'red')}</td>
+                          <td className="px-2 py-3 text-center">{rekapBadge(row.fisik, 'orange')}</td>
+                          <td className="px-2 py-3 text-center">{rekapBadge(row.penetapan, 'violet')}</td>
                           <td className="px-2 py-3 text-center"><span className={`inline-flex min-w-8 justify-center px-2.5 py-1 rounded-lg text-xs font-black text-white ${isDarkMode ? 'bg-blue-600' : 'bg-[#002855]'}`}>{row.total}</span></td>
                         </>)}
                         <td className="px-2 py-3 text-slate-400"><ChevronRight className="w-4 h-4" /></td>
