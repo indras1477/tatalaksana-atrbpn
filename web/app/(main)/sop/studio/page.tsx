@@ -64,7 +64,7 @@ function SOPStudioContent() {
     } catch (e) { console.error(e); alert('Gagal menyetujui.'); }
     finally { setApproving(false); }
   };
-  const isViewOnlySop = mode === 'view' || ['terbit', 'verifikasi', 'penetapan'].includes(docStatus || '');
+  const isViewOnlySop = mode === 'view' || ['terbit', 'verifikasi', 'fisik', 'penetapan'].includes(docStatus || '');
   useEditingPresence('sop', (isViewOnlySop || !currentId) ? null : Number(currentId), presenceToken);
 
   const apiFetch = async (path: string, options?: RequestInit) => {
@@ -107,7 +107,7 @@ function SOPStudioContent() {
            loadedOkRef.current = true; // izinkan autosave HANYA setelah dokumen benar termuat
            // Cek apakah perangkat lain sedang mengedit dokumen ini (termasuk akun sama beda perangkat).
            // Mode lihat / dokumen terkunci tidak perlu peringatan — pembaca tidak menimbulkan konflik.
-           if (currentId && mode !== 'view' && !['terbit', 'verifikasi', 'penetapan'].includes(data?.status || '')) {
+           if (currentId && mode !== 'view' && !['terbit', 'verifikasi', 'fisik', 'penetapan'].includes(data?.status || '')) {
              const tok = localStorage.getItem('token');
              fetch(`/e-sop-atrbpn/api/editing-sessions/sop`, { headers: { Authorization: `Bearer ${tok}` } })
                .then(r => r.ok ? r.json() : [])
@@ -134,7 +134,7 @@ function SOPStudioContent() {
 
   // SOP terbit: ambil cover bertanda tangan untuk ditampilkan sebagai pratinjau di studio.
   useEffect(() => {
-    if (!currentId || !['terbit', 'verifikasi', 'penetapan'].includes(docStatus || '')) return;
+    if (!currentId || !['terbit', 'verifikasi', 'fisik', 'penetapan'].includes(docStatus || '')) return;
     let active = true;
     let url: string | null = null;
     apiFetch(`/sop/models/${currentId}/cover`)
@@ -247,7 +247,7 @@ function SOPStudioContent() {
   // lalu ambil PDF hasil render headless Chrome dari server dan unduh langsung.
   const handleDownloadPdf = async (dataJson: string) => {
     // SOP terbit terkunci (server menolak PUT) — jangan persist, langsung render dari data tersimpan.
-    const id = ['terbit', 'verifikasi', 'penetapan'].includes(docStatus || '') ? currentId : await persist(dataJson);
+    const id = ['terbit', 'verifikasi', 'fisik', 'penetapan'].includes(docStatus || '') ? currentId : await persist(dataJson);
     if (!id) throw new Error('Dokumen belum tersimpan.');
     const res = await apiFetch(`/sop/models/${id}/pdf`);
     if (!res.ok) {
@@ -333,10 +333,10 @@ function SOPStudioContent() {
       initialL2={l2}
       initialJenis={jenis}
       initialKlasifikasi={klasifikasi}
-      isViewOnly={mode === 'view' || ['terbit', 'verifikasi', 'penetapan'].includes(docStatus || '')}
+      isViewOnly={mode === 'view' || ['terbit', 'verifikasi', 'fisik', 'penetapan'].includes(docStatus || '')}
       signedCoverUrl={coverUrl}
       signedCoverMime={coverMime}
-      hasSignedCover={['terbit', 'verifikasi', 'penetapan'].includes(docStatus || '')}
+      hasSignedCover={['terbit', 'verifikasi', 'fisik', 'penetapan'].includes(docStatus || '')}
       signedCoverPages={coverPages}
       onSaveTrigger={handleSave}
       onSubmitTrigger={handleSubmit}

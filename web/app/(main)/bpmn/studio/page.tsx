@@ -82,13 +82,13 @@ function BPMNStudioContent() {
   // tanpa harus kembali ke daftar. Alur sama dgn handleApprove di halaman daftar.
   const approveFromView = async () => {
     if (!currentModel?.id) return;
-    if (!(await confirm({ title: 'Setujui Proses Bisnis', message: `Setujui dokumen \"${currentModel.process_title || config.processTitle}\"? Selanjutnya menunggu proses penetapan menteri.`, tone: 'success', confirmText: 'Ya, Setujui' }))) return;
+    if (!(await confirm({ title: 'Setujui Proses Bisnis', message: `Setujui dokumen \"${currentModel.process_title || config.processTitle}\"? Selanjutnya unit kerja menyerahkan DOKUMEN FISIK Proses Bisnis ke Biro Ortala MR sebelum penetapan menteri.`, tone: 'success', confirmText: 'Ya, Setujui' }))) return;
     setApproving(true);
     try {
-      const res = await apiFetch(`/bpmn/models/status/${currentModel.id}`, token, { method: 'PATCH', body: JSON.stringify({ status: 'penetapan', catatan: '' }) });
+      const res = await apiFetch(`/bpmn/models/status/${currentModel.id}`, token, { method: 'PATCH', body: JSON.stringify({ status: 'fisik', catatan: '' }) });
       if (res.ok) {
-        setCurrentModel(prev => prev ? { ...prev, status: 'penetapan', catatan: null } : prev);
-        alert('✅ Disetujui! Menunggu proses penetapan menteri.');
+        setCurrentModel(prev => prev ? { ...prev, status: 'fisik', catatan: null } : prev);
+        alert('✅ Disetujui! Menunggu dokumen fisik Proses Bisnis dari unit kerja.');
       } else { const e = await res.json().catch(() => ({} as { error?: string })); alert(e.error || 'Gagal menyetujui.'); }
     } catch (e) { console.error(e); alert('Gagal menyetujui.'); }
     finally { setApproving(false); }
@@ -102,8 +102,9 @@ function BPMNStudioContent() {
 
   const [currentModel, setCurrentModel] = useState<BPMNModel | null>(null);
   const [isLoadingDocument, setIsLoadingDocument] = useState(true);
-  // Mode baca bila dibuka via ?mode=view ATAU dokumen sudah dalam penetapan/ditetapkan (terkunci).
-  const isViewOnly = mode === 'view' || ['penetapan', 'approved'].includes(currentModel?.status || '');
+  // Mode baca bila dibuka via ?mode=view ATAU dokumen sudah disetujui/terkunci
+  // (menunggu dokumen fisik, penetapan menteri, atau sudah ditetapkan).
+  const isViewOnly = mode === 'view' || ['fisik', 'penetapan', 'approved'].includes(currentModel?.status || '');
 
   const [isSaving, setIsSaving] = useState(false);
   const [showSaveModal, setShowSaveModal] = useState(false);
@@ -217,7 +218,7 @@ function BPMNStudioContent() {
           if (data.status === 'usulan') setShowConfigModal(true);
           // Cek apakah perangkat lain sedang mengedit dokumen ini (termasuk akun sama beda perangkat).
           // Mode lihat tidak perlu peringatan — pembaca tidak menimbulkan konflik.
-          if (mode !== 'view' && !['penetapan', 'approved'].includes(data.status))
+          if (mode !== 'view' && !['fisik', 'penetapan', 'approved'].includes(data.status))
           fetch(`/e-sop-atrbpn/api/editing-sessions/bpmn`, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } })
             .then(r => r.ok ? r.json() : [])
             .then((sessions: {model_id: number; user_id: number; client_id: string; username: string; nama_lengkap: string}[]) => {

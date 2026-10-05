@@ -11,7 +11,7 @@
 import { useState, useEffect, useRef } from 'react';
 import {
   X, FileText, ExternalLink, CheckCircle, XCircle, Stamp, Upload, Pencil,
-  Building2, Calendar, Hash, AlertTriangle, Clock, Landmark, Link2, History, RotateCcw,
+  Building2, Calendar, Hash, AlertTriangle, Clock, Landmark, Link2, History, RotateCcw, Inbox,
 } from 'lucide-react';
 import { HIERARKI_UNIT } from '@/lib/constants';
 import { JENIS_OPTIONS, KLASIFIKASI_OPTIONS } from '@/components/ManualDocModal';
@@ -223,7 +223,8 @@ export default function ManualDocDetailModal({ kind, model, token, role, isDarkM
   const statusInfo = (): { label: string; cls: string; icon: React.ReactNode; hint: string } => {
     switch (model.status) {
       case 'pending': return { label: 'REVIEW ORTALA MR', cls: 'bg-blue-50 text-blue-700 border-blue-200', icon: <Clock className="w-3 h-3" />, hint: 'Menunggu admin memeriksa dokumen ini — setujui untuk lanjut ke pengesahan pimpinan, atau tolak dengan catatan.' };
-      case 'penetapan': return { label: 'MENUNGGU PENETAPAN MENTERI', cls: 'bg-violet-50 text-violet-700 border-violet-200', icon: <Landmark className="w-3 h-3" />, hint: 'Dokumen sudah lengkap & disetujui — tinggal ditetapkan oleh admin/superadmin (tombol Ditetapkan di daftar).' };
+      case 'fisik': return { label: `MENUNGGU DOKUMEN FISIK ${kind === 'bpmn' ? 'PROSES BISNIS' : kind === 'sp' ? 'SP' : 'SOP'}`, cls: 'bg-orange-50 text-orange-700 border-orange-200', icon: <Inbox className="w-3 h-3" />, hint: 'Dokumen sudah disetujui — unit kerja menyerahkan dokumen fisiknya ke Biro Ortala MR. Setelah diterima, admin menekan "Terima Dokumen Fisik" agar lanjut ke penetapan menteri.' };
+      case 'penetapan': return { label: 'MENUNGGU PENETAPAN MENTERI', cls: 'bg-violet-50 text-violet-700 border-violet-200', icon: <Landmark className="w-3 h-3" />, hint: 'Dokumen fisik sudah diterima — tinggal ditetapkan oleh admin/superadmin (tombol Ditetapkan di daftar).' };
       case 'verifikasi': return { label: 'VERIFIKASI TTD', cls: 'bg-cyan-50 text-cyan-700 border-cyan-200', icon: <Stamp className="w-3 h-3" />, hint: 'PDF ber-TTD sudah diunggah — admin memeriksa; bila sesuai, tetapkan agar dokumen terbit.' };
       case 'rejected': return { label: 'PERLU REVISI', cls: 'bg-red-50 text-red-700 border-red-200', icon: <XCircle className="w-3 h-3" />, hint: 'Ditolak — perbaiki lewat "Edit Informasi" atau unggah ulang PDF; perbaikan otomatis mengantre ulang ke review admin.' };
       case 'approved': return kind === 'bpmn'
@@ -438,13 +439,26 @@ export default function ManualDocDetailModal({ kind, model, token, role, isDarkM
                 {/* Admin: review awal */}
                 {isAdmin && model.status === 'pending' && (
                   <div className="flex flex-col sm:flex-row gap-2">
-                    <button disabled={busy} onClick={() => { if (window.confirm(kind === 'bpmn' ? 'Setujui dokumen ini? Selanjutnya menunggu proses penetapan menteri untuk ditetapkan admin.' : 'Setujui dokumen ini? Selanjutnya penyusun mencetak & memintakan tanda tangan pimpinan, lalu mengunggah ulang PDF ber-TTD.')) patchStatus(kind === 'bpmn' ? 'penetapan' : 'approved'); }}
+                    <button disabled={busy} onClick={() => { if (window.confirm(kind === 'bpmn' ? 'Setujui dokumen ini? Selanjutnya unit kerja menyerahkan DOKUMEN FISIK Proses Bisnis ke Biro Ortala MR sebelum penetapan menteri.' : 'Setujui dokumen ini? Selanjutnya penyusun mencetak & memintakan tanda tangan pimpinan, lalu mengunggah ulang PDF ber-TTD.')) patchStatus(kind === 'bpmn' ? 'fisik' : 'approved'); }}
                       className="flex-1 min-h-11 flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:bg-slate-300">
-                      <CheckCircle className="w-4 h-4" /> {kind === 'bpmn' ? 'Setujui — Lanjut Penetapan Menteri' : 'Setujui — Lanjut Pengesahan Pimpinan'}
+                      <CheckCircle className="w-4 h-4" /> {kind === 'bpmn' ? 'Setujui — Menunggu Dokumen Fisik' : 'Setujui — Lanjut Pengesahan Pimpinan'}
                     </button>
                     <button disabled={busy} onClick={() => setRejectNote({ open: true, note: '', backTo: 'rejected' })}
                       className={`flex-1 min-h-11 flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold ${isDarkMode ? 'border-red-800 text-red-400 hover:bg-red-900/30' : 'border-red-300 text-red-600 hover:bg-red-50'}`}>
                       <XCircle className="w-4 h-4" /> Tolak
+                    </button>
+                  </div>
+                )}
+
+                {/* Admin: dokumen fisik sudah diterima dari unit kerja → lanjut penetapan menteri. */}
+                {isAdmin && model.status === 'fisik' && (
+                  <div className="space-y-2">
+                    <p className={`text-xs rounded-xl px-3.5 py-2.5 border ${isDarkMode ? 'text-orange-300 bg-orange-900/20 border-orange-800' : 'text-orange-700 bg-orange-50 border-orange-200'}`}>
+                      Menunggu <b>dokumen fisik</b> diserahkan unit kerja ke Biro Ortala MR. Tekan tombol di bawah setelah berkas fisiknya benar-benar diterima.
+                    </p>
+                    <button disabled={busy} onClick={() => { if (window.confirm('Dokumen fisik sudah diterima dari unit kerja? Dokumen akan lanjut ke proses penetapan menteri.')) patchStatus('penetapan'); }}
+                      className="w-full min-h-11 flex items-center justify-center gap-2 rounded-xl bg-orange-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-orange-700 disabled:bg-slate-300">
+                      <Inbox className="w-4 h-4" /> Terima Dokumen Fisik
                     </button>
                   </div>
                 )}
@@ -457,10 +471,10 @@ export default function ManualDocDetailModal({ kind, model, token, role, isDarkM
                 )}
 
                 {/* Admin: batalkan proses penetapan (salah klik/terlewat) → kembali ke tahap sebelumnya */}
-                {isAdmin && (model.status === 'penetapan' || (kind !== 'bpmn' && model.status === 'approved')) && (
+                {isAdmin && (['penetapan', 'fisik'].includes(model.status) || (kind !== 'bpmn' && model.status === 'approved')) && (
                   <button disabled={busy} onClick={batalPenetapan}
                     className={`w-full min-h-11 flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/30' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
-                    <RotateCcw className="w-4 h-4" /> {model.status === 'approved' ? 'Batalkan Persetujuan (Kembali ke Review)' : 'Batalkan Proses Penetapan'}
+                    <RotateCcw className="w-4 h-4" /> {model.status === 'approved' ? 'Batalkan Persetujuan (Kembali ke Review)' : model.status === 'fisik' ? 'Batalkan — Kembali ke Tahap Sebelumnya' : 'Batalkan Proses Penetapan'}
                   </button>
                 )}
 
@@ -505,9 +519,9 @@ export default function ManualDocDetailModal({ kind, model, token, role, isDarkM
                 {/* Admin: penetapan akhir setelah verifikasi TTD */}
                 {isAdmin && model.status === 'verifikasi' && (
                   <div className="flex flex-col sm:flex-row gap-2">
-                    <button disabled={busy} onClick={() => { if (window.confirm('Dokumen ber-TTD sudah sesuai semua? Setujui — dokumen lanjut ke proses penetapan menteri.')) patchStatus('penetapan'); }}
+                    <button disabled={busy} onClick={() => { if (window.confirm(kind === 'sp' ? 'Dokumen ber-TTD sudah sesuai semua? Setujui — dokumen lanjut ke proses penetapan menteri.' : 'Dokumen ber-TTD sudah sesuai semua? Setujui — selanjutnya unit kerja menyerahkan DOKUMEN FISIK ke Biro Ortala MR.')) patchStatus(kind === 'sp' ? 'penetapan' : 'fisik'); }}
                       className="flex-1 min-h-11 flex items-center justify-center gap-2 rounded-xl bg-emerald-600 px-4 py-2.5 text-sm font-bold text-white hover:bg-emerald-700 disabled:bg-slate-300">
-                      <CheckCircle className="w-4 h-4" /> Setujui Dokumen — Lanjut Penetapan Menteri
+                      <CheckCircle className="w-4 h-4" /> {kind === 'sp' ? 'Setujui Dokumen — Lanjut Penetapan Menteri' : 'Setujui Dokumen — Menunggu Dokumen Fisik'}
                     </button>
                     <button disabled={busy} onClick={() => setRejectNote({ open: true, note: '', backTo: 'approved' })}
                       className={`flex-1 min-h-11 flex items-center justify-center gap-2 rounded-xl border px-4 py-2.5 text-sm font-bold ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/30' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>

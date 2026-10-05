@@ -6,7 +6,7 @@
 // menuju halaman modul dengan pencarian terisi judul dokumen.
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
-import { Bell, GitBranch, FileText, ClipboardList, CheckCircle, AlertCircle, MessageSquare, Landmark, Upload, Clock, History, X } from 'lucide-react';
+import { Bell, GitBranch, FileText, ClipboardList, CheckCircle, AlertCircle, MessageSquare, Landmark, Upload, Clock, History, X, Inbox } from 'lucide-react';
 
 const API_BASE = '/e-sop-atrbpn/api';
 
@@ -29,6 +29,7 @@ const KIND_ICON: Record<string, React.ReactNode> = {
 const EVENT_STYLE: Record<string, { icon: React.ReactNode; cls: string }> = {
   rejected: { icon: <AlertCircle className="w-4 h-4" />, cls: 'bg-red-100 text-red-600' },
   pending: { icon: <Clock className="w-4 h-4" />, cls: 'bg-blue-100 text-blue-600' },
+  fisik: { icon: <Inbox className="w-4 h-4" />, cls: 'bg-orange-100 text-orange-600' },
   penetapan: { icon: <Landmark className="w-4 h-4" />, cls: 'bg-violet-100 text-violet-600' },
   approved: { icon: <CheckCircle className="w-4 h-4" />, cls: 'bg-emerald-100 text-emerald-600' },
   terbit: { icon: <CheckCircle className="w-4 h-4" />, cls: 'bg-teal-100 text-teal-600' },

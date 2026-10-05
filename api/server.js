@@ -1421,8 +1421,8 @@ app.put('/api/bpmn/models/:id', authenticate, async (req, res) => {
   try {
     const lockChk = await assertWriteAccess(req, res, 'bpmn', req.params.id);
     if (!lockChk) return;
-    if (['penetapan', 'approved'].includes(lockChk.status)) {
-      return res.status(403).json({ error: 'Proses Bisnis terkunci (penetapan/ditetapkan). Buat salinan untuk merevisi.' });
+    if (['fisik', 'penetapan', 'approved'].includes(lockChk.status)) {
+      return res.status(403).json({ error: 'Proses Bisnis terkunci (menunggu dokumen fisik/penetapan/ditetapkan). Buat salinan untuk merevisi.' });
     }
     const prevStatus = lockChk.status;
     const { process_title, process_key, l1_id, l2_id, description, bpmn_xml, svg_xml, status, jenis_proses, klasifikasi_proses } = req.body;
@@ -1464,8 +1464,8 @@ app.put('/api/bpmn/models/:id/save', authenticate, async (req, res) => {
   try {
     const cur = await assertWriteAccess(req, res, 'bpmn', req.params.id);
     if (!cur) return;
-    if (['penetapan', 'approved'].includes(cur.status)) {
-      return res.status(403).json({ error: 'Proses Bisnis terkunci (penetapan/ditetapkan). Buat salinan untuk merevisi.' });
+    if (['fisik', 'penetapan', 'approved'].includes(cur.status)) {
+      return res.status(403).json({ error: 'Proses Bisnis terkunci (menunggu dokumen fisik/penetapan/ditetapkan). Buat salinan untuk merevisi.' });
     }
     const lockChk = { rows: [cur] };
     const { bpmn_xml, svg_xml, status } = req.body;
@@ -1498,7 +1498,7 @@ app.put('/api/bpmn/models/:id/autosave', authenticate, async (req, res) => {
   try {
     const chk = await assertWriteAccess(req, res, 'bpmn', req.params.id);
     if (!chk) return;
-    if (['penetapan', 'approved'].includes(chk.status)) {
+    if (['fisik', 'penetapan', 'approved'].includes(chk.status)) {
       return res.status(403).json({ error: 'Dokumen terkunci.' });
     }
     const { bpmn_xml, svg_xml } = req.body;
@@ -1572,8 +1572,8 @@ app.patch('/api/bpmn/models/:id/meta', authenticate, async (req, res) => {
     // Terkunci setelah masuk penetapan/ditetapkan.
     const curRow = await assertWriteAccess(req, res, 'bpmn', id);
     if (!curRow) return;
-    if (['penetapan', 'approved'].includes(curRow.status)) {
-      return res.status(403).json({ error: 'Proses Bisnis sudah dalam penetapan/ditetapkan dan terkunci. Buat salinan untuk merevisi.' });
+    if (['fisik', 'penetapan', 'approved'].includes(curRow.status)) {
+      return res.status(403).json({ error: 'Proses Bisnis sudah menunggu dokumen fisik/penetapan/ditetapkan dan terkunci. Buat salinan untuk merevisi.' });
     }
     const result = await pool.query(
       `UPDATE bpmn_models SET process_title = $1, jenis_proses = $2, klasifikasi_proses = $3, updated_at = NOW()
@@ -2598,7 +2598,7 @@ async function reuploadManualFile(kind, req, res) {
     // → verifikasi; setelah ditolak → kembali antre review (pending).
     // 'approved' = Pengesahan Pimpinan (unggahan berikutnya = versi ber-TTD → verifikasi);
     // 'penetapan' ikut diterima demi data lama. Setelah ditolak → antre review lagi.
-    const newStatus = ['approved', 'penetapan'].includes(row.status) ? 'verifikasi'
+    const newStatus = ['approved', 'fisik', 'penetapan'].includes(row.status) ? 'verifikasi'
       : row.status === 'rejected' ? 'pending' : row.status;
     await pool.query('DELETE FROM manual_files WHERE model_type = $1 AND model_id = $2', [kind, id]);
     await pool.query(
@@ -2645,10 +2645,10 @@ async function relinkManualDoc(kind, req, res) {
     if (!isAdmin && !isOwner && !sameUnit) {
       return res.status(403).json({ error: 'Tidak berwenang mengubah dokumen ini' });
     }
-    if (!isAdmin && !['approved', 'penetapan', 'rejected'].includes(row.status)) {
+    if (!isAdmin && !['approved', 'fisik', 'penetapan', 'rejected'].includes(row.status)) {
       return res.status(400).json({ error: 'Penggantian tautan hanya saat dokumen dikembalikan (revisi) atau menunggu pengesahan pimpinan' });
     }
-    const newStatus = ['approved', 'penetapan'].includes(row.status) ? 'verifikasi'
+    const newStatus = ['approved', 'fisik', 'penetapan'].includes(row.status) ? 'verifikasi'
       : row.status === 'rejected' ? 'pending' : row.status;
     // Tautan dokumen baru menggantikan file PDF yang pernah diunggah (satu sumber).
     if (link) await pool.query('DELETE FROM manual_files WHERE model_type = $1 AND model_id = $2', [kind, id]);
@@ -2822,10 +2822,10 @@ async function getDocHistory(kind, req, res) {
   } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
 }
 // BATALKAN PROSES PENETAPAN (admin/superadmin) — untuk salah klik/terlewat.
-// Dokumen berstatus 'penetapan' dikembalikan ke STATUS SEBELUMNYA, diambil dari
-// riwayat (akurat untuk semua alur: BPMN pending→penetapan; SOP studio
-// verifikasi→penetapan; SOP/SP manual pending→penetapan). Bila riwayat belum ada,
-// pakai perkiraan aman sesuai jenis dokumen.
+// Dokumen berstatus 'penetapan'/'fisik' dikembalikan ke STATUS SEBELUMNYA, diambil
+// dari riwayat (akurat untuk semua alur: BPMN pending→fisik→penetapan; SOP studio
+// verifikasi→fisik→penetapan; SOP/SP manual pending→…→penetapan). Bila riwayat belum
+// ada, pakai perkiraan aman sesuai jenis dokumen.
 async function batalPenetapan(kind, req, res) {
   try {
     const { id } = req.params;
@@ -2837,12 +2837,15 @@ async function batalPenetapan(kind, req, res) {
     // Yang boleh dibatalkan: proses penetapan menteri, DAN (SOP/SP) persetujuan
     // "lanjut pengesahan pimpinan" (status 'approved') yang belum final.
     // BPMN 'approved' = sudah DITETAPKAN (final) → tidak termasuk.
-    const BOLEH = kind === 'bpmn' ? ['penetapan'] : ['penetapan', 'approved'];
+    // Tahap 'fisik' (menunggu dokumen fisik) juga dapat dibatalkan — BPMN & SOP.
+    const BOLEH = kind === 'bpmn' ? ['penetapan', 'fisik']
+      : kind === 'sop' ? ['penetapan', 'approved', 'fisik']
+      : ['penetapan', 'approved'];
     if (!BOLEH.includes(row.status)) {
-      return res.status(400).json({ error: 'Hanya dokumen dalam proses penetapan atau menunggu pengesahan pimpinan yang dapat dibatalkan' });
+      return res.status(400).json({ error: 'Hanya dokumen dalam proses penetapan, menunggu dokumen fisik, atau menunggu pengesahan pimpinan yang dapat dibatalkan' });
     }
     // Status sebelum entri status-sekarang terakhir pada riwayat.
-    const VALID = ['draft', 'pending', 'rejected', 'approved', 'verifikasi'];
+    const VALID = ['draft', 'pending', 'rejected', 'approved', 'verifikasi', 'fisik'];
     const h = await pool.query(
       `SELECT action FROM doc_history
        WHERE model_type = $1::varchar AND model_id = $2
@@ -2851,18 +2854,21 @@ async function batalPenetapan(kind, req, res) {
     let prev = h.rows[0]?.action;
     if (!prev) {
       if (row.status === 'approved') prev = 'pending';          // pengesahan pimpinan → kembali direview
-      else if (kind === 'bpmn' || row.is_manual) prev = 'pending';
-      else {
+      // Dokumen fisik belum pernah tercatat di riwayat (dokumen lama) → mundur satu
+      // tahap sesuai alurnya masing-masing, bukan ke 'fisik' yang tak pernah dilewati.
+      else if (kind === 'bpmn' || row.is_manual) prev = row.status === 'fisik' ? 'pending' : 'fisik';
+      else if (row.status === 'fisik') {
         const cov = await pool.query('SELECT 1 FROM sop_covers WHERE sop_id = $1', [id]);
         prev = cov.rowCount > 0 ? 'verifikasi' : 'approved';
-      }
+      } else prev = 'fisik';
     }
     if (prev === row.status) prev = 'pending'; // jaga-jaga agar status benar-benar mundur
     const upd = await pool.query(
       `UPDATE ${table} SET status = $1::varchar, penetapan_dasar = NULL, penetapan_tanggal = NULL,
          updated_at = NOW() WHERE id = $2 RETURNING *`, [prev, id]);
     try { await removeDokumenForModel(kind, id); } catch (e) { console.error('removeDokumen batal:', e.message); }
-    const tahap = row.status === 'approved' ? 'persetujuan pengesahan pimpinan' : 'proses penetapan';
+    const tahap = row.status === 'approved' ? 'persetujuan pengesahan pimpinan'
+      : row.status === 'fisik' ? 'penerimaan dokumen fisik' : 'proses penetapan';
     logDocHistory(kind, id, req, 'batal_penetapan', `Membatalkan ${tahap} — status dikembalikan ke ${prev}${alasan ? `. Alasan: ${alasan}` : ''}`);
     pushNotif({ kind, row: upd.rows[0], event: 'batal_penetapan', req,
       pesan: `${tahap.charAt(0).toUpperCase() + tahap.slice(1)} ${JENIS_NOTIF[kind] || kind} “${upd.rows[0].process_title}” dibatalkan admin${alasan ? ` — ${alasan}` : ''}. Dokumen kembali ke tahap sebelumnya.` });
@@ -3041,9 +3047,10 @@ async function pushNotif({ kind, row, event, req, pesan }) {
       const dari = unitNama || req.user?.username || 'Unit kerja';
       if (isAdmin) {
         if (event === 'rejected') text = `Ortala MR telah mereview dan memberi catatan revisi pada ${jenis} “${judul}”.`;
-        else if (event === 'penetapan') text = kind === 'sop'
-          ? `Cover SOP “${judul}” disetujui — menunggu proses penetapan menteri.`
-          : `${jenis} “${judul}” disetujui — menunggu proses penetapan menteri.`;
+        else if (event === 'fisik') text = kind === 'sop'
+          ? `Cover SOP “${judul}” disetujui — mohon serahkan DOKUMEN FISIK SOP ke Biro Ortala MR.`
+          : `${jenis} “${judul}” disetujui — mohon serahkan DOKUMEN FISIK ${jenis} ke Biro Ortala MR.`;
+        else if (event === 'penetapan') text = `Dokumen fisik ${jenis} “${judul}” telah diterima Biro Ortala MR — menunggu proses penetapan menteri.`;
         else if (event === 'approved') text = kind === 'bpmn'
           ? `${jenis} “${judul}” telah ditetapkan dan masuk Daftar Proses Bisnis.`
           : `${jenis} “${judul}” disetujui — menunggu pengesahan pimpinan (unggah PDF/cover ber-TTD).`;
@@ -3671,14 +3678,28 @@ app.get('/api/sop/models/:id/pdf', authenticate, pdfLimiter, async (req, res) =>
 
     // FIT-TO-PAGE: bila konten sebuah halaman sedikit melebihi F4 (215mm) — yang tanpa ini akan
     // TERPOTONG karena overflow:hidden — perkecil (scale) konten halaman itu agar muat penuh.
+    //
+    // Cover (.cover-page-container) pakai height:auto (tumbuh mengikuti isi, BUKAN tinggi tetap
+    // + overflow:hidden seperti .page-container) — sengaja, supaya cover yang sungguh-sungguh
+    // kepanjangan bisa "meluber" jadi lembar cetak tambahan yang alami. Tapi ukuran kop+baris
+    // sudah diukur di KANVAS EDIT (layar) yang kadang menaksir ~6-30px LEBIH PENDEK dari hasil
+    // cetak (page-break-inside:avoid pada <tr>) — perbedaan reflow layar vs cetak Chromium untuk
+    // kotak flex height:auto + tabel table-fixed, bukan sesuatu yang bisa ditebak dari kanvas.
+    // Akibatnya baris terakhir yang HARUSNYA masih muat tiba-tiba terlempar utuh ke halaman baru,
+    // menyisakan halaman sebelumnya nyaris kosong. Di sinilah (setelah layout cetak yang
+    // SEBENARNYA selesai, sebelum page.pdf() memotong jadi halaman fisik) baru ketahuan — maka
+    // cover diukur terhadap tinggi F4 tetap (bukan clientHeight-nya sendiri, yang percuma karena
+    // auto-height selalu sama dengan isinya) dan diperkecil bila perlu, alih-alih dibiarkan meluber.
     await page.evaluate(() => {
+      const F4_TOTAL_PX = 813; // 215mm @ 96dpi — tinggi cetak penuh (border-box, termasuk padding)
       document.querySelectorAll('.page-container, .cover-page-container').forEach((el) => {
         try {
+          const isCover = el.classList.contains('cover-page-container');
           const cs = getComputedStyle(el);
           const padT = parseFloat(cs.paddingTop) || 0;
           const padB = parseFloat(cs.paddingBottom) || 0;
-          const availH = el.clientHeight - padT - padB;   // tinggi area isi (F4)
-          const contentH = el.scrollHeight - padT - padB; // tinggi isi sebenarnya
+          const availH = isCover ? (F4_TOTAL_PX - padT - padB) : (el.clientHeight - padT - padB);
+          const contentH = isCover ? (el.offsetHeight - padT - padB) : (el.scrollHeight - padT - padB);
           if (availH > 0 && contentH > availH + 2) {
             const k = availH / contentH;
             if (k >= 0.5 && k < 1) {
@@ -3687,6 +3708,14 @@ app.get('/api/sop/models/:id/pdf', authenticate, pdfLimiter, async (req, res) =>
                 (100 / k).toFixed(4) + '%;height:' + contentH + 'px;transform:scale(' + k.toFixed(4) + ');';
               while (el.firstChild) wrap.appendChild(el.firstChild);
               el.appendChild(wrap);
+              // setProperty(...,'important'): CSS cetak mengunci .cover-page-container dengan
+              // `height/min-height: auto !important` — style inline BIASA tidak menang lawan
+              // !important dari stylesheet meski inline (percobaan pertama diam-diam tak berefek).
+              if (isCover) {
+                el.style.setProperty('height', F4_TOTAL_PX + 'px', 'important');
+                el.style.setProperty('min-height', F4_TOTAL_PX + 'px', 'important');
+                el.style.setProperty('overflow', 'hidden', 'important');
+              }
             }
           }
         } catch (e) { /* abaikan */ }
@@ -3819,8 +3848,8 @@ app.put('/api/sop/models/:id', authenticate, async (req, res) => {
     const curRow = await assertWriteAccess(req, res, 'sop', req.params.id);
     if (!curRow) return;
     const cur = { rows: [curRow] };
-    if (['verifikasi', 'penetapan', 'terbit'].includes(curRow.status)) {
-      return res.status(403).json({ error: 'SOP terkunci (menunggu verifikasi/penetapan atau sudah terbit). Buat salinan untuk merevisi.' });
+    if (['verifikasi', 'fisik', 'penetapan', 'terbit'].includes(curRow.status)) {
+      return res.status(403).json({ error: 'SOP terkunci (menunggu verifikasi/dokumen fisik/penetapan atau sudah terbit). Buat salinan untuk merevisi.' });
     }
 
     const { l1Id: final_l1, l2Id: final_l2 } = await resolveUnitIds(unit_l1, unit_l2, true);
@@ -3996,8 +4025,8 @@ app.patch('/api/sop/models/:id/meta', authenticate, async (req, res) => {
     // SOP terkunci sejak verifikasi/penetapan/terbit — judul/informasi tidak dapat diubah.
     const curRow = await assertWriteAccess(req, res, 'sop', id);
     if (!curRow) return;
-    if (['verifikasi', 'penetapan', 'terbit'].includes(curRow.status)) {
-      return res.status(403).json({ error: 'SOP terkunci (menunggu verifikasi/penetapan atau sudah terbit). Buat salinan untuk merevisi.' });
+    if (['verifikasi', 'fisik', 'penetapan', 'terbit'].includes(curRow.status)) {
+      return res.status(403).json({ error: 'SOP terkunci (menunggu verifikasi/dokumen fisik/penetapan atau sudah terbit). Buat salinan untuk merevisi.' });
     }
     const result = await pool.query(
       `UPDATE sop_models SET process_title = $1, jenis_proses = $2, klasifikasi_proses = $3, updated_at = NOW()

@@ -6,7 +6,7 @@ import {
   ArrowLeft, Plus, Edit, CheckCircle,
   Clock, XCircle, Search, X, FileEdit, FileStack, AlertCircle, Filter,
   Trash2, Calendar, GitCommit, FileSignature, Lock, HelpCircle, ChevronRight, History as HistoryIcon, RotateCcw,
-  Save, ExternalLink, Building2, Copy, Upload, Stamp, Eye, ClipboardCheck, Landmark, FileUp, FileText, MessageSquare, RefreshCw, Maximize2, FileSpreadsheet
+  Save, ExternalLink, Building2, Copy, Upload, Stamp, Eye, ClipboardCheck, Landmark, FileUp, FileText, MessageSquare, RefreshCw, Maximize2, FileSpreadsheet, Inbox
 } from 'lucide-react';
 import { SOPSymbolsSection } from '@/components/PanduanSymbols';
 import ManualDocModal from '@/components/ManualDocModal';
@@ -423,7 +423,7 @@ export default function SOPDashboardPage() {
     usulan: docs.filter(m => m.status === 'usulan').length,
     draft: docs.filter(m => !m.status || m.status === 'draft').length,
     pending: docs.filter(m => m.status === 'pending').length,
-    pengesahan: docs.filter(m => ['approved', 'verifikasi', 'penetapan'].includes(m.status)).length,
+    pengesahan: docs.filter(m => ['approved', 'verifikasi', 'fisik', 'penetapan'].includes(m.status)).length,
     revisi: docs.filter(m => m.status === 'rejected').length,
     total: docs.length,
   });
@@ -462,6 +462,7 @@ export default function SOPDashboardPage() {
   const statusExcelColor = (m: SOPModel): string => {
     if (m.status === 'usulan') return 'FFA21CAF'; // fuchsia-700
     if (m.status === 'terbit') return 'FF047857'; // emerald-700
+    if (m.status === 'fisik') return 'FFC2410C'; // orange-700
     if (m.status === 'penetapan') return 'FF6D28D9'; // violet-700
     if (m.status === 'verifikasi') return 'FF4338CA'; // indigo-700
     if (m.status === 'approved') return 'FFB45309'; // amber-700
@@ -538,7 +539,7 @@ export default function SOPDashboardPage() {
       // 1b) REKAPITULASI PER STATUS DOKUMEN — urutan tetap mengikuti alur proses,
       // BUKAN alfabet, supaya masuk akal dibaca. Warna teks sama dgn kolom Status
       // Dokumen di tabel daftar di bawah.
-      const STATUS_ORDER = ['USULAN', 'DRAFT', 'MENUNGGU', 'MENUNGGU VERIFIKASI ADMIN', 'VERIFIKASI TTD', 'MENUNGGU PENGESAHAN PIMPINAN', 'MENUNGGU PROSES PENETAPAN MENTERI', 'PERLU REVISI', 'TERBIT'];
+      const STATUS_ORDER = ['USULAN', 'DRAFT', 'MENUNGGU', 'MENUNGGU VERIFIKASI ADMIN', 'VERIFIKASI TTD', 'MENUNGGU PENGESAHAN PIMPINAN', 'MENUNGGU DOKUMEN FISIK SOP', 'MENUNGGU PROSES PENETAPAN MENTERI', 'PERLU REVISI', 'TERBIT'];
       const perStatus = new Map<string, { count: number; color: string }>();
       urut.forEach(m => {
         const lbl = label(m);
@@ -620,13 +621,13 @@ export default function SOPDashboardPage() {
     draft: m => m.status === 'usulan' || !m.status || m.status === 'draft',
     pending: m => m.status === 'pending',
     pengesahan: m => ['approved', 'verifikasi'].includes(m.status),
-    penetapan: m => m.status === 'penetapan',
+    penetapan: m => ['fisik', 'penetapan'].includes(m.status),
     terbit: m => m.status === 'terbit',
     rejected: m => m.status === 'rejected',
   };
   const CARD_LABEL: Record<string, string> = {
     total: 'Semua Dokumen SOP', draft: 'Draft (Usulan & Dalam Proses)',
-    pending: 'Menunggu Review Ortala MR', pengesahan: 'Proses Pengesahan Pimpinan (disetujui/verifikasi TTD)', penetapan: 'Proses Penetapan Menteri', terbit: 'Telah Ditetapkan (Terbit)', rejected: 'Perlu Revisi',
+    pending: 'Menunggu Review Ortala MR', pengesahan: 'Proses Pengesahan Pimpinan (disetujui/verifikasi TTD)', penetapan: 'Menunggu Dokumen Fisik & Penetapan Menteri', terbit: 'Telah Ditetapkan (Terbit)', rejected: 'Perlu Revisi',
   };
   const cardFilterModels = useMemo(() => {
     if (!cardFilter) return [];
@@ -912,10 +913,17 @@ export default function SOPDashboardPage() {
     } catch (e) { console.error(e); alert('❌ Gagal memproses.'); }
   };
 
-  // Admin menyetujui cover hasil verifikasi → SOP menunggu proses penetapan menteri (belum terbit).
+  // Admin menyetujui cover hasil verifikasi → SOP BELUM masuk penetapan menteri:
+  // unit kerja menyerahkan dokumen fisik SOP dulu (status 'fisik').
   const handleSetujuiCover = async (model: SOPModel) => {
-    if (!(await confirm({ title: 'Setujui Cover SOP', message: `Cover sudah benar & bernomor SOP? Setujui cover "${model.process_title}"? SOP akan menunggu proses penetapan menteri.`, tone: 'success', confirmText: 'Ya, Setujui' }))) return;
-    patchStatus(model, 'penetapan', '✅ Cover disetujui. SOP menunggu proses penetapan menteri.');
+    if (!(await confirm({ title: 'Setujui Cover SOP', message: `Cover sudah benar & bernomor SOP? Setujui cover "${model.process_title}"?\n\nSelanjutnya unit kerja menyerahkan DOKUMEN FISIK SOP ke Biro Ortala MR sebelum masuk proses penetapan menteri.`, tone: 'success', confirmText: 'Ya, Setujui' }))) return;
+    patchStatus(model, 'fisik', '✅ Cover disetujui. Menunggu dokumen fisik SOP dari unit kerja.');
+  };
+
+  // Admin menerima dokumen fisik dari unit kerja → lanjut ke proses penetapan menteri.
+  const handleTerimaFisik = async (model: SOPModel) => {
+    if (!(await confirm({ title: 'Terima Dokumen Fisik', message: `Dokumen fisik SOP "${model.process_title}" sudah diterima dari unit kerja?\n\nDokumen akan lanjut ke proses penetapan menteri.`, tone: 'success', confirmText: 'Ya, Sudah Diterima' }))) return;
+    patchStatus(model, 'penetapan', '✅ Dokumen fisik diterima. SOP menunggu proses penetapan menteri.');
   };
 
   // === Alur DOKUMEN MANUAL SOP (langsung dari tabel) ===
@@ -928,8 +936,8 @@ export default function SOPDashboardPage() {
   // Admin memeriksa PDF ber-TTD → setujui, dokumen lanjut ke proses penetapan menteri
   // (sejajar dengan alur studio: verifikasi cover → penetapan → ditetapkan).
   const manualTetapkanSop = async (model: SOPModel) => {
-    if (!(await confirm({ title: 'Setujui Dokumen ber-TTD', message: `Dokumen ber-TTD SOP "${model.process_title}" sudah sesuai? Dokumen akan lanjut ke proses penetapan menteri.`, tone: 'success', confirmText: 'Ya, Setujui' }))) return;
-    patchStatus(model, 'penetapan', '✅ Dokumen disetujui — menunggu proses penetapan menteri.');
+    if (!(await confirm({ title: 'Setujui Dokumen ber-TTD', message: `Dokumen ber-TTD SOP "${model.process_title}" sudah sesuai?\n\nSelanjutnya unit kerja menyerahkan DOKUMEN FISIK SOP ke Biro Ortala MR sebelum masuk proses penetapan menteri.`, tone: 'success', confirmText: 'Ya, Setujui' }))) return;
+    patchStatus(model, 'fisik', '✅ Dokumen disetujui — menunggu dokumen fisik SOP dari unit kerja.');
   };
 
   // Admin menetapkan → buka modal isian dasar penetapan & tanggal.
@@ -1101,6 +1109,7 @@ export default function SOPDashboardPage() {
     if (status === 'terbit') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
     if (status === 'penetapan') return 'bg-violet-50 text-violet-700 border-violet-200';
     if (status === 'verifikasi') return 'bg-indigo-50 text-indigo-700 border-indigo-200';
+    if (status === 'fisik') return 'bg-orange-50 text-orange-700 border-orange-200';
     if (status === 'approved') return 'bg-amber-50 text-amber-700 border-amber-200';
     if (status === 'pending') return 'bg-blue-50 text-blue-700 border-blue-200';
     if (status === 'rejected') return 'bg-red-50 text-red-700 border-red-200';
@@ -1111,6 +1120,7 @@ export default function SOPDashboardPage() {
     if (status === 'terbit') return 'TERBIT';
     if (status === 'penetapan') return 'MENUNGGU PROSES PENETAPAN MENTERI';
     if (status === 'verifikasi') return isManual ? 'VERIFIKASI TTD' : 'MENUNGGU VERIFIKASI ADMIN';
+    if (status === 'fisik') return 'MENUNGGU DOKUMEN FISIK SOP';
     if (status === 'approved') return 'MENUNGGU PENGESAHAN PIMPINAN';
     if (status === 'pending') return 'MENUNGGU';
     if (status === 'rejected') return 'PERLU REVISI';
@@ -1158,11 +1168,19 @@ export default function SOPDashboardPage() {
           <button onClick={(e) => { e.stopPropagation(); handleSetujuiCover(model); }} className="px-3 py-2 bg-emerald-100 hover:bg-emerald-500 hover:text-white text-emerald-700 text-xs font-extrabold rounded-lg uppercase transition-all">Setujui Cover</button>
           <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '', mode: 'cover' }); }} className="px-3 py-2 bg-red-100 hover:bg-red-500 hover:text-white text-red-700 text-xs font-extrabold rounded-lg uppercase transition-all">Kembalikan</button>
         </>)}
+        {model.status === 'fisik' && currentUser?.role === 'admin' && (<>
+          <button onClick={(e) => { e.stopPropagation(); viewCover(model); }} className="px-3 py-2 text-indigo-600 hover:bg-indigo-50 border border-indigo-200 text-xs font-extrabold rounded-lg uppercase flex items-center gap-1"><Eye className="w-4 h-4" /> Cover</button>
+          <button onClick={(e) => { e.stopPropagation(); handleTerimaFisik(model); }} title="Dokumen fisik sudah diterima dari unit kerja → lanjut penetapan menteri" className="px-3 py-2 bg-orange-100 hover:bg-orange-600 hover:text-white text-orange-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><Inbox className="w-4 h-4" /> Terima Dokumen Fisik</button>
+          <button onClick={(e) => { e.stopPropagation(); handleBatalPenetapan(model); }} title="Batalkan — kembali ke tahap sebelumnya" className="px-3 py-2 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><RotateCcw className="w-4 h-4" /> Batalkan</button>
+        </>)}
+        {model.status === 'fisik' && currentUser?.role !== 'admin' && (
+          <span className="px-2.5 py-1.5 text-[11px] font-bold text-orange-700 bg-orange-50 rounded-lg border border-orange-200">Menunggu dokumen fisik</span>
+        )}
         {model.status === 'penetapan' && currentUser?.role === 'admin' && (<>
           <button onClick={(e) => { e.stopPropagation(); viewCover(model); }} className="px-3 py-2 text-indigo-600 hover:bg-indigo-50 border border-indigo-200 text-xs font-extrabold rounded-lg uppercase flex items-center gap-1"><Eye className="w-4 h-4" /> Cover</button>
           <><button onClick={(e) => { e.stopPropagation(); handleDitetapkan(model); }} className="px-3 py-2 bg-violet-100 hover:bg-violet-600 hover:text-white text-violet-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><Landmark className="w-4 h-4" /> Ditetapkan</button><button onClick={(e) => { e.stopPropagation(); handleBatalPenetapan(model); }} title="Batalkan proses penetapan (kembali ke tahap sebelumnya)" className="px-3 py-2 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><RotateCcw className="w-4 h-4" /> Batalkan</button></>
         </>)}
-        <button onClick={(e) => { e.stopPropagation(); if (['terbit', 'penetapan', 'verifikasi'].includes(model.status || '')) { window.location.href = `/e-sop-atrbpn/sop/studio?id=${model.id}&mode=view`; } else { openForEdit(model.id); } }} className="px-3 py-2 text-emerald-600 hover:bg-emerald-50 font-bold text-xs rounded-lg border border-transparent hover:border-emerald-200 flex items-center gap-1"><Edit className="w-4 h-4" /> {['terbit', 'penetapan', 'verifikasi'].includes(model.status || '') ? 'Lihat' : 'Edit'}</button>
+        <button onClick={(e) => { e.stopPropagation(); if (['terbit', 'fisik', 'penetapan', 'verifikasi'].includes(model.status || '')) { window.location.href = `/e-sop-atrbpn/sop/studio?id=${model.id}&mode=view`; } else { openForEdit(model.id); } }} className="px-3 py-2 text-emerald-600 hover:bg-emerald-50 font-bold text-xs rounded-lg border border-transparent hover:border-emerald-200 flex items-center gap-1"><Edit className="w-4 h-4" /> {['terbit', 'fisik', 'penetapan', 'verifikasi'].includes(model.status || '') ? 'Lihat' : 'Edit'}</button>
       </>)}
       {model.status === 'terbit' && currentUser?.role === 'admin' && !isRegistri(model) && (
         <button onClick={(e) => { e.stopPropagation(); batalkanPenetapan(model); }} className="px-3 py-2 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><XCircle className="w-4 h-4" /> Batalkan Penetapan</button>
@@ -1586,6 +1604,7 @@ export default function SOPDashboardPage() {
                   {previewModel.status === 'terbit' && <Stamp className="w-3 h-3" />}
                   {previewModel.status === 'penetapan' && <Landmark className="w-3 h-3" />}
                   {previewModel.status === 'verifikasi' && <ClipboardCheck className="w-3 h-3" />}
+                  {previewModel.status === 'fisik' && <Inbox className="w-3 h-3" />}
                   {previewModel.status === 'approved' && <Upload className="w-3 h-3" />}
                   {previewModel.status === 'pending' && <Clock className="w-3 h-3" />}
                   {previewModel.status === 'rejected' && <XCircle className="w-3 h-3" />}
@@ -1630,13 +1649,13 @@ export default function SOPDashboardPage() {
               )}
 
               {/* Edit fields — terkunci sejak verifikasi/penetapan/terbit */}
-              {['verifikasi', 'penetapan', 'terbit'].includes(previewModel.status) && (
+              {['verifikasi', 'fisik', 'penetapan', 'terbit'].includes(previewModel.status) && (
                 <div className={`flex items-start gap-2 text-xs font-semibold rounded-xl p-3 border ${isDarkMode ? 'bg-emerald-900/20 border-emerald-800 text-emerald-300' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
                   <Lock className="w-4 h-4 shrink-0 mt-0.5" />
                   <span>{previewModel.status === 'terbit' ? <>SOP sudah <b>terbit (disahkan)</b> — judul &amp; informasi terkunci.</> : <>SOP sedang <b>diproses (verifikasi/penetapan)</b> — judul &amp; informasi terkunci.</>} Untuk merevisi, gunakan fitur <b>Salin</b>.</span>
                 </div>
               )}
-              {(() => { const metaLocked = ['verifikasi', 'penetapan', 'terbit'].includes(previewModel.status); return (
+              {(() => { const metaLocked = ['verifikasi', 'fisik', 'penetapan', 'terbit'].includes(previewModel.status); return (
               <div className="space-y-3">
                 <div>
                   <label className={`block text-xs font-bold mb-1.5 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Judul / Nama SOP <span className="text-red-500">*</span></label>
@@ -1736,7 +1755,7 @@ export default function SOPDashboardPage() {
                   onClick={() => {
                     // Lewat openForEdit agar cek "sedang diedit rekan" tetap berlaku;
                     // dokumen terkunci dibuka mode lihat.
-                    if (['terbit', 'penetapan', 'verifikasi'].includes(previewModel.status || '')) {
+                    if (['terbit', 'fisik', 'penetapan', 'verifikasi'].includes(previewModel.status || '')) {
                       window.location.href = `/e-sop-atrbpn/sop/studio?id=${previewModel.id}&mode=view`;
                     } else { openForEdit(previewModel.id); }
                   }}
@@ -1753,7 +1772,7 @@ export default function SOPDashboardPage() {
                 >
                   Tutup
                 </button>
-                {!['verifikasi', 'penetapan', 'terbit'].includes(previewModel.status) && (
+                {!['verifikasi', 'fisik', 'penetapan', 'terbit'].includes(previewModel.status) && (
                   <button
                     onClick={saveMetaEdit}
                     disabled={savingMeta}
@@ -1830,10 +1849,13 @@ export default function SOPDashboardPage() {
             </div>
           </div>
           <div onClick={() => toggleCard('penetapan')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-violet-500 flex flex-col min-h-24 transition-all hover:shadow-md ${canFilterCards ? 'cursor-pointer' : ''} ${cardFilter === 'penetapan' ? 'ring-2 ring-violet-500' : ''} ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
-            <p className="text-[10px] sm:text-xs font-bold text-violet-400 uppercase tracking-wide leading-tight wrap-break-word">Proses Penetapan Menteri</p>
-            <div className="flex justify-between items-end gap-2 mt-auto pt-1.5">
-              <p className="text-2xl sm:text-3xl font-black text-violet-600 leading-none">{currentFilteredModels.filter(m => m.status === 'penetapan').length}</p>
-              <div className="p-2 sm:p-2.5 bg-violet-50 rounded-xl text-violet-400 shrink-0"><Landmark className="w-5 h-5" /></div>
+            <p className="text-[10px] sm:text-xs font-bold text-violet-400 uppercase tracking-wide leading-tight wrap-break-word">Dokumen Fisik &amp; Penetapan Menteri</p>
+            <div className="flex items-center gap-2.5 mt-auto pt-1.5">
+              <p className="text-2xl sm:text-3xl font-black text-violet-600 leading-none shrink-0">{currentFilteredModels.filter(m => ['fisik', 'penetapan'].includes(m.status)).length}</p>
+              <div className="flex flex-col gap-1 min-w-0">
+                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-orange-900/40 text-orange-300' : 'bg-orange-50 text-orange-600'}`}><b className="font-black">{currentFilteredModels.filter(m => m.status === 'fisik').length}</b> Dok. Fisik</span>
+                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-violet-900/40 text-violet-300' : 'bg-violet-50 text-violet-600'}`}><b className="font-black">{currentFilteredModels.filter(m => m.status === 'penetapan').length}</b> Penetapan</span>
+              </div>
             </div>
           </div>
           <div onClick={() => toggleCard('terbit')} className={`col-span-2 sm:col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-teal-500 flex flex-col min-h-24 transition-all hover:shadow-md ${canFilterCards ? 'cursor-pointer' : ''} ${cardFilter === 'terbit' ? 'ring-2 ring-teal-500' : ''} ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
@@ -1948,6 +1970,7 @@ export default function SOPDashboardPage() {
                   <option value="rejected">Status: Perlu Revisi</option>
                   <option value="approved">Status: Menunggu Pengesahan</option>
                   <option value="verifikasi">Status: Menunggu Verifikasi</option>
+                  <option value="fisik">Status: Menunggu Dokumen Fisik</option>
                   <option value="penetapan">Status: Menunggu Penetapan</option>
                   <option value="terbit">Status: Terbit</option>
                 </select>
@@ -2107,6 +2130,7 @@ export default function SOPDashboardPage() {
                           {model.status === 'terbit' && <Stamp className="w-3 h-3" />}
                           {model.status === 'penetapan' && <Landmark className="w-3 h-3" />}
                           {model.status === 'verifikasi' && <ClipboardCheck className="w-3 h-3" />}
+                          {model.status === 'fisik' && <Inbox className="w-3 h-3" />}
                           {model.status === 'approved' && <FileSignature className="w-3 h-3" />}
                           {model.status === 'pending' && <Clock className="w-3 h-3" />}
                           {model.status === 'rejected' && <XCircle className="w-3 h-3" />}
@@ -2129,10 +2153,10 @@ export default function SOPDashboardPage() {
                           )}
                           {model.status !== 'usulan' && (<>
                           <button
-                            onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else if (['terbit', 'penetapan', 'verifikasi'].includes(model.status || '')) { window.location.href = `/e-sop-atrbpn/sop/studio?id=${model.id}&mode=view`; } else { openForEdit(model.id); } }}
+                            onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else if (['terbit', 'fisik', 'penetapan', 'verifikasi'].includes(model.status || '')) { window.location.href = `/e-sop-atrbpn/sop/studio?id=${model.id}&mode=view`; } else { openForEdit(model.id); } }}
                             className="px-3 py-2.5 text-emerald-600 hover:bg-emerald-50 font-bold text-xs rounded-lg transition-colors flex items-center gap-1 border border-transparent hover:border-emerald-200"
                           >
-                            {model.is_manual ? <><FileText className="w-4 h-4" /> Lihat Dokumen</> : <><Edit className="w-4 h-4" /> {['terbit', 'penetapan', 'verifikasi'].includes(model.status || '') ? 'Lihat' : 'Edit'}</>}
+                            {model.is_manual ? <><FileText className="w-4 h-4" /> Lihat Dokumen</> : <><Edit className="w-4 h-4" /> {['terbit', 'fisik', 'penetapan', 'verifikasi'].includes(model.status || '') ? 'Lihat' : 'Edit'}</>}
                           </button>
 
                           {/* Aksi alur dokumen MANUAL (langsung di tabel) */}
@@ -2197,6 +2221,16 @@ export default function SOPDashboardPage() {
                           )}
                           {model.status === 'verifikasi' && !model.is_manual && currentUser.role !== 'admin' && (
                             <span className="ml-2 px-2.5 py-1.5 text-[11px] font-bold text-indigo-600 bg-indigo-50 rounded-lg border border-indigo-200">Menunggu verifikasi admin</span>
+                          )}
+                          {model.status === 'fisik' && currentUser.role === 'admin' && (
+                            <div className={`flex ml-2 border-l pl-2 gap-2 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
+                              <button onClick={(e) => { e.stopPropagation(); viewCover(model); }} className="px-3 py-2.5 text-indigo-600 hover:bg-indigo-50 border border-indigo-200 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1.5"><Eye className="w-4 h-4" /> Cover</button>
+                              <button onClick={(e) => { e.stopPropagation(); handleTerimaFisik(model); }} title="Dokumen fisik sudah diterima dari unit kerja → lanjut penetapan menteri" className="px-3 py-2.5 bg-orange-100 hover:bg-orange-600 hover:text-white text-orange-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm flex items-center gap-1.5"><Inbox className="w-4 h-4" /> Terima Dokumen Fisik</button>
+                              <button onClick={(e) => { e.stopPropagation(); handleBatalPenetapan(model); }} title="Batalkan — kembali ke tahap sebelumnya" className="px-3 py-2.5 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm flex items-center gap-1.5"><RotateCcw className="w-4 h-4" /> Batalkan</button>
+                            </div>
+                          )}
+                          {model.status === 'fisik' && currentUser.role !== 'admin' && (
+                            <span className="ml-2 px-2.5 py-1.5 text-[11px] font-bold text-orange-700 bg-orange-50 rounded-lg border border-orange-200">Menunggu dokumen fisik diserahkan</span>
                           )}
                           {model.status === 'penetapan' && currentUser.role === 'admin' && (
                             <div className={`flex ml-2 border-l pl-2 gap-2 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
@@ -2265,6 +2299,7 @@ export default function SOPDashboardPage() {
                       {model.status === 'terbit' && <Stamp className="w-3 h-3" />}
                       {model.status === 'penetapan' && <Landmark className="w-3 h-3" />}
                       {model.status === 'verifikasi' && <ClipboardCheck className="w-3 h-3" />}
+                      {model.status === 'fisik' && <Inbox className="w-3 h-3" />}
                       {model.status === 'approved' && <FileSignature className="w-3 h-3" />}
                       {model.status === 'pending' && <Clock className="w-3 h-3" />}
                       {model.status === 'rejected' && <XCircle className="w-3 h-3" />}
@@ -2290,7 +2325,7 @@ export default function SOPDashboardPage() {
                         </>
                       )}
                       {model.status !== 'usulan' && (<>
-                      <button onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else if (['terbit', 'penetapan', 'verifikasi'].includes(model.status || '')) { window.location.href = `/e-sop-atrbpn/sop/studio?id=${model.id}&mode=view`; } else { openForEdit(model.id); } }} className="px-2.5 py-2.5 text-emerald-600 bg-emerald-50 font-bold text-xs rounded-lg flex items-center gap-1">{model.is_manual ? <><FileText className="w-3 h-3" /> Lihat</> : <><Edit className="w-3 h-3" /> {['terbit', 'penetapan', 'verifikasi'].includes(model.status || '') ? 'Lihat' : 'Edit'}</>}</button>
+                      <button onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else if (['terbit', 'fisik', 'penetapan', 'verifikasi'].includes(model.status || '')) { window.location.href = `/e-sop-atrbpn/sop/studio?id=${model.id}&mode=view`; } else { openForEdit(model.id); } }} className="px-2.5 py-2.5 text-emerald-600 bg-emerald-50 font-bold text-xs rounded-lg flex items-center gap-1">{model.is_manual ? <><FileText className="w-3 h-3" /> Lihat</> : <><Edit className="w-3 h-3" /> {['terbit', 'fisik', 'penetapan', 'verifikasi'].includes(model.status || '') ? 'Lihat' : 'Edit'}</>}</button>
                       {model.is_manual && currentUser.role === 'admin' && model.status === 'pending' && (<>
                         <button onClick={(e) => { e.stopPropagation(); manualApproveSop(model); }} className="px-2.5 py-2.5 bg-emerald-100 text-emerald-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Setujui"><CheckCircle className="w-3.5 h-3.5" /> Setujui</button>
                         <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: '', mode: 'reject' }); }} className="px-2.5 py-2.5 bg-red-100 text-red-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Tolak"><XCircle className="w-3.5 h-3.5" /> Tolak</button>
@@ -2317,6 +2352,16 @@ export default function SOPDashboardPage() {
                           <button onClick={(e) => { e.stopPropagation(); handleSetujuiCover(model); }} className="px-2.5 py-2.5 bg-emerald-100 text-emerald-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Setujui Cover"><ClipboardCheck className="w-3.5 h-3.5" /></button>
                           <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '', mode: 'cover' }); }} className="px-2.5 py-2.5 bg-red-100 text-red-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Kembalikan"><XCircle className="w-3.5 h-3.5" /></button>
                         </>
+                      )}
+                      {model.status === 'fisik' && currentUser.role === 'admin' && (
+                        <>
+                          <button onClick={(e) => { e.stopPropagation(); viewCover(model); }} className="px-2.5 py-2.5 text-indigo-600 border border-indigo-200 font-bold text-xs rounded-lg flex items-center gap-1" title="Periksa Cover"><Eye className="w-3 h-3" /></button>
+                          <button onClick={(e) => { e.stopPropagation(); handleTerimaFisik(model); }} className="px-2.5 py-2.5 bg-orange-100 text-orange-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Terima dokumen fisik"><Inbox className="w-3.5 h-3.5" /> Terima Fisik</button>
+                          <button onClick={(e) => { e.stopPropagation(); handleBatalPenetapan(model); }} className="px-2.5 py-2.5 bg-amber-100 text-amber-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Batalkan — kembali ke tahap sebelumnya"><RotateCcw className="w-3.5 h-3.5" /></button>
+                        </>
+                      )}
+                      {model.status === 'fisik' && currentUser.role !== 'admin' && (
+                        <span className="px-2.5 py-2 text-[10px] font-bold text-orange-700 bg-orange-50 rounded-lg border border-orange-200 self-center">Dokumen Fisik</span>
                       )}
                       {model.status === 'penetapan' && currentUser.role === 'admin' && (
                         <>

@@ -29,7 +29,8 @@ function narasi(kind: 'bpmn' | 'sop' | 'sp', action: string): string {
       ? `menyetujui dokumen ${doc} — lanjut pengesahan pimpinan`
       : `menetapkan dokumen ${doc} (ditetapkan)`;
     case 'verifikasi': return 'menyerahkan berkas bertanda tangan — menunggu verifikasi admin';
-    case 'penetapan': return `menyetujui dokumen ${doc} — menunggu proses penetapan menteri`;
+    case 'fisik': return `menyetujui dokumen ${doc} — menunggu dokumen fisik dari unit kerja`;
+    case 'penetapan': return `menerima dokumen fisik ${doc} — menunggu proses penetapan menteri`;
     case 'terbit': return `menetapkan & menerbitkan dokumen ${doc}`;
     case 'relink': return `memperbarui tautan dokumen ${doc}`;
     default: return `memperbarui dokumen ${doc} (${action})`;
@@ -39,7 +40,7 @@ function narasi(kind: 'bpmn' | 'sop' | 'sp', action: string): string {
 const dotCls: Record<string, string> = {
   create: 'bg-slate-400', draft: 'bg-slate-400', usulan: 'bg-slate-400',
   pending: 'bg-blue-500', rejected: 'bg-red-500', approved: 'bg-emerald-500',
-  verifikasi: 'bg-cyan-500', penetapan: 'bg-violet-500', terbit: 'bg-emerald-600', relink: 'bg-teal-500',
+  verifikasi: 'bg-cyan-500', fisik: 'bg-orange-500', penetapan: 'bg-violet-500', terbit: 'bg-emerald-600', relink: 'bg-teal-500',
 };
 
 export default function DocHistoryModal({ kind, modelId, title, token, isDarkMode, onClose }: {

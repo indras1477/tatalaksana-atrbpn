@@ -6,7 +6,7 @@ import {
   Plus, Edit, CheckCircle,
   Clock, XCircle, Search, X, FileEdit, FileStack, AlertCircle, Filter,
   Trash2, Calendar, GitCommit, HelpCircle, GitBranch, ChevronRight, Save, History as HistoryIcon, RotateCcw,
-  ExternalLink, Building2, Copy, Landmark, Lock, FileUp, FileText, MessageSquare, Eye, ZoomIn, ZoomOut, Maximize2, FileSpreadsheet
+  ExternalLink, Building2, Copy, Landmark, Lock, FileUp, FileText, MessageSquare, Eye, ZoomIn, ZoomOut, Maximize2, FileSpreadsheet, Inbox
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
 import { BPMNSymbolsSection } from '@/components/PanduanSymbols';
@@ -309,13 +309,13 @@ export default function BPMNDashboardPage() {
     total: () => true,
     draft: m => m.status === 'usulan' || !m.status || m.status === 'draft',
     pending: m => m.status === 'pending',
-    penetapan: m => m.status === 'penetapan',
+    penetapan: m => ['fisik', 'penetapan'].includes(m.status || ''),
     approved: m => m.status === 'approved',
     rejected: m => m.status === 'rejected',
   };
   const CARD_LABEL: Record<string, string> = {
     total: 'Semua Dokumen Proses Bisnis', draft: 'Draft (Usulan & Dalam Proses)',
-    pending: 'Menunggu Review Ortala MR', penetapan: 'Proses Penetapan Menteri', approved: 'Telah Ditetapkan', rejected: 'Perlu Revisi',
+    pending: 'Menunggu Review Ortala MR', penetapan: 'Menunggu Dokumen Fisik & Penetapan Menteri', approved: 'Telah Ditetapkan', rejected: 'Perlu Revisi',
   };
   const cardFilterModels = useMemo(() => {
     if (!cardFilter) return [];
@@ -347,7 +347,7 @@ export default function BPMNDashboardPage() {
     usulan: docs.filter(m => m.status === 'usulan').length,
     draft: docs.filter(m => !m.status || m.status === 'draft').length,
     pending: docs.filter(m => m.status === 'pending').length,
-    pengesahan: docs.filter(m => m.status === 'penetapan').length,
+    pengesahan: docs.filter(m => ['fisik', 'penetapan'].includes(m.status || '')).length,
     revisi: docs.filter(m => m.status === 'rejected').length,
     total: docs.length,
   });
@@ -388,6 +388,7 @@ export default function BPMNDashboardPage() {
   const statusExcelColor = (m: BPMNModel): string => {
     if (m.status === 'usulan') return 'FFB45309'; // amber-700
     if (m.status === 'approved') return 'FF047857'; // emerald-700
+    if (m.status === 'fisik') return 'FFC2410C'; // orange-700
     if (m.status === 'penetapan') return 'FF6D28D9'; // violet-700
     if (m.status === 'verifikasi') return 'FF0E7490'; // cyan-700
     if (m.status === 'pending') return 'FF1D4ED8'; // blue-700
@@ -464,7 +465,7 @@ export default function BPMNDashboardPage() {
       // (usulan → draft → menunggu → verifikasi → pengesahan → perlu revisi → ditetapkan),
       // BUKAN alfabet, supaya urutannya masuk akal dibaca. Warna teks Status Dokumen
       // sama persis dengan warna di kolom Status Dokumen pada tabel daftar di bawah.
-      const STATUS_ORDER = ['USULAN', 'DRAFT', 'MENUNGGU', 'VERIFIKASI TTD', 'MENUNGGU PENGESAHAN PIMPINAN', 'MENUNGGU PROSES PENETAPAN MENTERI', 'PERLU REVISI', 'DITETAPKAN'];
+      const STATUS_ORDER = ['USULAN', 'DRAFT', 'MENUNGGU', 'VERIFIKASI TTD', 'MENUNGGU DOKUMEN FISIK PROSES BISNIS', 'MENUNGGU PENGESAHAN PIMPINAN', 'MENUNGGU PROSES PENETAPAN MENTERI', 'PERLU REVISI', 'DITETAPKAN'];
       const perStatus = new Map<string, { count: number; color: string }>();
       urut.forEach(m => {
         const lbl = label(m);
@@ -687,23 +688,44 @@ export default function BPMNDashboardPage() {
     } catch (err) { console.error(err); alert('❌ Gagal menghapus — periksa koneksi.'); }
   };
 
+  // Disetujui Ortala MR → BELUM ke penetapan menteri: unit kerja harus menyerahkan
+  // dokumen fisiknya dulu (status 'fisik'), baru admin menekan "Terima Dokumen Fisik".
   const handleApprove = async (model: BPMNModel) => {
-    if (!(await confirm({ title: 'Setujui Proses Bisnis', message: `Setujui dokumen "${model.process_title}"?`, tone: 'success', confirmText: 'Ya, Setujui' }))) return;
+    if (!(await confirm({ title: 'Setujui Proses Bisnis', message: `Setujui dokumen "${model.process_title}"?\n\nSelanjutnya unit kerja menyerahkan DOKUMEN FISIK Proses Bisnis ke Biro Ortala MR sebelum masuk proses penetapan menteri.`, tone: 'success', confirmText: 'Ya, Setujui' }))) return;
+    try {
+      const res = await apiFetch(`/bpmn/models/status/${model.id}`, token, {
+        method: 'PATCH',
+        body: JSON.stringify({ status: 'fisik', catatan: '' })
+      });
+      if (res.ok) {
+        setSavedModels(prev => prev.map(m => m.id === model.id ? { ...m, status: 'fisik', catatan: '' } : m));
+        if (previewModel?.id === model.id) setPreviewModel(prev => prev ? { ...prev, status: 'fisik', catatan: '' } : null);
+        alert('Disetujui! Menunggu dokumen fisik Proses Bisnis dari unit kerja.');
+      } else {
+        const e = await res.json().catch(() => ({}));
+        alert(`❌ ${e.error || 'Gagal menyetujui dokumen.'}`);
+      }
+    } catch (err) { console.error(err); alert('❌ Gagal menyetujui — periksa koneksi.'); }
+  };
+
+  // Admin menerima dokumen fisik dari unit kerja → lanjut ke proses penetapan menteri.
+  const handleTerimaFisik = async (model: BPMNModel) => {
+    if (!(await confirm({ title: 'Terima Dokumen Fisik', message: `Dokumen fisik Proses Bisnis "${model.process_title}" sudah diterima dari unit kerja?\n\nDokumen akan lanjut ke proses penetapan menteri.`, tone: 'success', confirmText: 'Ya, Sudah Diterima' }))) return;
     try {
       const res = await apiFetch(`/bpmn/models/status/${model.id}`, token, {
         method: 'PATCH',
         body: JSON.stringify({ status: 'penetapan', catatan: '' })
       });
       if (res.ok) {
-        // Belum masuk Daftar Proses Bisnis — menunggu proses penetapan menteri.
         setSavedModels(prev => prev.map(m => m.id === model.id ? { ...m, status: 'penetapan', catatan: '' } : m));
         if (previewModel?.id === model.id) setPreviewModel(prev => prev ? { ...prev, status: 'penetapan', catatan: '' } : null);
-        alert('Disetujui! Menunggu proses penetapan menteri.');
+        if (manualDetail?.id === model.id) setManualDetail(prev => prev ? { ...prev, status: 'penetapan', catatan: '' } : null);
+        alert('✅ Dokumen fisik diterima. Menunggu proses penetapan menteri.');
       } else {
         const e = await res.json().catch(() => ({}));
-        alert(`❌ ${e.error || 'Gagal menyetujui dokumen.'}`);
+        alert(`❌ ${e.error || 'Gagal memproses dokumen fisik.'}`);
       }
-    } catch (err) { console.error(err); alert('❌ Gagal menyetujui — periksa koneksi.'); }
+    } catch (err) { console.error(err); alert('❌ Gagal memproses — periksa koneksi.'); }
   };
 
   // Admin menetapkan → buka modal isian dasar penetapan & tanggal.
@@ -901,6 +923,7 @@ export default function BPMNDashboardPage() {
 
   const statusBadgeClass = (status: string) => {
     if (status === 'approved') return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    if (status === 'fisik') return 'bg-orange-50 text-orange-700 border-orange-200';
     if (status === 'penetapan') return 'bg-violet-50 text-violet-700 border-violet-200';
     if (status === 'verifikasi') return 'bg-cyan-50 text-cyan-700 border-cyan-200';
     if (status === 'pending') return 'bg-blue-50 text-blue-700 border-blue-200';
@@ -909,6 +932,7 @@ export default function BPMNDashboardPage() {
   };
   const statusLabel = (status?: string, isManual?: boolean | null) => {
     if (status === 'approved') return 'DITETAPKAN';
+    if (status === 'fisik') return 'MENUNGGU DOKUMEN FISIK PROSES BISNIS';
     if (status === 'penetapan') return isManual ? 'MENUNGGU PENGESAHAN PIMPINAN' : 'MENUNGGU PROSES PENETAPAN MENTERI';
     if (status === 'verifikasi') return 'VERIFIKASI TTD';
     if (status === 'pending') return 'MENUNGGU';
@@ -928,6 +952,12 @@ export default function BPMNDashboardPage() {
         {model.status !== 'rejected' && <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: '' }); }} className="px-3 py-2 bg-red-100 hover:bg-red-500 hover:text-white text-red-700 text-xs font-extrabold rounded-lg uppercase transition-all">Tolak</button>}
         {model.status === 'rejected' && <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '', mode: 'edit' }); }} className="px-3 py-2 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all">Edit Revisi</button>}
       </>)}
+      {model.status === 'fisik' && currentUser?.role === 'admin' && (
+        <><button onClick={(e) => { e.stopPropagation(); handleTerimaFisik(model); }} title="Dokumen fisik sudah diterima dari unit kerja → lanjut penetapan menteri" className="px-3 py-2 bg-orange-100 hover:bg-orange-600 hover:text-white text-orange-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><Inbox className="w-4 h-4" /> Terima Dokumen Fisik</button><button onClick={(e) => { e.stopPropagation(); handleBatalPenetapan(model); }} title="Batalkan — kembali ke tahap sebelumnya" className="px-3 py-2 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><RotateCcw className="w-4 h-4" /> Batalkan</button></>
+      )}
+      {model.status === 'fisik' && currentUser?.role !== 'admin' && (
+        <span className="px-2.5 py-1.5 text-[11px] font-bold text-orange-700 bg-orange-50 rounded-lg border border-orange-200">Menunggu dokumen fisik</span>
+      )}
       {model.status === 'penetapan' && currentUser?.role === 'admin' && (
         <><button onClick={(e) => { e.stopPropagation(); handleDitetapkan(model); }} className="px-3 py-2 bg-violet-100 hover:bg-violet-600 hover:text-white text-violet-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><Landmark className="w-4 h-4" /> Ditetapkan</button><button onClick={(e) => { e.stopPropagation(); handleBatalPenetapan(model); }} title="Batalkan proses penetapan (kembali ke tahap sebelumnya)" className="px-3 py-2 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><RotateCcw className="w-4 h-4" /> Batalkan</button></>
       )}
@@ -937,7 +967,7 @@ export default function BPMNDashboardPage() {
       {model.is_manual ? (
         <button onClick={(e) => { e.stopPropagation(); setManualDetail(model); }} className="px-3 py-2 text-blue-600 hover:bg-blue-50 font-bold text-xs rounded-lg border border-transparent hover:border-blue-200 flex items-center gap-1"><FileText className="w-4 h-4" /> Lihat Dokumen</button>
       ) : (
-        <button onClick={(e) => { e.stopPropagation(); if (['approved', 'penetapan'].includes(model.status || '')) { router.push(`/bpmn/studio?id=${model.id}&mode=view`); } else { openForEdit(model); } }} className="px-3 py-2 text-blue-600 hover:bg-blue-50 font-bold text-xs rounded-lg border border-transparent hover:border-blue-200 flex items-center gap-1"><Edit className="w-4 h-4" /> {['approved', 'penetapan'].includes(model.status || '') ? 'Lihat' : 'Edit'}</button>
+        <button onClick={(e) => { e.stopPropagation(); if (['approved', 'fisik', 'penetapan'].includes(model.status || '')) { router.push(`/bpmn/studio?id=${model.id}&mode=view`); } else { openForEdit(model); } }} className="px-3 py-2 text-blue-600 hover:bg-blue-50 font-bold text-xs rounded-lg border border-transparent hover:border-blue-200 flex items-center gap-1"><Edit className="w-4 h-4" /> {['approved', 'fisik', 'penetapan'].includes(model.status || '') ? 'Lihat' : 'Edit'}</button>
       )}
       {bolehHapus(model) && (
         <button onClick={(e) => { e.stopPropagation(); deleteModel(model.id); }} className={`p-2 rounded-lg transition-colors hover:text-red-600 hover:bg-red-50 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} title="Hapus Dokumen"><Trash2 className="w-4 h-4" /></button>
@@ -1258,6 +1288,7 @@ export default function BPMNDashboardPage() {
               <div className="flex flex-wrap gap-2 items-center">
                 <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider border ${statusBadgeClass(previewModel.status)}`}>
                   {previewModel.status === 'approved' && <CheckCircle className="w-3 h-3" />}
+                  {previewModel.status === 'fisik' && <Inbox className="w-3 h-3" />}
                   {previewModel.status === 'penetapan' && <Landmark className="w-3 h-3" />}
                   {previewModel.status === 'pending' && <Clock className="w-3 h-3" />}
                   {previewModel.status === 'rejected' && <XCircle className="w-3 h-3" />}
@@ -1301,15 +1332,15 @@ export default function BPMNDashboardPage() {
                 </div>
               )}
 
-              {(previewModel.status === 'penetapan' || previewModel.status === 'approved') && (
+              {['fisik', 'penetapan', 'approved'].includes(previewModel.status) && (
                 <div className={`flex items-start gap-2 text-xs font-semibold rounded-xl p-3 border ${isDarkMode ? 'bg-emerald-900/20 border-emerald-800 text-emerald-300' : 'bg-emerald-50 border-emerald-200 text-emerald-700'}`}>
                   <Lock className="w-4 h-4 shrink-0 mt-0.5" />
-                  <span>Proses Bisnis sudah dalam <b>penetapan/ditetapkan</b> — judul &amp; informasi terkunci. Untuk merevisi, gunakan fitur <b>Salin</b>.</span>
+                  <span>Proses Bisnis sudah disetujui (<b>{previewModel.status === 'fisik' ? 'menunggu dokumen fisik' : 'penetapan/ditetapkan'}</b>) — judul &amp; informasi terkunci. Untuk merevisi, gunakan fitur <b>Salin</b>.</span>
                 </div>
               )}
 
               {/* Edit fields */}
-              {(() => { const metaLocked = previewModel.status === 'penetapan' || previewModel.status === 'approved'; return (
+              {(() => { const metaLocked = ['fisik', 'penetapan', 'approved'].includes(previewModel.status); return (
               <div className="space-y-3">
                 <div>
                   <label className={`block text-xs font-bold mb-1.5 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Judul / Nama Proses <span className="text-red-500">*</span></label>
@@ -1486,10 +1517,13 @@ export default function BPMNDashboardPage() {
             </div>
           </div>
           <div onClick={() => toggleCard('penetapan')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-violet-500 flex flex-col min-h-24 transition-all hover:shadow-md ${isAdminRole ? 'cursor-pointer' : ''} ${cardFilter === 'penetapan' ? 'ring-2 ring-violet-500' : ''} ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
-            <p className="text-[10px] sm:text-xs font-bold text-violet-400 uppercase tracking-wide leading-tight wrap-break-word">Proses Penetapan Menteri</p>
-            <div className="flex justify-between items-end gap-2 mt-auto pt-1.5">
-              <p className="text-2xl sm:text-3xl font-black text-violet-600 leading-none">{currentFilteredModels.filter(m => m.status === 'penetapan').length}</p>
-              <div className="p-2 sm:p-2.5 bg-violet-50 rounded-xl text-violet-400 shrink-0"><Landmark className="w-5 h-5" /></div>
+            <p className="text-[10px] sm:text-xs font-bold text-violet-400 uppercase tracking-wide leading-tight wrap-break-word">Dokumen Fisik &amp; Penetapan Menteri</p>
+            <div className="flex items-center gap-2.5 mt-auto pt-1.5">
+              <p className="text-2xl sm:text-3xl font-black text-violet-600 leading-none shrink-0">{currentFilteredModels.filter(m => ['fisik', 'penetapan'].includes(m.status || '')).length}</p>
+              <div className="flex flex-col gap-1 min-w-0">
+                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-orange-900/40 text-orange-300' : 'bg-orange-50 text-orange-600'}`}><b className="font-black">{currentFilteredModels.filter(m => m.status === 'fisik').length}</b> Dok. Fisik</span>
+                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-violet-900/40 text-violet-300' : 'bg-violet-50 text-violet-600'}`}><b className="font-black">{currentFilteredModels.filter(m => m.status === 'penetapan').length}</b> Penetapan</span>
+              </div>
             </div>
           </div>
           <div onClick={() => toggleCard('approved')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-emerald-500 flex flex-col min-h-24 transition-all hover:shadow-md ${isAdminRole ? 'cursor-pointer' : ''} ${cardFilter === 'approved' ? 'ring-2 ring-emerald-500' : ''} ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
@@ -1583,7 +1617,7 @@ export default function BPMNDashboardPage() {
                 {listTab === 'usulan'
                   ? 'Rencana Proses Bisnis yang akan disusun — masukkan judul, lalu Lanjut Penyusunan.'
                   : listTab === 'penyusunan'
-                  ? 'Draf, menunggu, perlu revisi, & menunggu penetapan menteri.'
+                  ? 'Draf, menunggu, perlu revisi, menunggu dokumen fisik, & menunggu penetapan menteri.'
                   : 'Proses Bisnis yang sudah ditetapkan.'}
               </p>
             </div>
@@ -1604,6 +1638,7 @@ export default function BPMNDashboardPage() {
                   <option value="draft">Status: Draft</option>
                   <option value="pending">Status: Menunggu</option>
                   <option value="rejected">Status: Perlu Revisi</option>
+                  <option value="fisik">Status: Menunggu Dokumen Fisik</option>
                   <option value="penetapan">Status: Menunggu Penetapan</option>
                   <option value="approved">Status: Ditetapkan</option>
                 </select>
@@ -1774,6 +1809,7 @@ export default function BPMNDashboardPage() {
                       <td className="px-6 py-4">
                         <span className={`inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider border ${statusBadgeClass(model.status)}`}>
                           {model.status === 'approved' && <CheckCircle className="w-3 h-3" />}
+                          {model.status === 'fisik' && <Inbox className="w-3 h-3" />}
                           {model.status === 'penetapan' && <Landmark className="w-3 h-3" />}
                           {model.status === 'pending' && <Clock className="w-3 h-3" />}
                           {model.status === 'rejected' && <XCircle className="w-3 h-3" />}
@@ -1820,6 +1856,12 @@ export default function BPMNDashboardPage() {
                               {model.status !== 'rejected' && <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: '' }); }} className="px-3 py-2.5 bg-red-100 hover:bg-red-500 hover:text-white text-red-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm">Tolak</button>}
                               {model.status === 'rejected' && <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '', mode: 'edit' }); }} className="px-3 py-2.5 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm">Edit Revisi</button>}
                             </div>
+                          )}
+                          {model.status === 'fisik' && currentUser.role === 'admin' && (
+                            <><button onClick={(e) => { e.stopPropagation(); handleTerimaFisik(model); }} title="Dokumen fisik sudah diterima dari unit kerja → lanjut penetapan menteri" className="ml-2 px-3 py-2.5 bg-orange-100 hover:bg-orange-600 hover:text-white text-orange-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm flex items-center gap-1.5"><Inbox className="w-4 h-4" /> Terima Dokumen Fisik</button><button onClick={(e) => { e.stopPropagation(); handleBatalPenetapan(model); }} title="Batalkan — kembali ke tahap sebelumnya" className="ml-2 px-3 py-2.5 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm flex items-center gap-1.5"><RotateCcw className="w-4 h-4" /> Batalkan</button></>
+                          )}
+                          {model.status === 'fisik' && currentUser.role !== 'admin' && (
+                            <span className="ml-2 px-2.5 py-1.5 text-[11px] font-bold text-orange-700 bg-orange-50 rounded-lg border border-orange-200">Menunggu dokumen fisik diserahkan</span>
                           )}
                           {model.status === 'penetapan' && currentUser.role === 'admin' && (
                             <><button onClick={(e) => { e.stopPropagation(); handleDitetapkan(model); }} className="ml-2 px-3 py-2.5 bg-violet-100 hover:bg-violet-600 hover:text-white text-violet-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm flex items-center gap-1.5"><Landmark className="w-4 h-4" /> Ditetapkan</button><button onClick={(e) => { e.stopPropagation(); handleBatalPenetapan(model); }} title="Batalkan proses penetapan (kembali ke tahap sebelumnya)" className="ml-2 px-3 py-2.5 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm flex items-center gap-1.5"><RotateCcw className="w-4 h-4" /> Batalkan</button></>
@@ -1889,6 +1931,7 @@ export default function BPMNDashboardPage() {
                     </div>
                     <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${statusBadgeClass(model.status)}`}>
                       {model.status === 'approved' && <CheckCircle className="w-3 h-3" />}
+                      {model.status === 'fisik' && <Inbox className="w-3 h-3" />}
                       {model.status === 'penetapan' && <Landmark className="w-3 h-3" />}
                       {model.status === 'pending' && <Clock className="w-3 h-3" />}
                       {model.status === 'rejected' && <XCircle className="w-3 h-3" />}
@@ -1918,6 +1961,12 @@ export default function BPMNDashboardPage() {
                           {model.status !== 'rejected' && <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: '' }); }} className="px-2.5 py-2.5 bg-red-100 text-red-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Tolak"><XCircle className="w-3.5 h-3.5" /></button>}
                           {model.status === 'rejected' && <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '', mode: 'edit' }); }} className="px-2.5 py-2.5 bg-amber-100 text-amber-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Edit Revisi"><Edit className="w-3.5 h-3.5" /></button>}
                         </>
+                      )}
+                      {model.status === 'fisik' && currentUser.role === 'admin' && (
+                        <><button onClick={(e) => { e.stopPropagation(); handleTerimaFisik(model); }} className="px-2.5 py-2.5 bg-orange-100 text-orange-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Terima dokumen fisik"><Inbox className="w-3.5 h-3.5" /> Terima Fisik</button><button onClick={(e) => { e.stopPropagation(); handleBatalPenetapan(model); }} className="px-2.5 py-2.5 bg-amber-100 text-amber-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Batalkan — kembali ke tahap sebelumnya"><RotateCcw className="w-3.5 h-3.5" /></button></>
+                      )}
+                      {model.status === 'fisik' && currentUser.role !== 'admin' && (
+                        <span className="px-2.5 py-2 text-[10px] font-bold text-orange-700 bg-orange-50 rounded-lg border border-orange-200 self-center">Dokumen Fisik</span>
                       )}
                       {model.status === 'penetapan' && currentUser.role === 'admin' && (
                         <><button onClick={(e) => { e.stopPropagation(); handleDitetapkan(model); }} className="px-2.5 py-2.5 bg-violet-100 text-violet-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Ditetapkan"><Landmark className="w-3.5 h-3.5" /></button><button onClick={(e) => { e.stopPropagation(); handleBatalPenetapan(model); }} className="px-2.5 py-2.5 bg-amber-100 text-amber-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Batalkan proses penetapan"><RotateCcw className="w-3.5 h-3.5" /></button></>
