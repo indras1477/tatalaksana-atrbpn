@@ -352,8 +352,9 @@ export default function BPMNDashboardPage() {
     revisi: docs.filter(m => m.status === 'rejected').length,
     total: docs.length,
   });
-  const rekapBadge = (n: number, tone: 'orange' | 'slate' | 'indigo' | 'blue' | 'violet' | 'red' | 'emerald') => {
-    if (!n) return <span className="text-slate-300 font-bold">–</span>;
+  // chipLabel diisi → tampil sebagai chip berlabel (untuk kartu layar kecil); 0 disembunyikan.
+  const rekapBadge = (n: number, tone: 'orange' | 'slate' | 'indigo' | 'blue' | 'violet' | 'red' | 'emerald', chipLabel?: string) => {
+    if (!n) return chipLabel ? null : <span className="text-slate-300 font-bold">–</span>;
     const map = {
       slate: isDarkMode ? 'bg-slate-700/60 text-slate-200' : 'bg-slate-100 text-slate-700',
       indigo: isDarkMode ? 'bg-indigo-900/40 text-indigo-300' : 'bg-indigo-50 text-indigo-700',
@@ -363,6 +364,7 @@ export default function BPMNDashboardPage() {
       orange: isDarkMode ? 'bg-orange-900/40 text-orange-300' : 'bg-orange-50 text-orange-700',
       emerald: isDarkMode ? 'bg-emerald-900/40 text-emerald-300' : 'bg-emerald-50 text-emerald-700',
     };
+    if (chipLabel) return <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] font-bold ${map[tone]}`}>{chipLabel}<b className="font-black">{n}</b></span>;
     return <span className={`inline-flex min-w-8 justify-center px-2 py-1 rounded-lg text-xs font-black ${map[tone]}`}>{n}</span>;
   };
   const rekapRows = useMemo(() => {
@@ -1675,7 +1677,35 @@ export default function BPMNDashboardPage() {
                 )}
               </div>
               <p className={`text-xs mb-3 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{rekapDrill.l1 === null ? `Rekap ${listTab === 'usulan' ? 'usulan' : listTab === 'terbit' ? 'Proses Bisnis terbit' : 'dokumen'} per Unit Kerja Level 1. Klik baris untuk melihat sub-unit (Level 2).` : 'Klik sub-unit untuk melihat daftar dokumennya.'}</p>
-              <div className="overflow-x-auto">
+              {/* Layar < lg (HP & tablet potret): tabel 8–10 kolom terlalu lebar → kolom Total
+                  tersembunyi di balik gulir. Diganti kartu per unit (nama + total + chip status). */}
+              {!rekapRingkas && (
+                <div className="lg:hidden space-y-2.5">
+                  {rekapRows.length === 0 ? (
+                    <p className={`px-2 py-10 text-center text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Tidak ada dokumen dalam proses penyusunan.</p>
+                  ) : rekapRows.map(row => (
+                    <button key={row.nama} type="button" onClick={() => setRekapDrill(rekapDrill.l1 === null ? { l1: row.nama, l2: null } : { l1: rekapDrill.l1, l2: row.nama })}
+                      className={`w-full text-left rounded-xl border p-3.5 transition-colors active:scale-[0.99] ${isDarkMode ? 'bg-[#0F172A]/40 border-slate-700 hover:bg-slate-800/60' : 'bg-white border-slate-200 hover:bg-slate-50'}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <p className={`min-w-0 flex-1 text-sm font-bold leading-snug wrap-break-word ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{row.nama}</p>
+                        <span className="flex items-center gap-1 shrink-0">
+                          <span className={`inline-flex min-w-8 justify-center px-2.5 py-1 rounded-lg text-xs font-black text-white ${isDarkMode ? 'bg-blue-600' : 'bg-[#002855]'}`}>{row.total}</span>
+                          <ChevronRight className="w-4 h-4 text-slate-400" />
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 mt-2.5">
+                        {rekapBadge(row.usulan, 'slate', 'Draft Usulan')}
+                        {rekapBadge(row.draft, 'indigo', 'Draft Proses')}
+                        {rekapBadge(row.pending, 'blue', 'Review Ortala MR')}
+                        {rekapBadge(row.revisi, 'red', 'Perlu Revisi')}
+                        {rekapBadge(row.fisik, 'orange', 'Dokumen Fisik')}
+                        {rekapBadge(row.penetapan, 'violet', 'Penetapan Menteri')}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className={rekapRingkas ? 'overflow-x-auto' : 'overflow-x-auto hidden lg:block'}>
                 <table className="w-full text-sm text-left">
                   <thead className={`text-[10px] font-bold uppercase tracking-wide border-b ${isDarkMode ? 'text-slate-400 bg-slate-800/50 border-slate-700' : 'text-slate-500 bg-slate-50/80 border-slate-200'}`}>
                     <tr>
@@ -1738,7 +1768,7 @@ export default function BPMNDashboardPage() {
           )}
 
           {/* Desktop table */}
-          <div className="hidden md:block overflow-x-auto">
+          <div className="hidden xl:block overflow-x-auto">
             <table className="w-full text-sm text-left">
               <thead className={`text-[11px] font-bold uppercase tracking-wider border-b ${isDarkMode ? 'text-slate-400 bg-slate-800/50 border-slate-700' : 'text-slate-500 bg-slate-50/80 border-slate-200'}`}>
                 <tr>
@@ -1833,10 +1863,10 @@ export default function BPMNDashboardPage() {
                           )}
                           {model.status !== 'usulan' && (<>
                           <button
-                            onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else { openForEdit(model); } }}
+                            onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else if (['approved', 'fisik', 'penetapan'].includes(model.status || '')) { router.push(`/bpmn/studio?id=${model.id}&mode=view`); } else { openForEdit(model); } }}
                             className="px-3 py-2.5 text-blue-600 hover:bg-blue-50 font-bold text-xs rounded-lg transition-colors flex items-center gap-1 border border-transparent hover:border-blue-200"
                           >
-                            {model.is_manual ? <><FileText className="w-4 h-4" /> Lihat Dokumen</> : <><Edit className="w-4 h-4" /> Edit</>}
+                            {model.is_manual ? <><FileText className="w-4 h-4" /> Lihat Dokumen</> : <><Edit className="w-4 h-4" /> {['approved', 'fisik', 'penetapan'].includes(model.status || '') ? 'Lihat' : 'Edit'}</>}
                           </button>
 
                           {currentUser.role !== 'viewer' && !model.is_manual && (
@@ -1897,7 +1927,7 @@ export default function BPMNDashboardPage() {
           </div>
 
           {/* Mobile card list */}
-          <div className="md:hidden divide-y">
+          <div className="xl:hidden divide-y">
             {loading ? (
               <div className={`px-4 py-10 text-center text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Memuat data...</div>
             ) : pagedModels.length === 0 ? (
@@ -1933,7 +1963,7 @@ export default function BPMNDashboardPage() {
                       </div>
                       <p className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{model.unit_l1 || '-'}{model.unit_l2 ? ` › ${model.unit_l2}` : ''}</p>
                     </div>
-                    <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${statusBadgeClass(model.status)}`}>
+                    <span className={`shrink-0 max-w-[46%] text-center leading-tight inline-flex items-center justify-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${statusBadgeClass(model.status)}`}>
                       {model.status === 'approved' && <CheckCircle className="w-3 h-3" />}
                       {model.status === 'fisik' && <Inbox className="w-3 h-3" />}
                       {model.status === 'penetapan' && <Landmark className="w-3 h-3" />}
@@ -1958,7 +1988,7 @@ export default function BPMNDashboardPage() {
                         </>
                       )}
                       {model.status !== 'usulan' && (<>
-                      <button onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else { openForEdit(model); } }} className="px-2.5 py-2.5 text-blue-600 bg-blue-50 font-bold text-xs rounded-lg flex items-center gap-1">{model.is_manual ? <><FileText className="w-3 h-3" /> Lihat</> : <><Edit className="w-3 h-3" /> Edit</>}</button>
+                      <button onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else if (['approved', 'fisik', 'penetapan'].includes(model.status || '')) { router.push(`/bpmn/studio?id=${model.id}&mode=view`); } else { openForEdit(model); } }} className="px-2.5 py-2.5 text-blue-600 bg-blue-50 font-bold text-xs rounded-lg flex items-center gap-1">{model.is_manual ? <><FileText className="w-3 h-3" /> Lihat</> : <><Edit className="w-3 h-3" /> {['approved', 'fisik', 'penetapan'].includes(model.status || '') ? 'Lihat' : 'Edit'}</>}</button>
                       {currentUser.role === 'admin' && ['pending', 'draft', 'rejected'].includes(model.status || 'draft') && (
                         <>
                           <button onClick={(e) => { e.stopPropagation(); handleApprove(model); }} className="px-2.5 py-2.5 bg-emerald-100 text-emerald-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Setujui"><CheckCircle className="w-3.5 h-3.5" /></button>

@@ -429,8 +429,9 @@ export default function SOPDashboardPage() {
     revisi: docs.filter(m => m.status === 'rejected').length,
     total: docs.length,
   });
-  const rekapBadge = (n: number, tone: 'orange' | 'violet' | 'slate' | 'indigo' | 'blue' | 'emerald' | 'red' | 'teal') => {
-    if (!n) return <span className="text-slate-300 font-bold">–</span>;
+  // chipLabel diisi → tampil sebagai chip berlabel (untuk kartu layar kecil); 0 disembunyikan.
+  const rekapBadge = (n: number, tone: 'orange' | 'violet' | 'slate' | 'indigo' | 'blue' | 'emerald' | 'red' | 'teal', chipLabel?: string) => {
+    if (!n) return chipLabel ? null : <span className="text-slate-300 font-bold">–</span>;
     const map = {
       slate: isDarkMode ? 'bg-slate-700/60 text-slate-200' : 'bg-slate-100 text-slate-700',
       indigo: isDarkMode ? 'bg-indigo-900/40 text-indigo-300' : 'bg-indigo-50 text-indigo-700',
@@ -441,6 +442,7 @@ export default function SOPDashboardPage() {
       violet: isDarkMode ? 'bg-violet-900/40 text-violet-300' : 'bg-violet-50 text-violet-700',
       teal: isDarkMode ? 'bg-teal-900/40 text-teal-300' : 'bg-teal-50 text-teal-700',
     };
+    if (chipLabel) return <span className={`inline-flex items-center gap-1.5 px-2 py-1 rounded-lg text-[11px] font-bold ${map[tone]}`}>{chipLabel}<b className="font-black">{n}</b></span>;
     return <span className={`inline-flex min-w-8 justify-center px-2 py-1 rounded-lg text-xs font-black ${map[tone]}`}>{n}</span>;
   };
   const rekapRows = useMemo(() => {
@@ -2009,7 +2011,36 @@ export default function SOPDashboardPage() {
                 )}
               </div>
               <p className={`text-xs mb-3 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{rekapDrill.l1 === null ? `Rekap ${listTab === 'usulan' ? 'usulan' : listTab === 'terbit' ? 'SOP terbit' : 'dokumen'} per Unit Kerja Level 1. Klik baris untuk melihat sub-unit (Level 2).` : 'Klik sub-unit untuk melihat daftar dokumennya.'}</p>
-              <div className="overflow-x-auto">
+              {/* Layar < lg (HP & tablet potret): tabel 8–10 kolom terlalu lebar → kolom Total
+                  tersembunyi di balik gulir. Diganti kartu per unit (nama + total + chip status). */}
+              {!rekapRingkas && (
+                <div className="lg:hidden space-y-2.5">
+                  {rekapRows.length === 0 ? (
+                    <p className={`px-2 py-10 text-center text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Tidak ada dokumen dalam proses penyusunan.</p>
+                  ) : rekapRows.map(row => (
+                    <button key={row.nama} type="button" onClick={() => setRekapDrill(rekapDrill.l1 === null ? { l1: row.nama, l2: null } : { l1: rekapDrill.l1, l2: row.nama })}
+                      className={`w-full text-left rounded-xl border p-3.5 transition-colors active:scale-[0.99] ${isDarkMode ? 'bg-[#0F172A]/40 border-slate-700 hover:bg-slate-800/60' : 'bg-white border-slate-200 hover:bg-slate-50'}`}>
+                      <div className="flex items-start justify-between gap-3">
+                        <p className={`min-w-0 flex-1 text-sm font-bold leading-snug wrap-break-word ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{row.nama}</p>
+                        <span className="flex items-center gap-1 shrink-0">
+                          <span className={`inline-flex min-w-8 justify-center px-2.5 py-1 rounded-lg text-xs font-black text-white ${isDarkMode ? 'bg-blue-600' : 'bg-[#002855]'}`}>{row.total}</span>
+                          <ChevronRight className="w-4 h-4 text-slate-400" />
+                        </span>
+                      </div>
+                      <div className="flex flex-wrap gap-1.5 mt-2.5">
+                        {rekapBadge(row.usulan, 'slate', 'Draft Usulan')}
+                        {rekapBadge(row.draft, 'indigo', 'Draft Proses')}
+                        {rekapBadge(row.pending, 'blue', 'Review Ortala MR')}
+                        {rekapBadge(row.revisi, 'red', 'Perlu Revisi')}
+                        {rekapBadge(row.pengesahan, 'emerald', 'Pengesahan Pimpinan')}
+                        {rekapBadge(row.fisik, 'orange', 'Dokumen Fisik')}
+                        {rekapBadge(row.penetapan, 'violet', 'Penetapan Menteri')}
+                      </div>
+                    </button>
+                  ))}
+                </div>
+              )}
+              <div className={rekapRingkas ? 'overflow-x-auto' : 'overflow-x-auto hidden lg:block'}>
                 <table className="w-full text-sm text-left">
                   <thead className={`text-[10px] font-bold uppercase tracking-wide border-b ${isDarkMode ? 'text-slate-400 bg-slate-800/50 border-slate-700' : 'text-slate-500 bg-slate-50/80 border-slate-200'}`}>
                     <tr>
@@ -2074,7 +2105,7 @@ export default function SOPDashboardPage() {
           )}
 
           {/* Desktop table */}
-          <div className="hidden md:block overflow-x-auto">
+          <div className="hidden xl:block overflow-x-auto">
             <table className="w-full text-sm text-left">
               <thead className={`text-[11px] font-bold uppercase tracking-wider border-b ${isDarkMode ? 'text-slate-400 bg-slate-800/50 border-slate-700' : 'text-slate-500 bg-slate-50/80 border-slate-200'}`}>
                 <tr>
@@ -2272,7 +2303,7 @@ export default function SOPDashboardPage() {
           </div>
 
           {/* Mobile card list */}
-          <div className="md:hidden divide-y">
+          <div className="xl:hidden divide-y">
             {loading ? (
               <div className={`px-4 py-10 text-center text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Memuat data...</div>
             ) : pagedModels.length === 0 ? (
@@ -2303,7 +2334,7 @@ export default function SOPDashboardPage() {
                       </div>
                       <p className={`text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{getDisplayUnitL1(model)}{getDisplayUnitL2(model) ? ` › ${getDisplayUnitL2(model)}` : ''}</p>
                     </div>
-                    <span className={`shrink-0 inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${statusBadgeClass(model.status)}`}>
+                    <span className={`shrink-0 max-w-[46%] text-center leading-tight inline-flex items-center justify-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-extrabold uppercase border ${statusBadgeClass(model.status)}`}>
                       {model.status === 'terbit' && <Stamp className="w-3 h-3" />}
                       {model.status === 'penetapan' && <Landmark className="w-3 h-3" />}
                       {model.status === 'verifikasi' && <ClipboardCheck className="w-3 h-3" />}
