@@ -477,10 +477,34 @@ export default function SOPDashboardPage() {
     return 'FF475569'; // slate-600 (draft)
   };
 
-  const exportRekapL1 = async () => {
-    const l1 = rekapDrill.l1;
-    if (!l1) return;
-    const docs = rekapDataset.filter(m => getDisplayUnitL1(m) === l1);
+  // Cakupan ekspor:
+  //  'l1'   (admin) — satu Unit Kerja Level 1 beserta seluruh Sub-Unit-nya;
+  //  'l2'   (admin) — satu Sub-Unit (Level 2): daftar SOP (Level 3) miliknya;
+  //  'saya' (user terbatas) — seluruh dokumen unit kerjanya sendiri pada tab aktif.
+  // Dokumen hanya menyimpan Unit Level 1 & 2 (tak ada kolom Level 3 organisasi), jadi
+  // "Level 3" di sini = daftar SOP (Level 3) di bawah sebuah Sub-Unit.
+  const exportRekap = async (scope: 'l1' | 'l2' | 'saya') => {
+    let docs: SOPModel[];
+    let judulUnit: string;   // dipakai di judul sheet & nama berkas
+    let infoUnit = '';       // baris info jalur unit (hanya utk cakupan l2)
+    if (scope === 'saya') {
+      const l1u = currentUser?.unit_l1 || '';
+      const l2u = currentUser?.unit_l2 && currentUser.unit_l2.trim().toLowerCase() !== 'seluruh unit' ? currentUser.unit_l2 : '';
+      docs = rekapDataset;
+      judulUnit = l2u ? `${l1u} › ${l2u}` : (l1u || 'Unit Kerja Saya');
+    } else {
+      const l1 = rekapDrill.l1;
+      if (!l1) return;
+      if (scope === 'l2') {
+        const l2 = rekapDrill.l2;
+        if (!l2) return;
+        docs = rekapDataset.filter(m => getDisplayUnitL1(m) === l1 && (getDisplayUnitL2(m) || '(Tanpa Sub-Unit)') === l2);
+        judulUnit = l2; infoUnit = `${l1} › ${l2}`;
+      } else {
+        docs = rekapDataset.filter(m => getDisplayUnitL1(m) === l1);
+        judulUnit = l1;
+      }
+    }
     if (docs.length === 0) { alert('Tidak ada dokumen untuk diekspor pada unit kerja ini.'); return; }
     setExportingRekap(true);
     try {
@@ -514,17 +538,19 @@ export default function SOPDashboardPage() {
         });
       };
 
-      const titleRow = ws.addRow([`Daftar SOP ${l1}`]);
+      const titleRow = ws.addRow([`Daftar SOP ${judulUnit}`]);
       ws.mergeCells(titleRow.number, 1, titleRow.number, 4);
       titleRow.font = titleFont;
       titleRow.height = 22;
-      const infoRow = ws.addRow([`Tahap: ${tahapLabel}  •  Jumlah: ${urut.length} dokumen  •  Diekspor: ${new Date().toLocaleString('id-ID')}`]);
+      const infoRow = ws.addRow([`${infoUnit ? `Unit Kerja: ${infoUnit}  •  ` : ''}Tahap: ${tahapLabel}  •  Jumlah: ${urut.length} dokumen  •  Diekspor: ${new Date().toLocaleString('id-ID')}`]);
       ws.mergeCells(infoRow.number, 1, infoRow.number, 4);
       infoRow.font = { italic: true, size: 10, color: { argb: 'FF64748B' } };
       ws.addRow([]);
 
       // 1) REKAPITULASI PER SUB-UNIT (LEVEL 2) DULU — ringkasan tampil di atas
       // sebelum daftar rinciannya.
+      const tampilRekapSub = scope === 'l1' || subNames.length > 1;
+      if (tampilRekapSub) {
       const recapTitleRow = ws.addRow(['Rekapitulasi per Sub-Unit (Level 2)']);
       ws.mergeCells(recapTitleRow.number, 1, recapTitleRow.number, 4);
       recapTitleRow.font = { bold: true, size: 12, color: { argb: 'FF002855' } };
@@ -541,6 +567,7 @@ export default function SOPDashboardPage() {
       totalRow.font = { bold: true };
       totalRow.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', horizontal: 'center' }; });
       ws.addRow([]);
+      }
 
       // 1b) REKAPITULASI PER STATUS DOKUMEN — urutan tetap mengikuti alur proses,
       // BUKAN alfabet, supaya masuk akal dibaca. Warna teks sama dgn kolom Status
@@ -590,9 +617,10 @@ export default function SOPDashboardPage() {
       const buf = await workbook.xlsx.writeBuffer();
       const blob = new Blob([buf], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
       const url = URL.createObjectURL(blob);
-      const slug = (v: string) => v.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_').slice(0, 60);
+      // Potong di batas kata (bukan di tengah kata) bila nama unit terlalu panjang.
+      const slug = (v: string) => { const t = v.replace(/[^\w\s-]/g, '').trim().replace(/\s+/g, '_'); return t.length > 60 ? t.slice(0, 60).replace(/_[^_]*$/, '') : t; };
       const a = document.createElement('a');
-      a.href = url; a.download = `Daftar_SOP_${slug(l1)}_${slug(tahapLabel)}.xlsx`;
+      a.href = url; a.download = `Daftar_SOP_${slug(judulUnit)}_${slug(tahapLabel)}.xlsx`;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 4000);
     } catch (e) {
@@ -602,6 +630,14 @@ export default function SOPDashboardPage() {
       setExportingRekap(false);
     }
   };
+
+  // Tombol Ekspor Excel (gaya pill #6a994e) — dipakai di rekap L1, daftar Sub-Unit, dan toolbar user.
+  const renderExportBtn = (scope: 'l1' | 'l2' | 'saya', title: string, extraCls = '') => (
+    <button onClick={() => exportRekap(scope)} disabled={exportingRekap} title={title} className={`group inline-flex items-center justify-center gap-2 pl-2.5 pr-4 py-2 text-xs font-bold text-white bg-[#6a994e] hover:bg-[#5d8745] active:scale-95 rounded-full shadow-sm hover:shadow-md transition-all duration-150 disabled:opacity-60 disabled:active:scale-100 disabled:cursor-not-allowed shrink-0 ${extraCls}`}>
+      <span className="flex items-center justify-center w-5 h-5 rounded-full bg-white/20 group-hover:bg-white/30 transition-colors"><FileSpreadsheet className="w-3 h-3" /></span>
+      {exportingRekap ? 'Menyiapkan…' : 'Ekspor Excel'}
+    </button>
+  );
 
   // Pengurutan daftar dokumen — dokumen terbaru/baru diperbarui di paling atas.
   const waktu = (v?: string) => (v ? new Date(v).getTime() : 0);
@@ -1986,6 +2022,9 @@ export default function SOPDashboardPage() {
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Search className={`h-4 w-4 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} /></div>
                 <input type="text" placeholder="Cari judul atau nomor SOP..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className={`w-full pl-10 pr-4 py-2.5 border rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-emerald-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white placeholder:text-slate-500' : 'bg-white border-slate-300 text-slate-900'}`} />
               </div>
+              {/* User terbatas tak punya tampilan rekap per unit → tombol ekspor di toolbar:
+                  seluruh dokumen unit kerjanya pada tab yang sedang dibuka. */}
+              {currentUser?.role === 'user' && renderExportBtn('saya', `Ekspor daftar SOP ${currentUser.unit_l1 || 'unit kerja Anda'} ke Excel`, 'w-full sm:w-auto py-2.5')}
             </div>
           </div>
 
@@ -2003,12 +2042,7 @@ export default function SOPDashboardPage() {
                   {rekapDrill.l1 !== null && (<><ChevronRight className="w-4 h-4 text-slate-400" /><span className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{rekapDrill.l1}</span></>)}
                 </div>
                 {/* Ekspor Excel — hanya setelah sebuah Unit Kerja Level 1 dipilih. */}
-                {rekapDrill.l1 !== null && (
-                  <button onClick={exportRekapL1} disabled={exportingRekap} title={`Ekspor daftar SOP ${rekapDrill.l1} (seluruh sub-unit) ke Excel`} className="group inline-flex items-center gap-2 pl-2.5 pr-4 py-2 text-xs font-bold text-white bg-[#6a994e] hover:bg-[#5d8745] active:scale-95 rounded-full shadow-sm hover:shadow-md transition-all duration-150 disabled:opacity-60 disabled:active:scale-100 disabled:cursor-not-allowed shrink-0">
-                    <span className="flex items-center justify-center w-5 h-5 rounded-full bg-white/20 group-hover:bg-white/30 transition-colors"><FileSpreadsheet className="w-3 h-3" /></span>
-                    {exportingRekap ? 'Menyiapkan…' : 'Ekspor Excel'}
-                  </button>
-                )}
+                {rekapDrill.l1 !== null && renderExportBtn('l1', `Ekspor daftar SOP ${rekapDrill.l1} (seluruh sub-unit) ke Excel`)}
               </div>
               <p className={`text-xs mb-3 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>{rekapDrill.l1 === null ? `Rekap ${listTab === 'usulan' ? 'usulan' : listTab === 'terbit' ? 'SOP terbit' : 'dokumen'} per Unit Kerja Level 1. Klik baris untuk melihat sub-unit (Level 2).` : 'Klik sub-unit untuk melihat daftar dokumennya.'}</p>
               {/* Layar < lg (HP & tablet potret): tabel 8–10 kolom terlalu lebar → kolom Total
@@ -2087,12 +2121,16 @@ export default function SOPDashboardPage() {
             </div>
           ) : (<>
           {isAdminRekap && rekapDrill.l2 !== null && (
-            <div className={`p-4 sm:p-5 border-b flex items-center gap-1.5 text-sm font-semibold flex-wrap ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-              <button onClick={() => setRekapDrill({ l1: null, l2: null })} className="text-emerald-600 hover:underline">Semua Unit</button>
-              <ChevronRight className="w-4 h-4 text-slate-400" />
-              <button onClick={() => setRekapDrill({ l1: rekapDrill.l1, l2: null })} className="text-emerald-600 hover:underline">{rekapDrill.l1}</button>
-              <ChevronRight className="w-4 h-4 text-slate-400" />
-              <span className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{rekapDrill.l2}</span>
+            <div className={`p-4 sm:p-5 border-b flex items-center justify-between gap-3 flex-wrap ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+              <div className="flex items-center gap-1.5 text-sm font-semibold flex-wrap">
+                <button onClick={() => setRekapDrill({ l1: null, l2: null })} className="text-emerald-600 hover:underline">Semua Unit</button>
+                <ChevronRight className="w-4 h-4 text-slate-400" />
+                <button onClick={() => setRekapDrill({ l1: rekapDrill.l1, l2: null })} className="text-emerald-600 hover:underline">{rekapDrill.l1}</button>
+                <ChevronRight className="w-4 h-4 text-slate-400" />
+                <span className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{rekapDrill.l2}</span>
+              </div>
+              {/* Ekspor Excel daftar SOP (Level 3) pada Sub-Unit ini. */}
+              {renderExportBtn('l2', `Ekspor daftar SOP ${rekapDrill.l2} ke Excel`)}
             </div>
           )}
 
