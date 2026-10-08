@@ -1073,6 +1073,16 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
         // (beda dgn server PDF → teks meluber di hasil PDF).
         try { await document.fonts.load('12px "URW Bookman"'); } catch { /* lanjut */ }
 
+        // Pool/Lane (bpmn:Group) WAJIB non-bingkai sejak dimuat. Pendengar serupa di bawah
+        // baru terpasang SETELAH importXML, sehingga Pool/Lane dari dokumen tersimpan tetap
+        // "bingkai" (hanya garis tepi yang bisa diklik): klik ganda pada teks Lane menembus
+        // ke latar dan malah menyunting nama sub-prosesnya. Prioritas 1500 > InteractionEvents
+        // (1000) agar berlaku sebelum area klik (djs-hit) dibuat.
+        (modeler as unknown as { on(ev: string, p: number, cb: (e: { element: BpmnElement & { isFrame?: boolean } }) => void): void })
+          .on('shape.added', 1500, ({ element }) => {
+            if (element.type === 'bpmn:Group') element.isFrame = false;
+          });
+
         await modeler.importXML(xmlToLoad);
         if (!isMounted) return;
 
@@ -1152,10 +1162,17 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
         const restackGroups = () => {
           try {
             const regG = registryAll as BpmnElementRegistry & { getGraphics: (el: unknown) => SVGElement | undefined };
-            registryAll.forEach((el) => {
-              if (el.type !== 'bpmn:Group') return;
+            // Urutkan dari yang TERKECIL: tiap Group disisipkan di posisi paling bawah,
+            // sehingga yang terakhir disisipkan (terbesar = Pool) berada paling bawah dan
+            // Lane di atasnya. Tanpa ini urutannya mengikuti urutan di berkas; bila Pool
+            // tergambar di atas Lane, klik pada Lane mengenai Pool.
+            const luas = (el: { width?: number; height?: number }) => (el.width || 0) * (el.height || 0);
+            const grupDatar = registryAll.filter((el) => {
+              if (el.type !== 'bpmn:Group') return false;
               const parent = (el as { parent?: { type?: string } }).parent;
-              if (!parent || parent.type === 'bpmn:Group') return;
+              return !!parent && parent.type !== 'bpmn:Group';
+            }).sort((a, b) => luas(a as never) - luas(b as never));
+            grupDatar.forEach((el) => {
               const gfx = regG.getGraphics(el);              // <g.djs-element>
               const wrapper = gfx?.parentNode as SVGElement | null;   // <g.djs-group>
               const container = wrapper?.parentNode as SVGElement | null;
@@ -1227,6 +1244,23 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
             return origRemove(elements);
           };
         }
+
+        // Saat teks label disunting, bpmn-js dapat mengosongkan seleksi sehingga tombol
+        // B/I nonaktif — padahal justru saat itulah pengguna ingin memiringkan teks.
+        // Aktifkan tombol berdasarkan elemen yang sedang disunting.
+        (modeler as unknown as { on(ev: string | string[], cb: (e: { active?: { element?: BpmnElement } }) => void): void })
+          .on('directEditing.activate', (e) => {
+            const el = e.active?.element;
+            if (!isMounted || !el) return;
+            const st = readFontStyle(el);
+            setFontSel({ any: true, bold: st.bold, italic: st.italic });
+          });
+        (modeler as unknown as { on(ev: string | string[], cb: () => void): void })
+          .on(['directEditing.complete', 'directEditing.cancel'], () => {
+            if (!isMounted) return;
+            const els = ((modeler.get('selection') as { get: () => BpmnElement[] }).get() || []).filter(x => (x as { parent?: unknown }).parent);
+            setFontSel({ any: els.length > 0, bold: els.length > 0 && els.every(x => readFontStyle(x).bold), italic: els.length > 0 && els.every(x => readFontStyle(x).italic) });
+          });
 
         // Teruskan seleksi elemen ke pemakai komponen (mis. panel properti
         // sub-process pada Peta Proses Bisnis berjenjang).
@@ -1456,7 +1490,9 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
     const m = modelerRef.current;
     if (!m || isViewOnly) return;
     toggleFontStyle(m, key);
-    const els = ((m.get('selection') as { get: () => BpmnElement[] }).get() || []).filter(e => (e as { parent?: unknown }).parent);
+    const de = (() => { try { return m.get('directEditing') as { isActive: () => boolean; _active?: { element?: BpmnElement } }; } catch { return null; } })();
+    const sedang = de?.isActive() ? de._active?.element : undefined;
+    const els = sedang ? [sedang] : ((m.get('selection') as { get: () => BpmnElement[] }).get() || []).filter(e => (e as { parent?: unknown }).parent);
     setFontSel({ any: els.length > 0, bold: els.length > 0 && els.every(e => readFontStyle(e).bold), italic: els.length > 0 && els.every(e => readFontStyle(e).italic) });
   };
   const toggleFontStyleSelRef = useRef(toggleFontStyleSel);
@@ -1468,17 +1504,25 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
       const k = e.key.toLowerCase();
       if (k !== 'b' && k !== 'i') return;
       const t = e.target as HTMLElement | null;
-      // Jangan ganggu isian form / kotak ketik label (direct editing).
-      if (t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
+      // Kotak sunting label bpmn-js: TANGANI di sini. Bila dibiarkan, browser memiringkan
+      // sebagian teks di kotak ketik saja (format bawaan contenteditable) yang lalu
+      // HILANG begitu suntingan selesai, karena label BPMN hanya menyimpan teks polos.
+      const diKotakLabel = !!t?.closest?.('.djs-direct-editing-parent');
+      // Isian form lain tetap tidak diganggu.
+      if (!diKotakLabel && t && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA' || t.isContentEditable)) return;
       const m = modelerRef.current;
       if (!m) return;
       const sel = ((m.get('selection') as { get: () => BpmnElement[] }).get() || []);
-      if (!sel.length) return;
+      if (!sel.length && !diKotakLabel) return;
       e.preventDefault();
+      // Kotak ketik sudah ditutup-buka ulang oleh toggle → jangan teruskan ke handler lamanya.
+      if (diKotakLabel) e.stopPropagation();
       toggleFontStyleSelRef.current(k === 'b' ? 'bold' : 'italic');
     };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    // Fase CAPTURE: kotak ketik label bpmn-js memanggil stopPropagation() pada SETIAP
+    // tombol, sehingga pendengar fase bubble tak pernah menerima Ctrl+B/I saat menyunting.
+    window.addEventListener('keydown', onKey, true);
+    return () => window.removeEventListener('keydown', onKey, true);
   }, [isViewOnly]);
 
   const handleExport = async () => {
@@ -1748,8 +1792,8 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
             <div className="flex overflow-hidden rounded-lg border bg-white shadow-sm shrink-0">
               <button onClick={() => { const cs = modelerRef.current?.get('commandStack') as BpmnCommandStack | undefined; cs?.undo(); }} disabled={!canUndo} title="Undo (Ctrl+Z)" className="border-r p-2 hover:bg-slate-50 disabled:opacity-30"><Undo2 size={16} /></button>
               <button onClick={() => { const cs = modelerRef.current?.get('commandStack') as BpmnCommandStack | undefined; cs?.redo(); }} disabled={!canRedo} title="Redo (Ctrl+Y)" className="border-r p-2 hover:bg-slate-50 disabled:opacity-30"><Redo2 size={16} /></button>
-              <button onClick={() => toggleFontStyleSel('bold')} disabled={!fontSel.any} title="Teks tebal (Ctrl+B) — pilih elemen dulu" className={`border-r p-2 disabled:opacity-30 ${fontSel.bold ? 'bg-slate-700 text-white' : 'hover:bg-slate-50'}`}><Bold size={16} /></button>
-              <button onClick={() => toggleFontStyleSel('italic')} disabled={!fontSel.any} title="Teks miring (Ctrl+I) — pilih elemen dulu" className={`p-2 disabled:opacity-30 ${fontSel.italic ? 'bg-slate-700 text-white' : 'hover:bg-slate-50'}`}><Italic size={16} /></button>
+              <button onMouseDown={(e) => e.preventDefault()} onClick={() => toggleFontStyleSel('bold')} disabled={!fontSel.any} title="Teks tebal (Ctrl+B) — pilih elemen atau sedang menyunting teksnya" className={`border-r p-2 disabled:opacity-30 ${fontSel.bold ? 'bg-slate-700 text-white' : 'hover:bg-slate-50'}`}><Bold size={16} /></button>
+              <button onMouseDown={(e) => e.preventDefault()} onClick={() => toggleFontStyleSel('italic')} disabled={!fontSel.any} title="Teks miring (Ctrl+I) — pilih elemen atau sedang menyunting teksnya" className={`p-2 disabled:opacity-30 ${fontSel.italic ? 'bg-slate-700 text-white' : 'hover:bg-slate-50'}`}><Italic size={16} /></button>
             </div>
           )}
           <nav className="flex items-center text-sm border-l pl-4 min-w-0 overflow-hidden">

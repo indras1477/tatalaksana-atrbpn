@@ -55,8 +55,21 @@ function paintText(gfx: SVGElement | undefined | null, style: { bold: boolean; i
 
 // Modul didi: terapkan gaya setiap kali elemen / label-nya digambar atau berubah.
 class FontStylePainter {
-  static $inject = ['eventBus', 'elementRegistry', 'textRenderer'];
-  constructor(eventBus: El, elementRegistry: El, textRenderer: El) {
+  static $inject = ['eventBus', 'elementRegistry', 'textRenderer', 'injector'];
+  constructor(eventBus: El, elementRegistry: El, textRenderer: El, injector: El) {
+    // Saat menyunting teks label, kotak ketik bawaan bpmn-js selalu tampil normal
+    // walau elemennya tebal/miring → pengguna mengira gayanya hilang. Samakan.
+    const directEditing = injector?.get?.('directEditing', false);
+    if (directEditing) {
+      eventBus.on('directEditing.activate', (e: { active?: { element?: El } }) => {
+        const content = directEditing._textbox?.content as HTMLElement | undefined;
+        if (!content || !e.active?.element) return;
+        const st = readFontStyle(e.active.element);
+        content.style.fontWeight = st.bold ? 'bold' : '';
+        content.style.fontStyle = st.italic ? 'italic' : '';
+      });
+    }
+
     // Pemenggalan baris label dihitung saat render memakai gaya yang diberikan ke
     // textRenderer. Tanpa ini baris dipenggal dgn metrik huruf NORMAL, sehingga teks
     // tebal/miring (lebih lebar) mepet/meluber keluar kotak. Catat gaya elemen yang
@@ -102,13 +115,25 @@ export const fontStyleModule = {
 };
 
 // Toggle gaya pada seleksi. Satu perintah per elemen → Ctrl+Z membatalkan.
+// Bila teks label SEDANG disunting: sasaran = elemen yang disunting. Suntingan
+// diselesaikan dulu — bpmn-js MEMBATALKAN ketikan begitu ada perintah lain
+// (commandStack.changed → directEditing.cancel) — lalu kotak sunting dibuka
+// lagi dengan kursor di akhir teks agar pengguna bisa lanjut mengetik.
 export function toggleFontStyle(modeler: El, key: 'bold' | 'italic'): void {
   if (!modeler) return;
   const selection = modeler.get('selection');
   const modeling = modeler.get('modeling');
+  let directEditing: El = null;
+  try { directEditing = modeler.get('directEditing'); } catch { /* viewer */ }
+  let sedangSunting: El = null;
+  if (directEditing?.isActive?.()) {
+    sedangSunting = directEditing._active?.element || null;
+    directEditing.complete();
+  }
+  const sumber: El[] = sedangSunting ? [sedangSunting] : (selection.get() as El[]);
   const seen = new Set<El>();
   const targets: El[] = [];
-  (selection.get() as El[]).forEach((el) => {
+  sumber.forEach((el) => {
     const t = el?.labelTarget || el;
     if (!t || !t.di || !t.parent || seen.has(t)) return; // lewati root
     seen.add(t); targets.push(t);
@@ -120,4 +145,12 @@ export function toggleFontStyle(modeler: El, key: 'bold' | 'italic'): void {
   targets.forEach((t) => {
     modeling.updateModdleProperties(t, t.di, { [prop]: allOn ? undefined : true });
   });
+  if (sedangSunting) {
+    try { selection.select(sedangSunting); directEditing.activate(sedangSunting); } catch { /* abaikan */ }
+  }
+}
+
+// Apakah teks label sedang disunting (kotak ketik bpmn-js aktif)?
+export function isEditingLabel(modeler: El): boolean {
+  try { return !!modeler?.get('directEditing')?.isActive(); } catch { return false; }
 }
