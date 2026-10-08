@@ -243,14 +243,20 @@ function BPMNStudioContent() {
     } else {
       // Dokumen baru — bersihkan semua state sebelumnya
       setCurrentModel(null);
-      setInitialXml(undefined);
+      // Hasil impor Visual Paradigm (dari daftar Proses Bisnis, ?impor=1): diagram & judul
+      // diambil dari titipan sessionStorage; tersimpan hanya bila pengguna menekan Simpan.
+      let impor: { xml?: string; judul?: string } | null = null;
+      if (searchParams.get('impor') === '1') {
+        try { impor = JSON.parse(sessionStorage.getItem('bpmn-impor-vp') || 'null'); } catch { impor = null; }
+      }
+      setInitialXml(impor?.xml || undefined);
       const prefillL1 = currentUser?.role === 'user' ? (currentUser.unit_l1 || '') : '';
-      setConfig({ processTitle: '', processKey: '', orgUnitL1: prefillL1, orgUnitL2: '', description: '', jenisProses: '', klasifikasiProses: '' });
+      setConfig({ processTitle: impor?.judul || '', processKey: '', orgUnitL1: prefillL1, orgUnitL2: '', description: '', jenisProses: '', klasifikasiProses: '' });
       setCurrentXml("");
       setCurrentSvg("");
       setSubPlaneSvgs([]);
       setExportChecked({});
-      setHasUnsavedChanges(false);
+      setHasUnsavedChanges(!!impor?.xml);
       setIsLoadingDocument(false);
       if (!isViewOnly) setShowConfigModal(true);
     }

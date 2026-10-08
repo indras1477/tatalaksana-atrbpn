@@ -6,13 +6,14 @@ import {
   Plus, Edit, CheckCircle,
   Clock, XCircle, Search, X, FileEdit, FileStack, AlertCircle, Filter,
   Trash2, Calendar, GitCommit, HelpCircle, GitBranch, ChevronRight, Save, History as HistoryIcon, RotateCcw,
-  ExternalLink, Building2, Copy, Landmark, Lock, FileUp, FileText, MessageSquare, Eye, ZoomIn, ZoomOut, Maximize2, FileSpreadsheet, Inbox
+  ExternalLink, Building2, Copy, Landmark, Lock, FileUp, FileText, MessageSquare, Eye, ZoomIn, ZoomOut, Maximize2, FileSpreadsheet, Inbox, FileInput
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
 import { BPMNSymbolsSection } from '@/components/PanduanSymbols';
 import ManualDocModal from '@/components/ManualDocModal';
 import ManualDocDetailModal from '@/components/ManualDocDetailModal';
 import DocHistoryModal from '@/components/DocHistoryModal';
+import ImporBpmnVpModal from '@/components/ImporBpmnVpModal';
 import TrashModal from '@/components/TrashModal';
 import ShareButton from '@/components/ShareButton';
 import { useConfirm } from '@/components/ConfirmDialog';
@@ -145,6 +146,9 @@ export default function BPMNDashboardPage() {
   const [tanggapanModal, setTanggapanModal] = useState<{ isOpen: boolean; model: BPMNModel | null; pesan: string }>({ isOpen: false, model: null, pesan: '' });
   const { confirm, confirmNode } = useConfirm();
   const [sendingTanggapan, setSendingTanggapan] = useState(false);
+  // IMPOR VISUAL PARADIGM (.vpp) → Proses Bisnis BARU (tahap uji, superadmin). XML hasil
+  // konversi dititipkan di sessionStorage lalu dimuat studio (…/bpmn/studio?impor=1).
+  const [showImporVp, setShowImporVp] = useState(false);
   const [penetapanModal, setPenetapanModal] = useState<{ isOpen: boolean; model: BPMNModel | null; dasar: string; tanggal: string }>({ isOpen: false, model: null, dasar: '', tanggal: '' });
   const [submittingPenetapan, setSubmittingPenetapan] = useState(false);
   const [showPanduan, setShowPanduan] = useState(false);
@@ -1051,6 +1055,15 @@ export default function BPMNDashboardPage() {
                   Batal
                 </button>
               </div>
+      {/* IMPOR VISUAL PARADIGM (superadmin) */}
+      <ImporBpmnVpModal open={showImporVp} onClose={() => setShowImporVp(false)}
+        onTerapkan={(d, nama) => {
+          try { sessionStorage.setItem('bpmn-impor-vp', JSON.stringify({ xml: d.xml, judul: d.nama, berkas: nama })); }
+          catch { alert('Hasil impor terlalu besar untuk diteruskan ke studio.'); return; }
+          setShowImporVp(false);
+          router.push(`/bpmn/studio?impor=1&t=${Date.now()}`);
+        }} />
+
             </div>
           </div>
         </div>
@@ -1510,6 +1523,11 @@ export default function BPMNDashboardPage() {
             {currentUser.role === 'admin' && (
               <button onClick={() => setShowTrash(true)} title="Kotak Sampah — dokumen terhapus (30 hari)" className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/20' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
                 <Trash2 className="w-4 h-4" /> <span className="hidden sm:inline">Kotak Sampah</span>
+            {isSuperadmin && (
+              <button onClick={() => setShowImporVp(true)} title="Buat Proses Bisnis baru dari proyek Visual Paradigm .vpp (tahap uji — superadmin)" className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-violet-700 text-violet-300 hover:bg-violet-900/30' : 'border-violet-300 text-violet-700 hover:bg-violet-50'}`}>
+                <FileInput className="w-4 h-4" /> Impor Visual Paradigm
+              </button>
+            )}
               </button>
             )}
             <button onClick={() => setShowManualDoc(true)} className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/30' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
