@@ -476,6 +476,9 @@ function BPMNStudioContent() {
         // Mark this ID so the useEffect triggered by router.replace below
         // can skip the redundant fetch (the model is already in memory).
         justSavedIdRef.current = savedBpmn.id;
+        // Titipan impor Visual Paradigm sudah menjadi dokumen — buang agar tombol Kembali
+        // ke URL ?impor=1 tidak memuatnya lagi sebagai dokumen baru (duplikat).
+        try { sessionStorage.removeItem('bpmn-impor-vp'); } catch { /* abaikan */ }
       }
       setCurrentModel(savedBpmn);
       setShowSaveModal(false);

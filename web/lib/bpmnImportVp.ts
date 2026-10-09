@@ -268,7 +268,9 @@ function konversiDiagram(diagramId: string, shapes: Bentuk[]): { xml: string; ri
   for (const p of pools) nid(p, 'Participant');
 
   for (const f of shapes.filter(s => s.tipe === 'BPSequenceFlow' || s.tipe === 'BPMessageFlow' || s.tipe === 'BPAssociation')) {
-    const a = f.dari ? peta.get(f.dari) : undefined, t = f.ke ? peta.get(f.ke) : undefined;
+    // Panah yang menempel ke Lane diperlakukan menempel ke Pool-nya (Lane bukan ujung sah).
+    const keUjung = (s?: Bentuk) => s && s.tipe === 'BPLane' ? (leluhur(s, ['BPPool']) || undefined) : s;
+    const a = keUjung(f.dari ? peta.get(f.dari) : undefined), t = keUjung(f.ke ? peta.get(f.ke) : undefined);
     if (!a || !t) { lewati.set('Panah tanpa ujung', (lewati.get('Panah tanpa ujung') || 0) + 1); continue; }
     const pts = titikAlur(f, a, t);
     const wp = pts.map(([x, y]) => `<di:waypoint x="${Math.round(x)}" y="${Math.round(y)}" />`).join('');
@@ -352,7 +354,10 @@ function konversiDiagram(diagramId: string, shapes: Bentuk[]): { xml: string; ri
       }
     }
     const idAkhir = nid(s, 'Node');
-    elemenXml.set(s.id, `<${tag} id="${idAkhir}"${nm}>${isi}</${tag}>`);
+    if (s.tipe === 'BPDataObject') {
+      // dataObjectReference wajib merujuk dataObject (tanpa itu bpmn-js gagal saat disunting).
+      elemenXml.set(s.id, `<bpmn:dataObject id="${idAkhir}_obj" /><${tag} id="${idAkhir}"${nm} dataObjectRef="${idAkhir}_obj">${isi}</${tag}>`);
+    } else elemenXml.set(s.id, `<${tag} id="${idAkhir}"${nm}>${isi}</${tag}>`);
     const tambahan = s.tipe === 'BPGateway' && tag === 'bpmn:exclusiveGateway' ? ' isMarkerVisible="true"' : '';
     const ekspansi = s.tipe === 'BPSubProcess' ? ` isExpanded="${simpul.some(c => c.induk === s.id)}"` : '';
     di.push(`<bpmndi:BPMNShape id="${idAkhir}_di" bpmnElement="${idAkhir}"${tambahan}${ekspansi}>${bounds(s.ax, s.ay, s.w, s.h)}${s.tipe === 'BPTask' || s.tipe === 'BPSubProcess' ? '' : labelDi(s)}</bpmndi:BPMNShape>`);
@@ -446,6 +451,15 @@ export async function imporBpmnDariVpp(buf: ArrayBuffer): Promise<HasilImporBpmn
   const semua = db.tabel('DIAGRAM_ELEMENT');
   const proyek = db.tabel('PROJECT_INFO')[0];
 
+  // Diagram isi Sub-Proses (DIAGRAM.PARENT_MODEL_ID = model Sub-Proses) muncul sebagai
+  // pilihan tersendiri; diagram induknya diberi catatan agar diimpor terpisah.
+  const namaModel = (id: string) => model.get(id)?.nama || '';
+  const anakDari = new Map<string, string[]>();
+  for (const d of diagrams) {
+    const pm = teks(d.PARENT_MODEL_ID);
+    if (pm && model.has(pm)) { if (!anakDari.has(pm)) anakDari.set(pm, []); anakDari.get(pm)!.push(teks(d.NAME)); }
+  }
+
   const hasil: DiagramImpor[] = [];
   for (const d of diagrams) {
     const did = teks(d.ID);
@@ -474,7 +488,14 @@ export async function imporBpmnDariVpp(buf: ArrayBuffer): Promise<HasilImporBpmn
     if (!shapes.length) continue;
     const { xml, ringkasan } = konversiDiagram(did, shapes);
     for (const [k, n] of dilewati) ringkasan.dilewati.push(`${k.replace(/^BP/, '')} (belum didukung): ${n}`);
-    hasil.push({ id: did, nama: teks(d.NAME) || 'Proses Bisnis', xml, ringkasan });
+    for (const s of shapes) {
+      if (s.tipe === 'BPSubProcess' && s.modelId && anakDari.has(s.modelId)) {
+        ringkasan.dilewati.push(`Isi Sub-Proses "${s.nama}" ada di diagram tersendiri — tidak ikut; impor diagram tsb secara terpisah.`);
+      }
+    }
+    const pm = teks(d.PARENT_MODEL_ID);
+    const induk = pm && model.get(pm)?.def.includes(':BPSubProcess {') ? namaModel(pm) : '';
+    hasil.push({ id: did, nama: (teks(d.NAME) || 'Proses Bisnis') + (induk && induk !== teks(d.NAME) ? ` (isi Sub-Proses ${induk})` : ''), xml, ringkasan });
   }
   if (!hasil.length) throw new Error('Diagram Proses Bisnis di proyek ini kosong.');
   return { namaProyek: proyek ? teks(proyek.NAME) : '', diagram: hasil };
