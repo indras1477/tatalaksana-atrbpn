@@ -293,6 +293,9 @@ export default function SOPDashboardPage() {
     if (!config.processTitle || !config.orgUnitL1) {
       return alert("Harap lengkapi Judul SOP dan Unit Kerja Utama.");
     }
+    if (l2Options.length > 0 && !config.orgUnitL2) {
+      return alert("Sub-Unit (Level 2) wajib dipilih agar SOP tercatat pada sub-unit yang tepat.");
+    }
     if (typeof window !== 'undefined') localStorage.removeItem('e-sop-draft-local');
 
     const params: Record<string, string> = {
@@ -324,6 +327,7 @@ export default function SOPDashboardPage() {
   const submitUsulan = async () => {
     if (!usulanForm.title.trim()) return alert('Judul rencana SOP wajib diisi.');
     if (!usulanForm.l1) return alert('Unit Kerja Level 1 wajib dipilih.');
+    if (usulanForm.l1 && HIERARKI_UNIT[usulanForm.l1] && Object.keys(HIERARKI_UNIT[usulanForm.l1]).length > 0 && !usulanForm.l2) return alert('Sub-Unit (Level 2) wajib dipilih.');
     setAddingUsulan(true);
     try {
       const res = await apiFetch('/sop/models', token, {
@@ -1405,9 +1409,9 @@ export default function SOPDashboardPage() {
                 )}
               </div>
               <div>
-                <label className={`block text-sm font-bold mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Sub-Unit (Level 2)</label>
+                <label className={`block text-sm font-bold mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Sub-Unit (Level 2){l2Options.length > 0 && <span className="text-red-500"> *</span>}</label>
                 <select value={config.orgUnitL2} onChange={(e) => setConfig({ ...config, orgUnitL2: e.target.value })} disabled={!config.orgUnitL1} className={`w-full px-4 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer disabled:opacity-50 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'}`}>
-                  <option value="">-- Tidak Ada / Kosong --</option>
+                  <option value="">{!config.orgUnitL1 ? '-- Pilih Unit Utama dahulu --' : l2Options.length > 0 ? '-- Pilih Sub-Unit --' : '-- Unit ini tidak memiliki Sub-Unit --'}</option>
                   {l2Options.map(u => <option key={u} value={u}>{u}</option>)}
                 </select>
               </div>
@@ -2643,9 +2647,9 @@ export default function SOPDashboardPage() {
                   </select>
                 </div>
                 <div>
-                  <label className={`block text-xs font-bold mb-1.5 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Unit Kerja L2</label>
+                  <label className={`block text-xs font-bold mb-1.5 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Unit Kerja L2{usulanForm.l1 && HIERARKI_UNIT[usulanForm.l1] && Object.keys(HIERARKI_UNIT[usulanForm.l1]).length > 0 && <span className="text-red-500"> *</span>}</label>
                   <select value={usulanForm.l2} disabled={!usulanForm.l1} onChange={e => setUsulanForm(f => ({ ...f, l2: e.target.value }))} className={`w-full px-3 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 disabled:opacity-50 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}>
-                    <option value="">— Tidak Ada / Kosong —</option>
+                    <option value="">{!usulanForm.l1 ? '— Pilih Unit L1 dahulu —' : (HIERARKI_UNIT[usulanForm.l1] && Object.keys(HIERARKI_UNIT[usulanForm.l1]).length > 0) ? '— Pilih Sub-Unit —' : '— Unit ini tidak memiliki Sub-Unit —'}</option>
                     {(usulanForm.l1 && HIERARKI_UNIT[usulanForm.l1] ? Object.keys(HIERARKI_UNIT[usulanForm.l1]) : []).map(u => <option key={u} value={u}>{u}</option>)}
                   </select>
                 </div>

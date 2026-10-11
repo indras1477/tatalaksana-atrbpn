@@ -1222,6 +1222,14 @@ async function resolveUnitIds(unitL1, unitL2, createIfMissing = false) {
   return { l1Id, l2Id };
 }
 
+// Sub-Unit (Level 2) WAJIB saat membuat dokumen bila Unit Kerja L1-nya punya sub-unit —
+// mencegah dokumen berlabel "(Tanpa Sub-Unit)" di rekap. L1 tanpa sub-unit dikecualikan.
+async function cekSubUnitWajib(l1Id, l2Id) {
+  if (!l1Id || l2Id) return null;
+  const r = await pool.query('SELECT 1 FROM unit_kerja_l2 WHERE l1_id = $1 LIMIT 1', [l1Id]);
+  return r.rows[0] ? 'Sub-Unit (Level 2) wajib dipilih.' : null;
+}
+
 // Sinkronisasi entri registry `dokumen` dari model aplikasi (idempoten, 1 baris per model).
 // Dipanggil saat BPMN 'approved' & SOP 'terbit'. `row` = baris model (id, process_title, l1_id, l2_id, created_by).
 async function syncDokumenFromModel({ type, jenis, row, status }) {
@@ -1396,6 +1404,8 @@ app.post('/api/bpmn/models', authenticate, async (req, res) => {
       const u = await resolveUnitIds(unit_l1, unit_l2, true);
       finalL1 = u.l1Id; finalL2 = u.l2Id;
     }
+    const errL2 = await cekSubUnitWajib(finalL1, finalL2);
+    if (errL2) return res.status(400).json({ error: errL2 });
     const modelResult = await pool.query(
       `INSERT INTO bpmn_models (process_title, process_key, l1_id, l2_id, description, jenis_proses, klasifikasi_proses, status, created_by, bpmn_xml, svg_xml)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) RETURNING *`,
@@ -3820,6 +3830,8 @@ app.post('/api/sop/models', authenticate, async (req, res) => {
 
     const finalKey = process_key && process_key.trim() ? process_key.trim() : null;
 
+    const errL2 = await cekSubUnitWajib(final_l1, final_l2);
+    if (errL2) return res.status(400).json({ error: errL2 });
     const modelResult = await pool.query(
       `INSERT INTO sop_models (process_title, process_key, l1_id, l2_id, sop_data, status, jenis_proses, klasifikasi_proses, created_by)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9) RETURNING *`,
