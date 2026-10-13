@@ -6,15 +6,10 @@
 import { useState } from 'react';
 import { X, FileUp } from 'lucide-react';
 import { HIERARKI_UNIT } from '@/lib/constants';
+import { KLASIFIKASI_BPMN, klasifikasiUntuk } from '@/lib/klasifikasi';
 
-export const JENIS_OPTIONS = ['Pusat', 'Kantor Wilayah', 'Kantor Pertanahan'];
-export const KLASIFIKASI_OPTIONS = [
-  'Layanan Administrasi Pemerintah',
-  'Layanan Pertanahan',
-  'Layanan Tata Ruang',
-  'Layanan Pengaduan dan Informasi',
-  'Layanan Data, Keamanan, dan Infrastruktur',
-];
+export const JENIS_OPTIONS = ['Pusat', 'Kantor Wilayah', 'Kantor Pertanahan', 'General'];
+export const KLASIFIKASI_OPTIONS = KLASIFIKASI_BPMN;
 
 export default function ManualDocModal({ kind, token, onClose, onSaved, defaultL1, defaultL2, isDarkMode }: {
   kind: 'bpmn' | 'sop' | 'sp';
@@ -125,7 +120,7 @@ export default function ManualDocModal({ kind, token, onClose, onSaved, defaultL
               <label className={label}>Klasifikasi</label>
               <select value={form.klasifikasi} onChange={e => set('klasifikasi', e.target.value)} className={input}>
                 <option value="">-- Pilih --</option>
-                {KLASIFIKASI_OPTIONS.map(k => <option key={k} value={k}>{k}</option>)}
+                {klasifikasiUntuk(kind).map(k => <option key={k} value={k}>{k}</option>)}
               </select>
             </div>
           </div>

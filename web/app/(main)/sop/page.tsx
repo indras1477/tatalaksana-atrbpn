@@ -1,4 +1,5 @@
 "use client";
+import { KLASIFIKASI_SOP, denganNilaiSaatIni } from '@/lib/klasifikasi';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
@@ -6,11 +7,12 @@ import {
   ArrowLeft, Plus, Edit, CheckCircle,
   Clock, XCircle, Search, X, FileEdit, FileStack, AlertCircle, Filter,
   Trash2, Calendar, GitCommit, FileSignature, Lock, HelpCircle, ChevronRight, History as HistoryIcon, RotateCcw,
-  Save, ExternalLink, Building2, Copy, Upload, Stamp, Eye, ClipboardCheck, Landmark, FileUp, FileText, MessageSquare, RefreshCw, Maximize2, FileSpreadsheet, Inbox
+  Save, ExternalLink, Building2, Copy, Upload, Stamp, Eye, ClipboardCheck, Landmark, FileUp, FileText, MessageSquare, RefreshCw, Maximize2, FileSpreadsheet, Inbox, FileInput
 } from 'lucide-react';
-import { SOPSymbolsSection } from '@/components/PanduanSymbols';
+import { SOPSymbolsSection, FiturSection } from '@/components/PanduanSymbols';
 import ManualDocModal from '@/components/ManualDocModal';
 import ManualDocDetailModal from '@/components/ManualDocDetailModal';
+import ImporSopPdfModal from '@/components/ImporSopPdfModal';
 import DocHistoryModal from '@/components/DocHistoryModal';
 import TrashModal from '@/components/TrashModal';
 import ShareButton from '@/components/ShareButton';
@@ -21,7 +23,7 @@ import { getClientId } from '@/lib/clientId';
 
 const API_BASE = '/e-sop-atrbpn/api';
 
-const JENIS_OPTIONS = ['Pusat', 'Kantor Wilayah', 'Kantor Pertanahan'];
+const JENIS_OPTIONS = ['Pusat', 'Kantor Wilayah', 'Kantor Pertanahan', 'General'];
 
 // Simpan posisi tampilan tabel (tab + drill unit + filter) agar kembali dari Studio
 // tetap pada daftar dokumen, tidak balik ke rekap Unit Kerja Level 1.
@@ -30,13 +32,7 @@ function readSavedView(): { listTab?: string; rekapDrill?: { l1: string | null; 
   if (typeof window === 'undefined') return null;
   try { return JSON.parse(sessionStorage.getItem(VIEW_KEY) || 'null'); } catch { return null; }
 }
-const KLASIFIKASI_OPTIONS_SOP = [
-  'SOP Administrasi Pemerintah',
-  'SOP Layanan Pertanahan',
-  'SOP Layanan Tata Ruang',
-  'SOP Layanan Pengaduan dan Informasi',
-  'SOP Layanan Data, Keamanan dan Infrastruktur',
-];
+const KLASIFIKASI_OPTIONS_SOP = KLASIFIKASI_SOP;
 
 async function apiFetch(path: string, token: string, options?: RequestInit) {
   const safePath = path.startsWith('/') ? path : `/${path}`;
@@ -281,7 +277,36 @@ export default function SOPDashboardPage() {
     setConfig({ ...config, orgUnitL1: e.target.value, orgUnitL2: '' });
   };
 
+  // IMPOR PDF → SOP BARU (semua pengguna penyusun, bukan viewer). Hasil baca dititipkan di
+  // sessionStorage, form "Informasi SOP Baru" diisi dari PDF (judul & pengesah),
+  // pengguna melengkapi unit kerja, lalu studio memuat isinya (…&impor=1).
+  const [showImporPdf, setShowImporPdf] = useState(false);
+  const [imporBerkasNama, setImporBerkasNama] = useState<string | null>(null);
+  const terimaImporPdf = (hasil: { data: Record<string, unknown> }, nama: string) => {
+    try { sessionStorage.setItem('sop-impor-pdf', JSON.stringify(hasil.data)); }
+    catch { alert('Hasil impor terlalu besar untuk diteruskan ke studio.'); return; }
+    const d = hasil.data as Record<string, string>;
+    setShowImporPdf(false);
+    setContinuingUsulanId(null);
+    setImporBerkasNama(nama);
+    setConfig(c => ({
+      ...c,
+      processTitle: d.judul || c.processTitle,
+      jabatanPengesah: d.jabatanPengesah || c.jabatanPengesah,
+      namaPengesah: d.namaPengesah || c.namaPengesah,
+      nipPengesah: d.nipPengesah || c.nipPengesah,
+      // Nomor dari formulir sebelumnya jangan ikut terbawa ke SOP baru hasil impor.
+      processKey: '',
+      // User terbatas: unit kerja dikunci ke unitnya; sub-unit dipilih ulang (dulu sub-unit
+      // dari formulir sebelumnya bisa tertinggal).
+      ...(currentUser?.role === 'user' && currentUser.unit_l1 ? { orgUnitL1: currentUser.unit_l1, orgUnitL2: '' } : {}),
+    }));
+    setShowConfigModal(true);
+  };
+
   const handleOpenNewSOP = () => {
+    setImporBerkasNama(null);
+    try { sessionStorage.removeItem('sop-impor-pdf'); } catch { /* abaikan */ }
     setContinuingUsulanId(null);
     if (currentUser?.role === 'user' && currentUser.unit_l1) {
       setConfig(c => ({ ...c, orgUnitL1: currentUser.unit_l1 || '', orgUnitL2: '' }));
@@ -311,6 +336,7 @@ export default function SOPDashboardPage() {
     if (config.nipPengesah) params.nip = config.nipPengesah;
     // Bila melanjutkan sebuah Usulan, lanjutkan pada dokumen yang sama (jadi draft saat disimpan).
     if (continuingUsulanId) params.id = String(continuingUsulanId);
+    if (imporBerkasNama && !continuingUsulanId) params.impor = '1';
 
     window.location.href = `/e-sop-atrbpn/sop/studio?${new URLSearchParams(params).toString()}`;
   };
@@ -348,6 +374,7 @@ export default function SOPDashboardPage() {
 
   // Lanjut Penyusunan dari sebuah usulan → buka modal info (prefill semua), lalu ke Studio.
   const handleLanjutPenyusunan = (model: SOPModel) => {
+    setImporBerkasNama(null);
     setContinuingUsulanId(model.id);
     setConfig(c => ({
       ...c,
@@ -415,7 +442,10 @@ export default function SOPDashboardPage() {
   // untuk tab Penyusunan DAN tab Usulan (dikelompokkan per unit kerja).
   // Rekap per unit berlaku di SEMUA tab admin — termasuk SOP Terbit, supaya SOP
   // yang sudah terbit pun bisa ditelusuri per Unit Kerja Level 1 → Level 2.
-  const isAdminRekap = currentUser?.role === 'admin' && ['penyusunan', 'usulan', 'terbit'].includes(listTab);
+  // User (terbatas) di tab Terbit memakai tampilan rekap yang sama dgn admin, tetapi
+  // langsung dimulai dari daftar Sub-Unit (Level 2) unit kerjanya sendiri.
+  const isUserTerbit = currentUser?.role === 'user' && listTab === 'terbit';
+  const isAdminRekap = (currentUser?.role === 'admin' && ['penyusunan', 'usulan', 'terbit'].includes(listTab)) || isUserTerbit;
   // Tab usulan & terbit cukup SATU kolom jumlah (semua dokumen berstatus sama).
   const rekapRingkas = listTab === 'usulan' || listTab === 'terbit';
   const rekapDataset = useMemo(() => (
@@ -423,6 +453,17 @@ export default function SOPDashboardPage() {
       : listTab === 'terbit' ? currentFilteredModels.filter(m => m.status === 'terbit')
       : currentFilteredModels.filter(m => m.status !== 'terbit')
   ), [currentFilteredModels, listTab]);
+  // Unit Level 1 milik user = yang terbanyak di datanya (nama di dokumen bisa sedikit
+  // berbeda dari profil), cadangan: unit di profil.
+  const l1User = useMemo(() => {
+    if (!isUserTerbit) return null;
+    const hit = new Map<string, number>();
+    for (const m of rekapDataset) { const k = getDisplayUnitL1(m); hit.set(k, (hit.get(k) || 0) + 1); }
+    return [...hit.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || currentUser?.unit_l1 || '(Tanpa Unit)';
+  }, [isUserTerbit, rekapDataset, currentUser?.unit_l1]);
+  useEffect(() => {
+    if (l1User && rekapDrill.l1 !== l1User) setRekapDrill({ l1: l1User, l2: null });
+  }, [l1User, rekapDrill.l1]);
   const progressCounts = (docs: SOPModel[]) => ({
     usulan: docs.filter(m => m.status === 'usulan').length,
     draft: docs.filter(m => !m.status || m.status === 'draft').length,
@@ -525,10 +566,30 @@ export default function SOPDashboardPage() {
       urut.forEach(m => perSub.set(subUnit(m), (perSub.get(subUnit(m)) || 0) + 1));
       const subNames = [...perSub.keys()].sort((a, b) => a.localeCompare(b, 'id'));
       const fillOf = new Map(subNames.map((nama, i) => [nama, REKAP_L2_PALETTE[i % REKAP_L2_PALETTE.length]]));
+      const STATUS_ORDER = ['USULAN', 'DRAFT', 'MENUNGGU', 'MENUNGGU VERIFIKASI ADMIN', 'VERIFIKASI TTD', 'MENUNGGU PENGESAHAN PIMPINAN', 'MENUNGGU DOKUMEN FISIK SOP', 'MENUNGGU PROSES PENETAPAN MENTERI', 'PERLU REVISI', 'TERBIT'];
+      const perStatus = new Map<string, { count: number; color: string }>();
+      urut.forEach(m => {
+        const lbl = label(m);
+        perStatus.set(lbl, { count: (perStatus.get(lbl)?.count || 0) + 1, color: statusExcelColor(m) });
+      });
+      const statusNames = [...perStatus.keys()].sort((a, b) => {
+        const ia = STATUS_ORDER.indexOf(a), ib = STATUS_ORDER.indexOf(b);
+        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+      });
+      // Rincian status PER SUB-UNIT (dipakai tabel Rekapitulasi per Sub-Unit).
+      const perSubStatus = new Map<string, Map<string, number>>();
+      urut.forEach(m => {
+        const su = subUnit(m), lbl = label(m);
+        const mp = perSubStatus.get(su) || new Map<string, number>();
+        mp.set(lbl, (mp.get(lbl) || 0) + 1);
+        perSubStatus.set(su, mp);
+      });
+      // Jumlah kolom lembar: minimal 4 (tabel daftar); rekap sub-unit = No | Sub-Unit | Jumlah | 1 kolom per status.
+      const nKol = Math.max(4, 3 + statusNames.length);
 
       const workbook = new ExcelJS.Workbook();
       const ws = workbook.addWorksheet('SOP', { views: [{ showGridLines: false }] });
-      ws.columns = [{ width: 5 }, { width: 70 }, { width: 45 }, { width: 36 }];
+      ws.columns = [{ width: 5 }, { width: 70 }, { width: 45 }, { width: 36 }, ...Array.from({ length: Math.max(0, nKol - 4) }, () => ({ width: 18 }))];
 
       const THIN = { style: 'thin' as const, color: { argb: 'FF94A3B8' } };
       const BORDER_ALL = { top: THIN, left: THIN, bottom: THIN, right: THIN };
@@ -543,11 +604,11 @@ export default function SOPDashboardPage() {
       };
 
       const titleRow = ws.addRow([`Daftar SOP ${judulUnit}`]);
-      ws.mergeCells(titleRow.number, 1, titleRow.number, 4);
+      ws.mergeCells(titleRow.number, 1, titleRow.number, nKol);
       titleRow.font = titleFont;
       titleRow.height = 22;
       const infoRow = ws.addRow([`${infoUnit ? `Unit Kerja: ${infoUnit}  •  ` : ''}Tahap: ${tahapLabel}  •  Jumlah: ${urut.length} dokumen  •  Diekspor: ${new Date().toLocaleString('id-ID')}`]);
-      ws.mergeCells(infoRow.number, 1, infoRow.number, 4);
+      ws.mergeCells(infoRow.number, 1, infoRow.number, nKol);
       infoRow.font = { italic: true, size: 10, color: { argb: 'FF64748B' } };
       ws.addRow([]);
 
@@ -556,18 +617,19 @@ export default function SOPDashboardPage() {
       const tampilRekapSub = scope === 'l1' || subNames.length > 1;
       if (tampilRekapSub) {
       const recapTitleRow = ws.addRow(['Rekapitulasi per Sub-Unit (Level 2)']);
-      ws.mergeCells(recapTitleRow.number, 1, recapTitleRow.number, 4);
+      ws.mergeCells(recapTitleRow.number, 1, recapTitleRow.number, nKol);
       recapTitleRow.font = { bold: true, size: 12, color: { argb: 'FF002855' } };
-      const recapHeadRow = ws.addRow(['No', 'Sub-Unit (Level 2)', 'Jumlah SOP', '']);
+      const recapHeadRow = ws.addRow(['No', 'Sub-Unit (Level 2)', 'Jumlah SOP', ...statusNames]);
       styleHeaderRow(recapHeadRow);
+      statusNames.forEach((nama, k) => { recapHeadRow.getCell(4 + k).font = { bold: true, color: { argb: perStatus.get(nama)!.color } }; });
       subNames.forEach((nama, i) => {
-        const row = ws.addRow([i + 1, nama, perSub.get(nama) || 0, '']);
-        row.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', wrapText: true }; });
-        row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+        const rinci = perSubStatus.get(nama);
+        const row = ws.addRow([i + 1, nama, perSub.get(nama) || 0, ...statusNames.map(st => rinci?.get(st) || 0)]);
+        row.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }; });
+        row.getCell(2).alignment = { vertical: 'middle', wrapText: true };
         row.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillOf.get(nama) || 'FFFFFFFF' } };
-        row.getCell(3).alignment = { vertical: 'middle', horizontal: 'center' };
       });
-      const totalRow = ws.addRow(['', 'TOTAL', urut.length, '']);
+      const totalRow = ws.addRow(['', 'TOTAL', urut.length, ...statusNames.map(st => perStatus.get(st)?.count || 0)]);
       totalRow.font = { bold: true };
       totalRow.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', horizontal: 'center' }; });
       ws.addRow([]);
@@ -576,18 +638,8 @@ export default function SOPDashboardPage() {
       // 1b) REKAPITULASI PER STATUS DOKUMEN — urutan tetap mengikuti alur proses,
       // BUKAN alfabet, supaya masuk akal dibaca. Warna teks sama dgn kolom Status
       // Dokumen di tabel daftar di bawah.
-      const STATUS_ORDER = ['USULAN', 'DRAFT', 'MENUNGGU', 'MENUNGGU VERIFIKASI ADMIN', 'VERIFIKASI TTD', 'MENUNGGU PENGESAHAN PIMPINAN', 'MENUNGGU DOKUMEN FISIK SOP', 'MENUNGGU PROSES PENETAPAN MENTERI', 'PERLU REVISI', 'TERBIT'];
-      const perStatus = new Map<string, { count: number; color: string }>();
-      urut.forEach(m => {
-        const lbl = label(m);
-        perStatus.set(lbl, { count: (perStatus.get(lbl)?.count || 0) + 1, color: statusExcelColor(m) });
-      });
-      const statusNames = [...perStatus.keys()].sort((a, b) => {
-        const ia = STATUS_ORDER.indexOf(a), ib = STATUS_ORDER.indexOf(b);
-        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
-      });
       const recap2TitleRow = ws.addRow(['Rekapitulasi per Status Dokumen']);
-      ws.mergeCells(recap2TitleRow.number, 1, recap2TitleRow.number, 4);
+      ws.mergeCells(recap2TitleRow.number, 1, recap2TitleRow.number, nKol);
       recap2TitleRow.font = { bold: true, size: 12, color: { argb: 'FF002855' } };
       const recap2HeadRow = ws.addRow(['No', 'Status Dokumen', 'Jumlah SOP', '']);
       styleHeaderRow(recap2HeadRow);
@@ -789,7 +841,9 @@ export default function SOPDashboardPage() {
   const skipDrillReset = useRef(true);
   useEffect(() => {
     if (skipDrillReset.current) { skipDrillReset.current = false; return; }
-    setRekapDrill({ l1: null, l2: null });
+    // User di tab Terbit langsung ke daftar Sub-Unit unitnya (bukan level Unit Kerja).
+    setRekapDrill({ l1: l1User, l2: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listTab, filterUnit]);
   useEffect(() => {
     try { sessionStorage.setItem(VIEW_KEY, JSON.stringify({ listTab, rekapDrill, filterUnit, sortBy })); } catch { /* diblokir — abaikan */ }
@@ -871,6 +925,9 @@ export default function SOPDashboardPage() {
       if (res.ok) {
         // Registry Dashboard TIDAK dibuat di sini — server mencatatnya saat SOP TERBIT (unggah cover).
         setSavedModels(prev => prev.map(m => m.id === model.id ? { ...m, status: 'approved', catatan: '' } : m));
+        // Modal pratinjau (klik judul) dibuka dari objek TERPISAH — tanpa ini statusnya
+        // tak ikut berubah di modal walau kartu di belakangnya sudah "approved".
+        if (previewModel?.id === model.id) setPreviewModel(prev => prev ? { ...prev, status: 'approved', catatan: '' } : null);
         alert('SOP disetujui! Menunggu pengesahan pimpinan & unggah cover.');
       } else {
         const e = await res.json().catch(() => ({}));
@@ -950,6 +1007,8 @@ export default function SOPDashboardPage() {
       });
       if (res.ok) {
         setSavedModels(prev => prev.map(m => m.id === model.id ? { ...m, status, catatan: '' } : m));
+        if (previewModel?.id === model.id) setPreviewModel(prev => prev ? { ...prev, status, catatan: '' } : null);
+        if (manualDetail?.id === model.id) setManualDetail(prev => prev ? { ...prev, status, catatan: '' } : null);
         if (moveTerbit) setListTab('terbit');
         alert(okMsg);
       } else {
@@ -1322,14 +1381,15 @@ export default function SOPDashboardPage() {
                 </div>
                 <div>
                   <h3 className={`text-lg font-extrabold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>Panduan Dokumen SOP</h3>
-                  <p className={`text-[11px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Simbol bagan alir, mutu baku, status &amp; alur penerbitan</p>
+                  <p className={`text-[11px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Fitur, simbol bagan alir, mutu baku, status &amp; alur penerbitan</p>
                 </div>
               </div>
               <button onClick={() => setShowPanduan(false)} className={`p-2.5 rounded-xl transition-colors ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-400'}`}>
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="overflow-y-auto flex-1 p-5">
+            <div className="overflow-y-auto flex-1 p-5 space-y-6">
+              <FiturSection kind="sop" isDarkMode={isDarkMode} />
               <SOPSymbolsSection isDarkMode={isDarkMode} />
             </div>
             <div className={`px-5 py-4 border-t shrink-0 flex justify-end ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
@@ -1341,6 +1401,11 @@ export default function SOPDashboardPage() {
         </div>
       )}
 
+      <ImporSopPdfModal open={showImporPdf} onClose={() => setShowImporPdf(false)} onTerapkan={terimaImporPdf}
+        labelTerapkan="Lanjut: Isi Informasi SOP"
+        catatan="Hasilnya menjadi SOP BARU (draf) — dokumen lain tidak berubah."
+        keteranganTerapkan="Selanjutnya lengkapi Informasi SOP Baru (unit kerja, jenis, klasifikasi). Isi cover & alur dari PDF dimuat di studio dan baru tersimpan setelah Anda menekan Simpan." />
+
       {showConfigModal && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4">
           <div className={`w-full max-w-lg rounded-2xl shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col max-h-[90vh] ${isDarkMode ? 'bg-[#151F32] border border-slate-700' : 'bg-white border border-slate-200'}`}>
@@ -1350,6 +1415,12 @@ export default function SOPDashboardPage() {
             </div>
             <div className="px-6 pb-4 overflow-y-auto">
             <p className={`text-sm mb-6 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Lengkapi data identitas SOP sebelum masuk ke halaman penyusunan tabel Mutu Baku.</p>
+            {imporBerkasNama && (
+              <div className="mb-5 -mt-3 rounded-xl border border-violet-200 bg-violet-50 px-3 py-2.5 text-xs text-violet-800 flex items-start gap-2">
+                <FileInput className="w-4 h-4 shrink-0 mt-px" />
+                <span>Isi SOP dari <b className="break-all">{imporBerkasNama}</b> akan dimuat ke studio. Judul &amp; pengesah sudah terisi dari PDF — lengkapi <b>Unit Kerja</b>, jenis &amp; klasifikasi.</span>
+              </div>
+            )}
             <div className="space-y-4">
               <div>
                 <label className={`block text-sm font-bold mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Judul SOP <span className="text-red-500">*</span></label>
@@ -1372,17 +1443,14 @@ export default function SOPDashboardPage() {
                     <option value="Pusat">Pusat</option>
                     <option value="Kantor Wilayah">Kantor Wilayah</option>
                     <option value="Kantor Pertanahan">Kantor Pertanahan</option>
+                    <option value="General">General</option>
                   </select>
                 </div>
                 <div>
                   <label className={`block text-sm font-bold mb-1 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Klasifikasi SOP <span className="text-red-500">*</span></label>
                   <select value={config.klasifikasiSOP} onChange={(e) => setConfig({ ...config, klasifikasiSOP: e.target.value })} className={`w-full px-4 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-slate-50 border-slate-300 text-slate-900'}`}>
                     <option value="" disabled>-- Pilih Klasifikasi --</option>
-                    <option value="SOP Administrasi Pemerintah">SOP Administrasi Pemerintah</option>
-                    <option value="SOP Layanan Pertanahan">SOP Layanan Pertanahan</option>
-                    <option value="SOP Layanan Tata Ruang">SOP Layanan Tata Ruang</option>
-                    <option value="SOP Layanan Pengaduan dan Informasi">SOP Layanan Pengaduan dan Informasi</option>
-                    <option value="SOP Layanan Data, Keamanan dan Infrastruktur">SOP Layanan Data, Keamanan dan Infrastruktur</option>
+                    {denganNilaiSaatIni(KLASIFIKASI_SOP, config.klasifikasiSOP).map(o => <option key={o} value={o}>{o}</option>)}
                   </select>
                 </div>
               </div>
@@ -1581,7 +1649,7 @@ export default function SOPDashboardPage() {
                       className={`w-full px-3 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}
                     >
                       <option value="">— Pilih —</option>
-                      {KLASIFIKASI_OPTIONS_SOP.map(o => <option key={o} value={o}>{o}</option>)}
+                      {denganNilaiSaatIni(KLASIFIKASI_OPTIONS_SOP, copyModal.form.klasifikasi_proses).map(o => <option key={o} value={o}>{o}</option>)}
                     </select>
                   </div>
                 </div>
@@ -1735,7 +1803,7 @@ export default function SOPDashboardPage() {
                       className={`w-full px-3 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}
                     >
                       <option value="">— Pilih —</option>
-                      {KLASIFIKASI_OPTIONS_SOP.map(o => <option key={o} value={o}>{o}</option>)}
+                      {denganNilaiSaatIni(KLASIFIKASI_OPTIONS_SOP, editMeta.klasifikasi_proses).map(o => <option key={o} value={o}>{o}</option>)}
                     </select>
                   </div>
                 </div>
@@ -1812,6 +1880,17 @@ export default function SOPDashboardPage() {
                 </button>
               </div>
               <div className="flex gap-2 w-full lg:w-auto lg:ml-auto">
+                {/* Setujui langsung dari modal pratinjau (klik judul) — dulu hanya tersedia
+                    lewat kartu daftar atau tombol "Hanya Lihat" → studio, bikin admin bolak-
+                    balik. Sinkron dgn tombol "Setujui" di toolbar studio mode lihat. */}
+                {currentUser.role === 'admin' && previewModel.status === 'pending' && (
+                  <button
+                    onClick={() => (previewModel.is_manual ? manualApproveSop(previewModel) : handleApprove(previewModel))}
+                    className="flex-1 lg:flex-none px-4 py-2.5 text-xs sm:text-sm font-bold bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-sm flex items-center justify-center gap-2 transition-all active:scale-95"
+                  >
+                    <CheckCircle className="w-4 h-4" /> Setujui
+                  </button>
+                )}
                 <button
                   onClick={() => setPreviewModel(null)}
                   className={`flex-1 lg:flex-none px-4 py-2.5 text-xs sm:text-sm font-bold rounded-xl border transition-colors ${isDarkMode ? 'border-slate-600 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
@@ -1846,6 +1925,11 @@ export default function SOPDashboardPage() {
             {currentUser.role === 'admin' && (
               <button onClick={() => setShowTrash(true)} title="Kotak Sampah — dokumen terhapus (30 hari)" className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/20' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
                 <Trash2 className="w-4 h-4" /> <span className="hidden sm:inline">Kotak Sampah</span>
+              </button>
+            )}
+            {currentUser.role !== 'viewer' && (
+              <button onClick={() => setShowImporPdf(true)} title="Buat SOP baru dari berkas PDF" className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-violet-700 text-violet-300 hover:bg-violet-900/30' : 'border-violet-300 text-violet-700 hover:bg-violet-50'}`}>
+                <FileInput className="w-4 h-4" /> Impor PDF
               </button>
             )}
             <button onClick={() => setShowManualDoc(true)} className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/30' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
@@ -2028,7 +2112,7 @@ export default function SOPDashboardPage() {
               </div>
               {/* User terbatas tak punya tampilan rekap per unit → tombol ekspor di toolbar:
                   seluruh dokumen unit kerjanya pada tab yang sedang dibuka. */}
-              {currentUser?.role === 'user' && renderExportBtn('saya', `Ekspor daftar SOP ${currentUser.unit_l1 || 'unit kerja Anda'} ke Excel`, 'w-full sm:w-auto py-2.5')}
+              {currentUser?.role === 'user' && !isAdminRekap && renderExportBtn('saya', `Ekspor daftar SOP ${currentUser.unit_l1 || 'unit kerja Anda'} ke Excel`, 'w-full sm:w-auto py-2.5')}
             </div>
           </div>
 
@@ -2042,8 +2126,8 @@ export default function SOPDashboardPage() {
               )}
               <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
                 <div className="flex items-center gap-1.5 text-sm font-semibold flex-wrap">
-                  <button onClick={() => setRekapDrill({ l1: null, l2: null })} className={rekapDrill.l1 !== null ? 'text-emerald-600 hover:underline' : (isDarkMode ? 'text-slate-200' : 'text-[#002855]')}>Semua Unit Kerja</button>
-                  {rekapDrill.l1 !== null && (<><ChevronRight className="w-4 h-4 text-slate-400" /><span className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{rekapDrill.l1}</span></>)}
+                  {!isUserTerbit && <button onClick={() => setRekapDrill({ l1: null, l2: null })} className={rekapDrill.l1 !== null ? 'text-emerald-600 hover:underline' : (isDarkMode ? 'text-slate-200' : 'text-[#002855]')}>Semua Unit Kerja</button>}
+                  {rekapDrill.l1 !== null && (<>{!isUserTerbit && <ChevronRight className="w-4 h-4 text-slate-400" />}<span className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{rekapDrill.l1}</span></>)}
                 </div>
                 {/* Ekspor Excel — hanya setelah sebuah Unit Kerja Level 1 dipilih. */}
                 {rekapDrill.l1 !== null && renderExportBtn('l1', `Ekspor daftar SOP ${rekapDrill.l1} (seluruh sub-unit) ke Excel`)}
@@ -2127,8 +2211,8 @@ export default function SOPDashboardPage() {
           {isAdminRekap && rekapDrill.l2 !== null && (
             <div className={`p-4 sm:p-5 border-b flex items-center justify-between gap-3 flex-wrap ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
               <div className="flex items-center gap-1.5 text-sm font-semibold flex-wrap">
-                <button onClick={() => setRekapDrill({ l1: null, l2: null })} className="text-emerald-600 hover:underline">Semua Unit</button>
-                <ChevronRight className="w-4 h-4 text-slate-400" />
+                {!isUserTerbit && (<><button onClick={() => setRekapDrill({ l1: null, l2: null })} className="text-emerald-600 hover:underline">Semua Unit</button>
+                <ChevronRight className="w-4 h-4 text-slate-400" /></>)}
                 <button onClick={() => setRekapDrill({ l1: rekapDrill.l1, l2: null })} className="text-emerald-600 hover:underline">{rekapDrill.l1}</button>
                 <ChevronRight className="w-4 h-4 text-slate-400" />
                 <span className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{rekapDrill.l2}</span>
@@ -2172,7 +2256,6 @@ export default function SOPDashboardPage() {
                 ) : (
                   pagedModels.map((model) => (
                     <tr
-                      key={model.id}
                       onClick={() => isRegistri(model) ? bukaDokumenRegistri(model) : model.is_manual ? setManualDetail(model) : openPreview(model)}
                       className={`transition-colors cursor-pointer ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-emerald-50/40'}`}
                     >
@@ -2356,7 +2439,6 @@ export default function SOPDashboardPage() {
             ) : (
               pagedModels.map((model) => (
                 <div
-                  key={model.id}
                   onClick={() => isRegistri(model) ? bukaDokumenRegistri(model) : model.is_manual ? setManualDetail(model) : openPreview(model)}
                   className={`px-4 py-4 cursor-pointer transition-colors ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-emerald-50/40'}`}
                 >
@@ -2664,7 +2746,7 @@ export default function SOPDashboardPage() {
                   <label className={`block text-xs font-bold mb-1.5 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Klasifikasi</label>
                   <select value={usulanForm.klasifikasi} onChange={e => setUsulanForm(f => ({ ...f, klasifikasi: e.target.value }))} className={`w-full px-3 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-emerald-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}>
                     <option value="">— Pilih —</option>
-                    {KLASIFIKASI_OPTIONS_SOP.map(o => <option key={o} value={o}>{o}</option>)}
+                    {denganNilaiSaatIni(KLASIFIKASI_OPTIONS_SOP, usulanForm.klasifikasi).map(o => <option key={o} value={o}>{o}</option>)}
                   </select>
                 </div>
               </div>

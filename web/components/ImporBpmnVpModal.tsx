@@ -1,6 +1,6 @@
 'use client';
 
-// Popup "Impor Proses Bisnis dari Visual Paradigm" (tahap uji, superadmin) — di halaman
+// Popup "Impor Proses Bisnis dari Visual Paradigm" (semua pengguna penyusun) — di halaman
 // daftar Buat Proses Bisnis. Berkas proyek .vpp dibaca di peramban (lib/bpmnImportVp),
 // tiap diagram BPMN di dalamnya dapat dipilih, lalu diteruskan ke studio sebagai
 // Proses Bisnis BARU (belum tersimpan sampai pengguna menekan Simpan).

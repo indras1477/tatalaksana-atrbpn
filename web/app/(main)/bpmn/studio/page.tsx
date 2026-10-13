@@ -1,4 +1,5 @@
 "use client";
+import { KLASIFIKASI_BPMN, denganNilaiSaatIni } from '@/lib/klasifikasi';
 
 import dynamic from 'next/dynamic';
 import React, { useState, useEffect, useRef, Suspense } from 'react';
@@ -58,14 +59,8 @@ interface BPMNModel {
   jenis_proses?: string | null; klasifikasi_proses?: string | null;
 }
 
-const JENIS_PROSES_OPTIONS = ['Pusat', 'Kantor Wilayah', 'Kantor Pertanahan'] as const;
-const KLASIFIKASI_OPTIONS = [
-  'Layanan Administrasi Pemerintah',
-  'Layanan Pertanahan',
-  'Layanan Tata Ruang',
-  'Layanan Pengaduan dan Informasi',
-  'Layanan Data, Keamanan, dan Infrastruktur',
-] as const;
+const JENIS_PROSES_OPTIONS = ['Pusat', 'Kantor Wilayah', 'Kantor Pertanahan', 'General'] as const;
+const KLASIFIKASI_OPTIONS = KLASIFIKASI_BPMN;
 
 function BPMNStudioContent() {
   const router = useRouter();
@@ -691,6 +686,17 @@ function BPMNStudioContent() {
         {/* Mode baca: unduh PDF/SVG + Bagikan (view-only, tanpa perlu login) */}
         {isViewOnly && currentModel?.id && (
           <div className="flex items-center gap-2 shrink-0">
+            {/* Pindah dari mode baca ke mode edit (dokumen belum terkunci). Muat ulang
+                tanpa ?mode=view agar cek editor-lain (popup konflik) berjalan normal. */}
+            {mode === 'view' && currentUser?.role !== 'viewer' && ['draft', 'rejected'].includes(currentModel.status || '') && (
+              <button
+                onClick={() => { const q = new URLSearchParams(window.location.search); q.delete('mode'); window.location.search = q.toString(); }}
+                title="Beralih ke mode edit untuk dokumen ini"
+                className="py-2.5 px-4 rounded-lg text-sm font-extrabold bg-blue-600 hover:bg-blue-700 text-white shadow-md flex items-center gap-2 transition-all"
+              >
+                <Pencil className="w-4 h-4" /> Edit Dokumen
+              </button>
+            )}
             {currentUser?.role === 'admin' && currentModel.status === 'pending' && (
               <button
                 onClick={approveFromView}
@@ -801,7 +807,7 @@ function BPMNStudioContent() {
                   <label className="block text-sm font-bold mb-1">Klasifikasi Proses</label>
                   <select value={config.klasifikasiProses} onChange={(e) => setConfig({ ...config, klasifikasiProses: e.target.value })} className="w-full px-3 py-3 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-blue-500" style={{ borderColor: isDarkMode ? '#374151' : '#d1d5db', backgroundColor: isDarkMode ? '#0F172A' : '#f8fafc', color: isDarkMode ? '#e2e8f0' : '#1e293b' }}>
                     <option value="">-- Pilih --</option>
-                    {KLASIFIKASI_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                    {denganNilaiSaatIni(KLASIFIKASI_OPTIONS, config.klasifikasiProses).map(o => <option key={o} value={o}>{o}</option>)}
                   </select>
                 </div>
               </div>

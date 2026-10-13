@@ -406,16 +406,19 @@ export default function UsersPage() {
                         <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase border ${ROLE_BADGE[user.role] || ROLE_BADGE.user}`}>
                           {ROLE_LABEL[user.role] || user.role}
                         </span>
-                        {user.role === 'user' && (
+                        {/* admin kini juga boleh maks 4 sesi bersamaan (akun bersama spt
+                            "adm_tatalaksana") — badge ini membantu superadmin melihat
+                            kapan sebuah akun sedang dipakai beberapa orang sekaligus. */}
+                        {(user.role === 'user' || user.role === 'admin') && (
                           <div className="mt-1.5">
                             <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                              (user.active_sessions || 0) >= 4
+                              (user.active_sessions || 0) >= (user.role === 'user' ? 8 : 4)
                                 ? 'bg-red-100 text-red-600'
                                 : (user.active_sessions || 0) > 0
                                   ? 'bg-emerald-100 text-emerald-700'
                                   : (isDarkMode ? 'bg-slate-800 text-slate-500' : 'bg-slate-100 text-slate-400')
                             }`}>
-                              {user.active_sessions || 0}/4 aktif
+                              {user.active_sessions || 0}/{user.role === 'user' ? 8 : 4} aktif
                             </span>
                           </div>
                         )}

@@ -9,8 +9,11 @@ import { MessageSquarePlus, X, Send, Loader2, AlertCircle, Minus, History, Chevr
 
 const API = '/e-sop-atrbpn/api';
 
-// Status yang masih masuk akal untuk dikembalikan ke unit kerja.
-const BISA_DIREVISI = ['pending', 'verifikasi', 'approved', 'draft'];
+// Status yang masih masuk akal untuk dikembalikan ke unit kerja — TERMASUK 'rejected'
+// sendiri: admin bisa membuka dokumen yang SUDAH perlu revisi (mis. lewat "Hanya Lihat")
+// dan memperbarui/membetulkan catatannya (bukan menyunting dokumennya), bukan cuma
+// menulis catatan baru saat pertama kali menolak.
+const BISA_DIREVISI = ['pending', 'verifikasi', 'approved', 'draft', 'rejected'];
 
 interface Props {
   kind: 'sop' | 'bpmn';
@@ -71,6 +74,11 @@ export default function CatatanRevisiPanel({ kind, modelId, token }: Props) {
   const bolehMemberiCatatan = (role === 'admin' || role === 'superadmin') && !!status && BISA_DIREVISI.includes(status);
   if (!bolehMemberiCatatan) return null;
 
+  // Dokumen SUDAH 'rejected' → ini mengEDIT catatan yang sedang berlaku (bukan menulis
+  // baru), jadi kotak teks dibuka dengan isi catatan saat ini, bukan kosong.
+  const sedangEdit = status === 'rejected';
+  const buka = () => { if (sedangEdit && !teks) setTeks(catatanBerlaku); setTerbuka(true); };
+
   const kirim = async () => {
     const isi = teks.trim();
     if (!isi) { setPesan('Catatan belum diisi.'); return; }
@@ -86,7 +94,7 @@ export default function CatatanRevisiPanel({ kind, modelId, token }: Props) {
         setPesan(e.error || 'Gagal mengirim catatan.');
         return;
       }
-      setPesan('✓ Catatan terkirim. Dokumen kembali ke unit kerja untuk diperbaiki.');
+      setPesan(sedangEdit ? '✓ Catatan diperbarui.' : '✓ Catatan terkirim. Dokumen kembali ke unit kerja untuk diperbaiki.');
       setTeks('');
       await muat();
       setTimeout(() => setTerbuka(false), 1800);
@@ -99,12 +107,12 @@ export default function CatatanRevisiPanel({ kind, modelId, token }: Props) {
   if (!terbuka) {
     return (
       <button
-        onClick={() => setTerbuka(true)}
-        title="Tulis catatan revisi sambil membaca dokumen"
+        onClick={buka}
+        title={sedangEdit ? 'Edit catatan revisi yang sedang berlaku' : 'Tulis catatan revisi sambil membaca dokumen'}
         className="no-print fixed bottom-5 right-5 z-60 flex items-center gap-2 rounded-full bg-amber-500 px-4 py-3 font-bold text-sm text-white shadow-lg shadow-amber-500/30 hover:bg-amber-600 active:scale-95 transition-all"
       >
         <MessageSquarePlus className="w-5 h-5" />
-        <span className="hidden sm:inline">Catatan Revisi</span>
+        <span className="hidden sm:inline">{sedangEdit ? 'Edit Catatan Revisi' : 'Catatan Revisi'}</span>
       </button>
     );
   }
@@ -114,7 +122,7 @@ export default function CatatanRevisiPanel({ kind, modelId, token }: Props) {
       <div className="flex items-center justify-between gap-2 rounded-t-2xl bg-amber-50 px-4 py-3 border-b border-amber-200">
         <div className="min-w-0">
           <p className="text-sm font-bold text-amber-900 flex items-center gap-1.5">
-            <MessageSquarePlus className="w-4 h-4 shrink-0" /> Catatan Revisi
+            <MessageSquarePlus className="w-4 h-4 shrink-0" /> {sedangEdit ? 'Edit Catatan Revisi' : 'Catatan Revisi'}
           </p>
           {judul && <p className="text-[11px] text-amber-700/80 truncate mt-0.5">{judul}</p>}
         </div>
@@ -125,7 +133,9 @@ export default function CatatanRevisiPanel({ kind, modelId, token }: Props) {
       </div>
 
       <div className="p-4 space-y-3">
-        {catatanBerlaku && (
+        {/* Dokumen SUDAH 'rejected': catatan yang berlaku sudah dituang ke kotak teks di
+            bawah (sedang diedit) — menampilkannya lagi di sini cuma duplikat. */}
+        {catatanBerlaku && !sedangEdit && (
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-2.5">
             <p className="text-[10px] font-black uppercase tracking-wider text-slate-400 mb-1">Catatan yang sedang berlaku</p>
             <p className="text-xs text-slate-600 whitespace-pre-wrap wrap-break-word max-h-24 overflow-y-auto">{catatanBerlaku}</p>
@@ -171,7 +181,9 @@ export default function CatatanRevisiPanel({ kind, modelId, token }: Props) {
             item flex tersendiri dan kalimatnya pecah berkolom. */}
         <p className="text-[11px] text-slate-500 flex items-start gap-1.5">
           <AlertCircle className="w-3.5 h-3.5 mt-0.5 shrink-0" />
-          <span>Mengirim catatan mengubah status dokumen menjadi <b>Perlu Revisi</b> dan memberi tahu unit kerja terkait.</span>
+          <span>{sedangEdit
+            ? <>Memperbarui catatan ini menggantikan catatan lama & memberi tahu ulang unit kerja terkait (dokumen tetap <b>Perlu Revisi</b>).</>
+            : <>Mengirim catatan mengubah status dokumen menjadi <b>Perlu Revisi</b> dan memberi tahu unit kerja terkait.</>}</span>
         </p>
 
         {pesan && (
@@ -186,7 +198,7 @@ export default function CatatanRevisiPanel({ kind, modelId, token }: Props) {
             className="px-4 py-2.5 rounded-xl bg-amber-500 text-white text-sm font-bold flex items-center gap-2 hover:bg-amber-600 disabled:opacity-50 disabled:cursor-not-allowed"
           >
             {mengirim ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
-            {mengirim ? 'Mengirim…' : 'Kirim Catatan'}
+            {mengirim ? 'Mengirim…' : sedangEdit ? 'Perbarui Catatan' : 'Kirim Catatan'}
           </button>
         </div>
       </div>

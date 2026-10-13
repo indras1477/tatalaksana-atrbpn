@@ -1,8 +1,8 @@
 "use client";
 
-import React, { useEffect, useState, useRef, Suspense } from 'react';
+import React, { useEffect, useState, useRef, useCallback, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import SOPBuilder, { type SOPBuilderRef } from '@/components/SOPBuilder';
+import SOPBuilder, { type SOPBuilderRef, type TautanDok } from '@/components/SOPBuilder';
 import { useEditingPresence } from '@/lib/useEditingPresence';
 import { getClientId } from '@/lib/clientId';
 import { useConfirm } from '@/components/ConfirmDialog';
@@ -21,7 +21,25 @@ function SOPStudioContent() {
   const klasifikasi = searchParams.get('klasifikasi') || '';
 
   const [currentId, setCurrentId] = useState<string | null>(idFromUrl);
-  const [initialData, setInitialData] = useState<string | null>(null);
+  // SOP BARU hasil "Impor PDF" dari halaman daftar: datanya dititipkan di
+  // sessionStorage (terlalu besar utk URL) lalu dipakai sekali sebagai isi awal.
+  const dariImpor = !idFromUrl && searchParams.get('impor') === '1';
+  const [initialData, setInitialData] = useState<string | null>(() => {
+    if (!dariImpor || typeof window === 'undefined') return null;
+    try {
+      const raw = sessionStorage.getItem('sop-impor-pdf');
+      if (!raw) return null;
+      // Judul & pengesah yang dikoreksi di form "Informasi SOP Baru" MENANG atas
+      // hasil baca PDF (dulu isian form diabaikan).
+      const d = JSON.parse(raw) as Record<string, unknown>;
+      const ubah: [string, string][] = [['judul', 'title'], ['jabatanPengesah', 'jabatan'], ['namaPengesah', 'nama'], ['nipPengesah', 'nip']];
+      for (const [k, q] of ubah) { const v = searchParams.get(q); if (v) d[k] = v; }
+      return JSON.stringify(d);
+    } catch { return null; }
+  });
+  // Dihapus SETELAH terpasang (bukan di inisialisasi state — React dev memanggil
+  // inisialisasi dua kali, panggilan kedua akan mendapati titipannya sudah hilang).
+  useEffect(() => { if (dariImpor) { try { sessionStorage.removeItem('sop-impor-pdf'); } catch { /* abaikan */ } } }, [dariImpor]);
   const [loading, setLoading] = useState(idFromUrl ? true : false);
   const [docStatus, setDocStatus] = useState<string | null>(null);
   // Berapa halaman cover yang discan unit kerja (umumnya 1 = halaman bertanda tangan);
@@ -47,7 +65,10 @@ function SOPStudioContent() {
   // Role utk tombol Setujui di mode lihat (superadmin diperlakukan sbg admin).
   const [isAdminUser, setIsAdminUser] = useState(false);
   useEffect(() => {
-    try { const me = JSON.parse(localStorage.getItem('user') || '{}'); setIsAdminUser(['admin', 'superadmin'].includes(me.role)); } catch { /* abaikan */ }
+    try {
+      const me = JSON.parse(localStorage.getItem('user') || '{}');
+      setIsAdminUser(['admin', 'superadmin'].includes(me.role));
+    } catch { /* abaikan */ }
   }, []);
   const { confirm, confirmNode } = useConfirm();
   const [approving, setApproving] = useState(false);
@@ -188,34 +209,49 @@ function SOPStudioContent() {
     return id as string;
   };
 
-  // AUTO-SAVE SOP tiap 25 detik. Hanya berjalan bila dokumen sudah pernah disimpan
+  // AUTO-SAVE SOP tiap 10 detik. Hanya berjalan bila dokumen sudah pernah disimpan
   // (currentId ada) dan bukan mode lihat / status terkunci. Menyimpan diam-diam tanpa
   // mengubah status (persist tanpa argumen status → server mempertahankan status lama).
+  // Dipakai juga saat menekan Kembali & saat tab disembunyikan/ditutup, supaya ketikan
+  // terakhir tidak hilang.
+  const flushAutosave = async () => {
+    if (isViewOnlySop || !currentId || !builderRef.current) return;
+    if (!loadedOkRef.current) return;      // dokumen belum termuat benar — jangan simpan apa pun
+    if (savingRef.current) return;         // masih ada request berjalan — jangan tumpang tindih
+    if (['terbit', 'verifikasi', 'fisik', 'penetapan'].includes(docStatus || '')) return;
+    let data: string;
+    try { data = builderRef.current.getSOPData(); } catch { return; }
+    if (lastSavedRef.current === null) { lastSavedRef.current = data; return; } // patok baseline
+    if (data === lastSavedRef.current) return; // tak ada perubahan
+    savingRef.current = true;
+    try {
+      await persist(data); // pertahankan status
+      setAutoSavedAt(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }));
+      setAutoSaveError(false);
+    } catch {
+      setAutoSaveError(true); // tunjukkan ke user — jangan bilang "aman" padahal gagal
+    } finally {
+      savingRef.current = false;
+    }
+  };
+  const flushAutosaveRef = useRef(flushAutosave);
+  flushAutosaveRef.current = flushAutosave;
+
   useEffect(() => {
-    if (isViewOnlySop) return;
-    const timer = setInterval(async () => {
-      if (!currentId || !builderRef.current) return;
-      if (!loadedOkRef.current) return;      // dokumen belum termuat benar — jangan simpan apa pun
-      if (savingRef.current) return;         // masih ada request berjalan — jangan tumpang tindih
-      if (['terbit', 'verifikasi', 'penetapan'].includes(docStatus || '')) return;
-      let data: string;
-      try { data = builderRef.current.getSOPData(); } catch { return; }
-      if (lastSavedRef.current === null) { lastSavedRef.current = data; return; } // patok baseline
-      if (data === lastSavedRef.current) return; // tak ada perubahan
-      savingRef.current = true;
-      try {
-        await persist(data); // pertahankan status
-        setAutoSavedAt(new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }));
-        setAutoSaveError(false);
-      } catch {
-        setAutoSaveError(true); // tunjukkan ke user — jangan bilang "aman" padahal gagal
-      } finally {
-        savingRef.current = false;
+    if (isViewOnlySop || loading || !currentId) return;
+    // Baseline dipatok SEGERA setelah kanvas termuat (bukan menunggu tick pertama): dulu
+    // perubahan yang dibuat dalam 25 detik pertama ikut terpatok sebagai "sudah tersimpan"
+    // sehingga tidak pernah dikirim ke server bila pengguna langsung pergi.
+    const base = setTimeout(() => {
+      if (lastSavedRef.current === null && loadedOkRef.current && builderRef.current) {
+        try { lastSavedRef.current = builderRef.current.getSOPData(); } catch { /* abaikan */ }
       }
-    }, 25000);
-    return () => clearInterval(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentId, docStatus, isViewOnlySop]);
+    }, 1500);
+    const timer = setInterval(() => { void flushAutosaveRef.current(); }, 10000);
+    const onHide = () => { if (document.visibilityState === 'hidden') void flushAutosaveRef.current(); };
+    document.addEventListener('visibilitychange', onHide);
+    return () => { clearTimeout(base); clearInterval(timer); document.removeEventListener('visibilitychange', onHide); };
+  }, [currentId, docStatus, isViewOnlySop, loading]);
 
   const handleSave = async (dataJson: string) => {
     try {
@@ -269,7 +305,20 @@ function SOPStudioContent() {
     URL.revokeObjectURL(url);
   };
 
-  const handleBack = () => {
+  // Pencarian dokumen untuk panel "Properti Dokumen" (Keterkaitan Dokumen). Dicari di
+  // SERVER (registri Dashboard + sop_models/bpmn_models SEMUA status — terlalu besar
+  // utk dimuat seluruhnya). `excludeId` membuang dokumen ini sendiri dari hasil SOP.
+  const cariDokumenTerkait = useCallback(async (kind: 'sop' | 'bpmn', q: string): Promise<TautanDok[]> => {
+    try {
+      const res = await apiFetch(`/sop/keterkaitan?kind=${kind}&q=${encodeURIComponent(q)}&excludeId=${currentId || 0}`);
+      if (!res.ok) return [];
+      return (await res.json()) as TautanDok[];
+    } catch { return []; }
+  }, [currentId]);
+
+  const handleBack = async () => {
+    // Simpan otomatis dulu (bila ada perubahan) agar tidak hilang saat kembali ke daftar.
+    try { await flushAutosave(); } catch { /* abaikan — pengguna sudah dikonfirmasi di builder */ }
     router.push('/sop');
   };
 
@@ -343,12 +392,27 @@ function SOPStudioContent() {
       onBackTrigger={handleBack}
       onDownloadPdf={handleDownloadPdf}
       shareModelId={currentId ? Number(currentId) : null}
-      toolbarExtra={isViewOnlySop && isAdminUser && docStatus === 'pending' && currentId ? (
-        <button onClick={approveFromView} disabled={approving} title="Setujui dokumen ini (Review Ortala MR)"
-          className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-extrabold uppercase shadow-sm flex items-center gap-1.5 transition-all active:scale-95 disabled:opacity-60">
-          {approving ? 'Memproses…' : 'Setujui'}
-        </button>
-      ) : null}
+      bolehKeterkaitan
+      cariDokumenTerkait={cariDokumenTerkait}
+      rapikanSaatMuat={dariImpor && !!initialData}
+      toolbarExtra={(
+        <>
+          {/* Beralih dari mode baca ke edit (hanya draf / perlu revisi). Muat ulang tanpa
+              ?mode=view agar cek editor-lain (popup konflik) berjalan normal. */}
+          {mode === 'view' && currentId && ['draft', 'rejected'].includes(docStatus || '') && (
+            <button onClick={() => { const q = new URLSearchParams(window.location.search); q.delete('mode'); window.location.search = q.toString(); }} title="Beralih ke mode edit untuk dokumen ini"
+              className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-extrabold shadow-sm flex items-center gap-1.5 transition-all active:scale-95">
+              Edit Dokumen
+            </button>
+          )}
+          {isViewOnlySop && isAdminUser && docStatus === 'pending' && currentId ? (
+            <button onClick={approveFromView} disabled={approving} title="Setujui dokumen ini (Review Ortala MR)"
+              className="px-4 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded-lg text-sm font-extrabold uppercase shadow-sm flex items-center gap-1.5 transition-all active:scale-95 disabled:opacity-60">
+              {approving ? 'Memproses…' : 'Setujui'}
+            </button>
+          ) : null}
+        </>
+      )}
     />
     </>
   );

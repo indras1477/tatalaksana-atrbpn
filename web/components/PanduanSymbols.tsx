@@ -1,7 +1,8 @@
 'use client';
 
 /* Komponen shared: legenda simbol SOP dan BPMN.
-   Dipakai oleh panduan/page.tsx, sop/page.tsx, dan bpmn/page.tsx */
+   Dipakai oleh panduan/page.tsx, sop/page.tsx, bpmn/page.tsx, dan sp/page.tsx.
+   FITUR_PANDUAN = satu sumber daftar fitur per modul — perbarui di sini saat menambah fitur. */
 
 import { Clock } from 'lucide-react';
 
@@ -39,9 +40,22 @@ export function SOPSymbolsSection({ isDarkMode }: { isDarkMode: boolean }) {
       desc: 'Menunjukkan arah dan urutan perpindahan dari satu kegiatan ke kegiatan berikutnya.',
       fill: '#F1F5F9', stroke: '#475569', text: '#334155',
     },
+    {
+      key: 'connector',
+      name: 'Penghubung Antarhalaman',
+      sublabel: 'Off-page Connector',
+      desc: 'Menyambung alur yang berlanjut ke halaman berikutnya. Diberi huruf yang sama (a, b, …) di halaman asal dan halaman tujuan.',
+      fill: '#F8FAFC', stroke: '#475569', text: '#334155',
+    },
   ];
 
   const renderShape = (key: string, fill: string, stroke: string, text: string) => {
+    if (key === 'connector') return (
+      <svg viewBox="0 0 80 38" fill="none" className="w-20 h-10">
+        <polygon points="26,3 54,3 54,22 40,35 26,22" fill={fill} stroke={stroke} strokeWidth="2.5"/>
+        <text x="40" y="18" textAnchor="middle" fontSize="10" fill={text} fontWeight="700">a</text>
+      </svg>
+    );
     if (key === 'terminator') return (
       <svg viewBox="0 0 80 38" fill="none" className="w-20 h-10">
         <ellipse cx="40" cy="19" rx="36" ry="15" fill={fill} stroke={stroke} strokeWidth="2.5"/>
@@ -80,12 +94,14 @@ export function SOPSymbolsSection({ isDarkMode }: { isDarkMode: boolean }) {
   ];
 
   const badgeItems = [
+    { label: 'Usulan', desc: 'Judul SOP yang diusulkan admin untuk sebuah unit kerja. Penyusun menekan Lanjut Penyusunan untuk mulai menyusunnya.', color: '#475569', bg: '#F8FAFC', border: '#E2E8F0' },
     { label: 'Draft', desc: 'SOP masih dalam tahap penyusunan, belum diajukan ke Biro Ortala MR.', color: '#475569', bg: '#F1F5F9', border: '#CBD5E1' },
     { label: 'Menunggu', desc: 'SOP telah diajukan dan menunggu persetujuan Biro Ortala MR.', color: '#1D4ED8', bg: '#DBEAFE', border: '#93C5FD' },
     { label: 'Perlu Revisi', desc: 'SOP dikembalikan untuk direvisi sesuai catatan Biro Ortala MR, lalu diajukan ulang.', color: '#991B1B', bg: '#FEE2E2', border: '#FCA5A5' },
     { label: 'Menunggu Pengesahan Pimpinan', desc: 'SOP disetujui Biro Ortala MR. Cetak cover, mintakan tanda tangan pimpinan, lalu scan & unggah cover pada sistem.', color: '#B45309', bg: '#FEF3C7', border: '#FCD34D' },
     { label: 'Menunggu Verifikasi Admin', desc: 'Cover bertanda tangan sudah diunggah. Admin memeriksa keabsahan tanda tangan & kelengkapan nomor SOP.', color: '#4338CA', bg: '#E0E7FF', border: '#A5B4FC' },
-    { label: 'Menunggu Proses Penetapan Menteri', desc: 'Cover sudah disetujui admin. SOP menunggu Peraturan/penetapan menteri diproses sebelum resmi terbit.', color: '#6D28D9', bg: '#EDE9FE', border: '#C4B5FD' },
+    { label: 'Menunggu Dokumen Fisik SOP', desc: 'Cover sudah disetujui admin. Unit kerja menyerahkan dokumen fisik SOP; admin menekan Terima Dokumen Fisik.', color: '#C2410C', bg: '#FFF7ED', border: '#FDBA74' },
+    { label: 'Menunggu Proses Penetapan Menteri', desc: 'Dokumen fisik sudah diterima. SOP menunggu Peraturan/penetapan menteri diproses sebelum resmi terbit.', color: '#6D28D9', bg: '#EDE9FE', border: '#C4B5FD' },
     { label: 'Terbit', desc: 'SOP sudah disahkan & ditetapkan. Resmi terbit, pindah ke Daftar SOP, masuk rekap Dashboard, dan kontennya terkunci.', color: '#166534', bg: '#DCFCE7', border: '#86EFAC' },
   ];
 
@@ -95,8 +111,9 @@ export function SOPSymbolsSection({ isDarkMode }: { isDarkMode: boolean }) {
     { n: 3, t: 'Persetujuan Biro Ortala MR', d: 'Bila disetujui → Menunggu Pengesahan Pimpinan. Bila ada kekurangan → Perlu Revisi (perbaiki sesuai catatan, ajukan ulang).' },
     { n: 4, t: 'Pengesahan & Unggah Cover', d: 'Cetak cover, mintakan tanda tangan pimpinan, scan, lalu Unggah Cover TTD (PDF/JPG/PNG, maks 2 MB) — dapat dilakukan penyusun/unit atau admin. Status → Menunggu Verifikasi Admin.' },
     { n: 5, t: 'Verifikasi Admin', d: 'Admin memeriksa tanda tangan & nomor SOP pada cover, lalu Setujui Cover. Bila kurang → Kembalikan + catatan → penyusun unggah ulang cover.' },
-    { n: 6, t: 'Menunggu Penetapan Menteri', d: 'SOP menunggu Peraturan/penetapan menteri diproses. Belum masuk Daftar SOP.' },
-    { n: 7, t: 'Ditetapkan & Terbit', d: 'Setelah Peraturan ditetapkan, admin menekan tombol Ditetapkan → SOP TERBIT: pindah ke Daftar SOP, cover tergabung dalam PDF, masuk rekap Dashboard, konten terkunci (revisi = buat Salinan baru).' },
+    { n: 6, t: 'Serahkan Dokumen Fisik', d: 'Unit kerja menyerahkan dokumen fisik SOP ke Biro Ortala MR. Setelah diterima, admin menekan Terima Dokumen Fisik.' },
+    { n: 7, t: 'Menunggu Penetapan Menteri', d: 'SOP menunggu Peraturan/penetapan menteri diproses. Belum masuk Daftar SOP Terbit.' },
+    { n: 8, t: 'Ditetapkan & Terbit', d: 'Setelah Peraturan ditetapkan, admin menekan tombol Ditetapkan (mengisi dasar & tanggal penetapan) → SOP TERBIT: pindah ke Daftar SOP Terbit, cover tergabung dalam PDF, masuk rekap Dashboard, konten terkunci (revisi = buat Salinan baru). Admin dapat membatalkan mundur satu tahap bila keliru.' },
   ];
 
   const dm = isDarkMode;
@@ -195,7 +212,7 @@ export function SOPSymbolsSection({ isDarkMode }: { isDarkMode: boolean }) {
         <div className={`mt-3 rounded-xl p-3 border flex items-start gap-2 ${dm ? 'bg-amber-900/15 border-amber-800/40' : 'bg-amber-50 border-amber-100'}`}>
           <Clock className={`w-4 h-4 shrink-0 mt-0.5 ${dm ? 'text-amber-400' : 'text-amber-500'}`} />
           <p className={`text-[11px] leading-relaxed ${dm ? 'text-amber-200/90' : 'text-amber-800/80'}`}>
-            <span className="font-bold">Daftar Pengajuan vs Daftar SOP:</span> selama belum Terbit, SOP berada di tab <b>Daftar Pengajuan</b>. Setelah Terbit, otomatis pindah ke tab <b>Daftar SOP</b>. Unggah cover dapat dilakukan oleh <b>penyusun</b> atau <b>admin</b>.
+            <span className="font-bold">Proses Penyusunan vs Daftar SOP Terbit:</span> selama belum Terbit, SOP berada di tab <b>Proses Penyusunan</b>. Setelah Terbit, otomatis pindah ke tab <b>Daftar SOP Terbit</b>. Unggah cover dapat dilakukan oleh <b>penyusun</b> atau <b>admin</b>.
           </p>
         </div>
       </div>
@@ -306,16 +323,21 @@ export function BPMNSymbolsSection({ isDarkMode }: { isDarkMode: boolean }) {
   };
 
   const bpmnBadgeItems = [
+    { label: 'USULAN', desc: 'Judul Proses Bisnis yang diusulkan admin untuk sebuah unit kerja. Penyusun menekan Lanjut Penyusunan untuk mulai menyusunnya.', color: '#475569', bg: '#F8FAFC', border: '#E2E8F0' },
     { label: 'DRAFT', desc: 'Diagram sedang dalam tahap penyusunan, belum diajukan ke Biro Ortala MR.', color: '#475569', bg: '#F1F5F9', border: '#CBD5E1' },
     { label: 'MENUNGGU', desc: 'Diagram telah diajukan dan sedang menunggu persetujuan Biro Ortala MR.', color: '#1D4ED8', bg: '#DBEAFE', border: '#93C5FD' },
     { label: 'PERLU REVISI', desc: 'Diagram dikembalikan untuk direvisi sesuai catatan Biro Ortala MR, lalu diajukan ulang.', color: '#991B1B', bg: '#FEE2E2', border: '#FCA5A5' },
-    { label: 'DISETUJUI', desc: 'Diagram disetujui Biro Ortala MR: resmi berlaku, pindah ke tab Daftar Proses Bisnis, dan masuk rekap Dashboard.', color: '#166534', bg: '#DCFCE7', border: '#86EFAC' },
+    { label: 'MENUNGGU DOKUMEN FISIK PROSES BISNIS', desc: 'Diagram disetujui Biro Ortala MR. Unit kerja menyerahkan dokumen fisik; admin menekan Terima Dokumen Fisik.', color: '#C2410C', bg: '#FFF7ED', border: '#FDBA74' },
+    { label: 'MENUNGGU PROSES PENETAPAN MENTERI', desc: 'Dokumen fisik sudah diterima. Proses Bisnis menunggu penetapan menteri.', color: '#6D28D9', bg: '#EDE9FE', border: '#C4B5FD' },
+    { label: 'DITETAPKAN', desc: 'Proses Bisnis telah ditetapkan: pindah ke tab Daftar Probis Level 3 Terbit, masuk rekap Dashboard, dan kontennya terkunci.', color: '#166534', bg: '#DCFCE7', border: '#86EFAC' },
   ];
 
   const alurBPMN = [
-    { n: 1, t: 'Susun & Simpan Draft', d: 'Buat diagram BPMN di studio (pool, lane, task, gateway, dsb.), lalu Simpan (status Draft).' },
+    { n: 1, t: 'Susun & Simpan Draft', d: 'Buat diagram BPMN di studio (atau impor dari Visual Paradigm), lalu Simpan (status Draft).' },
     { n: 2, t: 'Kirim ke Biro Ortala MR', d: 'Ajukan diagram. Status menjadi Menunggu persetujuan.' },
-    { n: 3, t: 'Persetujuan Biro Ortala MR', d: 'Bila disetujui → Disetujui: langsung pindah ke Daftar Proses Bisnis & masuk Dashboard. Bila ada kekurangan → Perlu Revisi (perbaiki sesuai catatan, ajukan ulang).' },
+    { n: 3, t: 'Persetujuan Biro Ortala MR', d: 'Bila disetujui → Menunggu Dokumen Fisik. Bila ada kekurangan → Perlu Revisi (perbaiki sesuai catatan, ajukan ulang).' },
+    { n: 4, t: 'Serahkan Dokumen Fisik', d: 'Unit kerja menyerahkan dokumen fisik Proses Bisnis. Setelah diterima, admin menekan Terima Dokumen Fisik → Menunggu Proses Penetapan Menteri.' },
+    { n: 5, t: 'Ditetapkan', d: 'Admin menekan Ditetapkan → Proses Bisnis pindah ke Daftar Probis Level 3 Terbit, masuk rekap Dashboard, dan terkunci (revisi = buat Salinan baru). Admin dapat membatalkan mundur satu tahap bila keliru.' },
   ];
 
   const dm = isDarkMode;
@@ -383,9 +405,79 @@ export function BPMNSymbolsSection({ isDarkMode }: { isDarkMode: boolean }) {
         <div className={`mt-3 rounded-xl p-3 border flex items-start gap-2 ${dm ? 'bg-blue-900/15 border-blue-800/40' : 'bg-blue-50 border-blue-100'}`}>
           <Clock className={`w-4 h-4 shrink-0 mt-0.5 ${dm ? 'text-blue-400' : 'text-blue-500'}`} />
           <p className={`text-[11px] leading-relaxed ${dm ? 'text-blue-200/90' : 'text-blue-800/80'}`}>
-            <span className="font-bold">Daftar Pengajuan vs Daftar Proses Bisnis:</span> sebelum disetujui, diagram ada di tab <b>Daftar Pengajuan</b>. Setelah <b>Disetujui</b>, otomatis pindah ke tab <b>Daftar Proses Bisnis</b>. Berbeda dengan SOP, Proses Bisnis tidak memerlukan unggah cover.
+            <span className="font-bold">Proses Penyusunan vs Daftar Terbit:</span> sebelum ditetapkan, diagram ada di tab <b>Proses Penyusunan</b>. Setelah <b>Ditetapkan</b>, otomatis pindah ke tab <b>Daftar Probis Level 3 Terbit</b>. Berbeda dengan SOP, Proses Bisnis tidak memerlukan unggah cover bertanda tangan.
           </p>
         </div>
+      </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/* Fitur per modul (Panduan Dokumen & halaman Panduan Penggunaan)       */
+/* ------------------------------------------------------------------ */
+
+export type JenisPanduan = 'bpmn' | 'sop' | 'sp';
+
+const FITUR_UMUM = {
+  tab: (final: string) => ({ j: 'Tiga tab daftar', d: `Daftar Usulan (judul yang diusulkan admin per unit kerja — penyusun menekan Lanjut Penyusunan), Proses Penyusunan (Draft sampai menunggu penetapan), dan ${final}. Pengguna unit hanya melihat dokumen unit kerjanya sendiri.` }),
+  revisi: { j: 'Pengajuan & catatan revisi', d: 'Kirim dokumen ke Biro Ortala MR. Bila dikembalikan (Perlu Revisi), catatan review tampil di panel mengambang di studio dan penyusun dapat membalas lewat tombol Tanggapi. Admin dapat memperbarui catatannya lewat Edit Revisi. Catatan lama dikosongkan otomatis saat dokumen dikirim ulang.' },
+  riwayat: { j: 'Riwayat, Bagikan, Salin & Notifikasi', d: 'Riwayat mencatat setiap perubahan status beserta catatan review. Bagikan membuat tautan baca-saja yang dapat dibuka tanpa login. Salin membuat draft baru dari dokumen yang sudah terkunci untuk direvisi. Lonceng notifikasi di header memberi tahu setiap aksi admin/penyusun yang terkait unit Anda.' },
+  manual: (kind: string) => ({ j: 'Dokumen Manual & Kotak Sampah', d: `Dokumen Manual mencatat ${kind} yang sudah jadi berupa unggahan PDF atau tautan Google Drive tanpa disusun ulang (superadmin juga dapat mengimpor massal dari Excel). Dokumen yang dihapus masuk Kotak Sampah selama 30 hari dan masih dapat dipulihkan.` }),
+  rekap: { j: 'Rekap & Ekspor Excel (admin)', d: 'Klik kartu status untuk melihat daftar dokumen per status. Klik Unit Kerja Level 1 pada rekapitulasi, lalu Ekspor Excel untuk mengunduh rekap per Sub-Unit beserta jumlah dokumen di setiap status dan daftar dokumennya.' },
+};
+
+export const FITUR_PANDUAN: Record<JenisPanduan, { j: string; d: string }[]> = {
+  bpmn: [
+    FITUR_UMUM.tab('Daftar Probis Level 3 Terbit'),
+    { j: 'Membuat Proses Bisnis baru', d: 'Klik Buat Proses Bisnis Baru, isi judul, jenis, dan klasifikasi proses (termasuk Non Layanan (Teknis); pengaduan masuk Administrasi Pemerintah). Unit Kerja Level 1 terkunci sesuai profil pengguna unit, dan Sub-Unit (Level 2) wajib dipilih.' },
+    { j: 'Impor Visual Paradigm (.vpp)', d: 'Tersedia untuk seluruh penyusun (superadmin, admin, dan pengguna unit). Seret atau pilih berkas proyek .vpp, pilih diagram yang akan diambil, lengkapi informasi dokumen, lalu Lanjut ke Studio. Berkas PDF/SVG/gambar tidak dapat diimpor karena hanya berisi gambar. Periksa kembali hasil impor sebelum menyimpan.' },
+    { j: 'Di dalam Studio BPMN', d: 'Tarik elemen dari palet (Start/End Event, Task, Gateway, Pool/Lane, Sub-Process — termasuk pool di dalam sub-proses). Tersedia teks tebal/miring, urungkan/ulangi, simpan otomatis, peringatan bila dokumen sedang disunting di perangkat lain, mode baca, dukungan layar sentuh tablet, serta unduh PDF (F4) dan SVG — sub-proses ikut diekspor sebagai halaman terpisah.' },
+    FITUR_UMUM.revisi,
+    FITUR_UMUM.riwayat,
+    FITUR_UMUM.manual('Proses Bisnis'),
+    FITUR_UMUM.rekap,
+  ],
+  sop: [
+    FITUR_UMUM.tab('Daftar SOP Terbit'),
+    { j: 'Membuat SOP baru', d: 'Klik Buat SOP Baru, isi judul, nomor (opsional), jenis (kewenangan), klasifikasi SOP, dan pejabat pengesah. Unit Kerja Level 1 terkunci sesuai profil pengguna unit, dan Sub-Unit (Level 2) wajib dipilih.' },
+    { j: 'Impor PDF', d: 'Tersedia untuk seluruh penyusun (superadmin, admin, dan pengguna unit) melalui tombol Impor PDF di Manajemen Pengajuan. Gunakan PDF hasil ekspor Visio/Word yang teksnya dapat dipilih (bukan hasil pindai). Sistem membaca cover (Dasar Hukum, Kualifikasi, Pengesah, dst.), nama pelaksana, langkah kegiatan, mutu baku, simbol, panah Ya/Tidak, dan penghubung antarhalaman. Berkas .vsd/.vsdx belum didukung — simpan sebagai PDF terlebih dahulu. Selalu periksa panah percabangan sebelum menyimpan; satu kali Ctrl+Z membatalkan hasil impor.' },
+    { j: 'Di dalam Studio SOP', d: 'Cover dengan tabel lanjutan otomatis (tombol gunting memotong halaman secara manual, tombol rantai menggabungkannya kembali), bagan alir dengan Alur 1 berisi 6 baris (5 kegiatan + konektor) dan halaman berikutnya 7 baris (konektor masuk + 5 kegiatan + konektor keluar) — SOP lama tetap 7 baris per halaman, percabangan lebih dari satu (kiri/kanan), teks di dalam bentuk, teks tebal/miring, sisip baris/kolom, urungkan/ulangi, dan simpan otomatis. Panel Properti Dokumen memuat Keterkaitan Dokumen untuk menautkan SOP lain dan Proses Bisnis Terkait (semua status). Unduh PDF menghasilkan berkas vektor ukuran F4. Bila isi sebuah halaman alur melewati batas kertas F4, muncul peringatan beserta saran baris untuk BATAS HAL (baris di luar kertas bergaris merah putus-putus) — peringatan ini boleh diabaikan.' },
+    FITUR_UMUM.revisi,
+    { j: 'Cover bertanda tangan & penetapan', d: 'Setelah disetujui, cetak cover, mintakan tanda tangan pimpinan, lalu Unggah Cover TTD (PDF/JPG/PNG, maks. 2 MB). Admin memverifikasi cover, menerima dokumen fisik, dan menekan Ditetapkan. Cover hasil pindai menggantikan cover buatan sistem di PDF.' },
+    FITUR_UMUM.riwayat,
+    FITUR_UMUM.manual('SOP'),
+    FITUR_UMUM.rekap,
+  ],
+  sp: [
+    FITUR_UMUM.tab('Daftar SP Terbit'),
+    { j: 'Komponen Standar Pelayanan', d: 'Mengikuti Permenpan RB 15/2014: 6 komponen Service Delivery yang WAJIB dipublikasikan kepada masyarakat (Persyaratan; Sistem, mekanisme, dan prosedur; Jangka waktu penyelesaian; Biaya/tarif; Produk pelayanan; Penanganan pengaduan, saran, dan masukan) dan 8 komponen Manufacturing untuk kepentingan internal (mulai Dasar Hukum sampai Evaluasi kinerja pelaksana). Komponen tambahan seperti "Peringatan" dapat disisipkan bila diperlukan.' },
+    { j: 'Tiga cara memasukkan dokumen', d: 'Buat SP Baru — menyusun naskah langsung di Studio SP (kertas F4 210×330 mm, Bookman Old Style 12). Impor Word — mengambil naskah dari berkas .docx yang sudah ada, lalu diperiksa di Studio. Dokumen Manual — mencatat dokumen jadi berupa unggahan PDF atau tautan Google Drive, tanpa disusun ulang.' },
+    { j: 'Alur penetapan', d: 'Draft → Review Biro Ortala MR → Pengesahan pimpinan → Penetapan Menteri → Telah Ditetapkan (Terbit). Naskah terkunci begitu masuk verifikasi, penetapan, atau terbit — gunakan Salin untuk merevisi.' },
+    { j: 'Di dalam Studio SP', d: 'Halaman terpotong otomatis setiap kertas penuh dengan kepala tabel (NO · KOMPONEN · URAIAN) berulang, sama seperti hasil cetak. Tersedia penomoran bertingkat (1. → a. → 1) lewat Tab), gabung sel, urungkan/ulangi, panel Properti Dokumen untuk identitas dan Keterkaitan Dokumen ke SOP/Proses Bisnis, serta ekspor PDF dan Word. Naskah tersimpan otomatis tiap 25 detik, dan sistem memperingatkan bila keluar sebelum menyimpan.' },
+    { j: 'Pengajuan & catatan revisi', d: 'Kirim dokumen ke Biro Ortala MR. Bila dikembalikan (Perlu Revisi), catatan review tampil pada dokumen dan penyusun dapat membalas lewat tombol Tanggapi. Admin dapat memperbarui catatannya lewat Edit Revisi.' },
+    FITUR_UMUM.riwayat,
+    { j: 'Kotak Sampah & Ekspor Excel', d: 'Dokumen yang dihapus disimpan 30 hari di Kotak Sampah sebelum dibuang permanen, sehingga penghapusan tak sengaja masih dapat dipulihkan. Admin dapat mengekspor daftar SP per Unit Kerja ke Excel.' },
+  ],
+};
+
+export function FiturSection({ kind, isDarkMode }: { kind: JenisPanduan; isDarkMode: boolean }) {
+  const dm = isDarkMode;
+  return (
+    <div>
+      <p className={`text-[10px] font-extrabold uppercase tracking-widest mb-3 ${dm ? 'text-slate-500' : 'text-slate-400'}`}>
+        Fitur &amp; Cara Penggunaan
+      </p>
+      <div className="space-y-2">
+        {FITUR_PANDUAN[kind].map((x, i) => (
+          <div key={x.j} className={`flex items-start gap-3 p-3 rounded-xl border ${dm ? 'bg-[#0F172A] border-slate-800' : 'bg-slate-50 border-slate-100'}`}>
+            <div className={`shrink-0 w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-extrabold ${dm ? 'bg-slate-700 text-slate-300' : 'bg-white border border-slate-200 text-slate-600'}`}>{i + 1}</div>
+            <div className="min-w-0">
+              <p className={`text-xs font-extrabold leading-tight ${dm ? 'text-white' : 'text-slate-800'}`}>{x.j}</p>
+              <p className={`text-[11px] leading-relaxed mt-0.5 ${dm ? 'text-slate-400' : 'text-slate-600'}`}>{x.d}</p>
+            </div>
+          </div>
+        ))}
       </div>
     </div>
   );

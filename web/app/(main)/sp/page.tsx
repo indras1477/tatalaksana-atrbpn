@@ -14,6 +14,7 @@ import {
   BookOpen, ClipboardList, FileSpreadsheet,
 } from 'lucide-react';
 import DocHistoryModal from '@/components/DocHistoryModal';
+import { FiturSection } from '@/components/PanduanSymbols';
 import ShareButton from '@/components/ShareButton';
 import PratinjauPdf from '@/components/PratinjauPdf';
 import TrashModal from '@/components/TrashModal';
@@ -1508,7 +1509,7 @@ export default function SPPage() {
                 </div>
                 <div className="min-w-0">
                   <h3 className={`text-base sm:text-lg font-extrabold truncate ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>Panduan Standar Pelayanan</h3>
-                  <p className={`text-[11px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Komponen wajib, cara memasukkan dokumen, dan alur penetapan</p>
+                  <p className={`text-[11px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Fitur, komponen wajib, cara memasukkan dokumen, dan alur penetapan</p>
                 </div>
               </div>
               <button onClick={() => setShowPanduan(false)} className={`p-2.5 rounded-xl shrink-0 transition-colors ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-400'}`}>
@@ -1516,19 +1517,8 @@ export default function SPPage() {
               </button>
             </div>
 
-            <div className="overflow-y-auto flex-1 p-5 space-y-5">
-              {[
-                { j: 'Komponen Standar Pelayanan', d: 'Mengikuti Permenpan RB 15/2014: 6 komponen Service Delivery yang WAJIB dipublikasikan kepada masyarakat (Persyaratan; Sistem, mekanisme, dan prosedur; Jangka waktu penyelesaian; Biaya/tarif; Produk pelayanan; Penanganan pengaduan, saran, dan masukan) dan 8 komponen Manufacturing untuk kepentingan internal (mulai Dasar Hukum sampai Evaluasi kinerja pelaksana). Komponen tambahan seperti "Peringatan" dapat disisipkan bila diperlukan.' },
-                { j: 'Tiga cara memasukkan dokumen', d: 'Buat SP Baru — menyusun naskah langsung di Studio SP (kertas F4 210×330 mm, Bookman Old Style 12). Impor Word — mengambil naskah dari berkas .docx yang sudah ada, lalu diperiksa di Studio. Dokumen Manual — mencatat dokumen jadi berupa unggahan PDF atau tautan Google Drive, tanpa disusun ulang.' },
-                { j: 'Alur penetapan', d: 'Draft → Review Biro Ortala MR → Pengesahan pimpinan → Penetapan Menteri → Telah Ditetapkan (Terbit). Bila dikembalikan, dokumen berstatus Perlu Revisi dan penyusun dapat menanggapi catatan review lewat tombol Tanggapi. Naskah terkunci begitu masuk verifikasi, penetapan, atau terbit — gunakan Salin untuk merevisi.' },
-                { j: 'Di dalam Studio SP', d: 'Halaman terpotong otomatis setiap kertas penuh dengan kepala tabel (NO · KOMPONEN · URAIAN) berulang, sama seperti hasil cetak. Tersedia penomoran bertingkat (1. → a. → 1) lewat Tab), gabung sel, urungkan/ulangi, panel Properti Dokumen untuk identitas dan Keterkaitan Dokumen ke SOP/Proses Bisnis, serta ekspor PDF dan Word. Naskah tersimpan otomatis tiap 25 detik, dan sistem memperingatkan bila keluar sebelum menyimpan.' },
-                { j: 'Kotak Sampah', d: 'Dokumen yang dihapus disimpan 30 hari sebelum dibuang permanen, sehingga penghapusan tak sengaja masih dapat dipulihkan. Pengguna unit hanya melihat dokumen unit kerjanya sendiri.' },
-              ].map(x => (
-                <div key={x.j}>
-                  <h4 className={`text-sm font-extrabold mb-1 ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{x.j}</h4>
-                  <p className={`text-[13px] leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-600'}`}>{x.d}</p>
-                </div>
-              ))}
+            <div className="overflow-y-auto flex-1 p-5">
+              <FiturSection kind="sp" isDarkMode={isDarkMode} />
             </div>
 
             <div className={`px-5 py-4 border-t shrink-0 flex flex-col-reverse sm:flex-row sm:items-center sm:justify-between gap-2 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>

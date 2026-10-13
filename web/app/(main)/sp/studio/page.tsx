@@ -43,6 +43,10 @@ function StudioSPContent() {
   const [tersimpanPada, setTersimpanPada] = useState<string | null>(null);
   const [gagalOtomatis, setGagalOtomatis] = useState(false);
   const [ditolak, setDitolak] = useState(false);
+  // Peringatan keluar tanpa menyimpan (pola yang sama dengan studio BPMN/SOP,
+  // tetapi diberi pilihan SIMPAN — bukan cuma "keluar/batal").
+  const [modalKeluar, setModalKeluar] = useState(false);
+  const [keluarBusy, setKeluarBusy] = useState(false);
 
   const builderRef = useRef<SPBuilderRef>(null);
   const terakhirRef = useRef<string | null>(null);
@@ -172,6 +176,36 @@ function StudioSPContent() {
     return () => clearInterval(timer);
   }, [idDok, hanyaLihat, ditolak, persist]);
 
+  // Ada perubahan yang belum tersimpan? Dibandingkan dengan patokan simpan
+  // otomatis (`terakhirRef`) yang diperbarui setiap kali naskah tersimpan.
+  const adaPerubahan = useCallback(() => {
+    if (hanyaLihat || ditolak || !builderRef.current) return false;
+    try { return builderRef.current.getSPData() !== terakhirRef.current; } catch { return false; }
+  }, [hanyaLihat, ditolak]);
+
+  // Tutup/refresh tab: peringatan bawaan peramban (tak bisa dikustom).
+  useEffect(() => {
+    if (hanyaLihat || ditolak) return;
+    const jaga = (e: BeforeUnloadEvent) => { if (adaPerubahan()) { e.preventDefault(); e.returnValue = ''; } };
+    window.addEventListener('beforeunload', jaga);
+    return () => window.removeEventListener('beforeunload', jaga);
+  }, [hanyaLihat, ditolak, adaPerubahan]);
+
+  const kembali = () => { if (adaPerubahan()) setModalKeluar(true); else router.push('/sp'); };
+
+  // "Simpan & Keluar" — status dipertahankan sama seperti tombol Simpan biasa.
+  const simpanLaluKeluar = async () => {
+    if (!builderRef.current) { router.push('/sp'); return; }
+    setKeluarBusy(true);
+    try {
+      await persist(builderRef.current.getSPData(), ['pending', 'approved'].includes(status || '') ? undefined : 'draft');
+      setModalKeluar(false);
+      router.push('/sp');
+    } catch (e) {
+      alert(`❌ ${e instanceof Error ? e.message : 'Gagal menyimpan.'} Naskah masih terbuka — coba simpan lagi.`);
+    } finally { setKeluarBusy(false); }
+  };
+
   const simpan = async (data: string) => {
     setMenyimpan(true);
     try {
@@ -296,6 +330,34 @@ function StudioSPContent() {
           Tersimpan otomatis {tersimpanPada}
         </div>
       )}
+      {/* Peringatan keluar — ringkas & responsif: ketiga tombol satu baris di
+          layar lebar (Batal · Keluar Tanpa Simpan · Simpan & Keluar, utama di
+          kanan), menumpuk hanya di layar sempit. Latar bisa digulir agar tetap
+          utuh di layar berukuran pendek (mis. 1366×579). */}
+      {modalKeluar && (
+        <div className="fixed inset-0 z-100 flex items-center justify-center overflow-y-auto bg-black/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-sm sm:max-w-md my-auto rounded-2xl bg-white shadow-2xl border border-slate-200 p-4 sm:p-5">
+            <h3 className="text-base sm:text-lg font-black text-[#002855] mb-1">Perubahan Belum Disimpan</h3>
+            <p className="text-[13px] sm:text-sm text-slate-500 leading-snug mb-4">
+              Naskah ini punya perubahan yang belum tersimpan ke server. Simpan dulu sebelum keluar?
+            </p>
+            <div className="flex flex-col sm:flex-row-reverse gap-2">
+              <button onClick={simpanLaluKeluar} disabled={keluarBusy}
+                className="sm:flex-1 min-h-11 px-4 py-2.5 rounded-xl bg-teal-600 hover:bg-teal-700 text-white text-[13px] font-bold whitespace-nowrap flex items-center justify-center disabled:opacity-60 transition-colors">
+                {keluarBusy ? 'Menyimpan…' : 'Simpan & Keluar'}
+              </button>
+              <button onClick={() => { setModalKeluar(false); router.push('/sp'); }} disabled={keluarBusy}
+                className="sm:flex-1 min-h-11 px-4 py-2.5 rounded-xl bg-red-600 hover:bg-red-700 text-white text-[13px] font-bold whitespace-nowrap flex items-center justify-center disabled:opacity-60 transition-colors">
+                Keluar Tanpa Simpan
+              </button>
+              <button onClick={() => setModalKeluar(false)} disabled={keluarBusy}
+                className="sm:flex-none min-h-11 px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-slate-50 text-[13px] font-bold whitespace-nowrap flex items-center justify-center disabled:opacity-60 transition-colors">
+                Batal
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
       <SPBuilder
         ref={builderRef}
         initialData={dataAwal}
@@ -307,12 +369,19 @@ function StudioSPContent() {
         saving={menyimpan}
         onSave={simpan}
         onSubmit={kirim}
-        onBack={() => router.push('/sp')}
+        onBack={kembali}
         onDownloadPdf={(d) => unduhBerkas(d, 'pdf')}
         onDownloadDocx={(d) => unduhBerkas(d, 'docx')}
         onImportDocx={imporWord}
         onRenderPdf={renderPdf}
         statusDokumen={status}
+        toolbarExtra={mode === 'view' && idDok && ['draft', 'rejected'].includes(status || '') ? (
+          <button onClick={() => { const q = new URLSearchParams(window.location.search); q.delete('mode'); window.location.search = q.toString(); }}
+            title="Beralih ke mode edit untuk dokumen ini"
+            className="px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-extrabold shadow-sm transition-all active:scale-95">
+            Edit Dokumen
+          </button>
+        ) : null}
         bolehKeterkaitan
         cariDokumenTerkait={cariDokumenTerkait}
       />

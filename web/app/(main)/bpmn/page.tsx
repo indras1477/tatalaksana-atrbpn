@@ -1,4 +1,5 @@
 "use client";
+import { KLASIFIKASI_BPMN, denganNilaiSaatIni } from '@/lib/klasifikasi';
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useRouter } from 'next/navigation';
@@ -9,7 +10,7 @@ import {
   ExternalLink, Building2, Copy, Landmark, Lock, FileUp, FileText, MessageSquare, Eye, ZoomIn, ZoomOut, Maximize2, FileSpreadsheet, Inbox, FileInput
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
-import { BPMNSymbolsSection } from '@/components/PanduanSymbols';
+import { BPMNSymbolsSection, FiturSection } from '@/components/PanduanSymbols';
 import ManualDocModal from '@/components/ManualDocModal';
 import ManualDocDetailModal from '@/components/ManualDocDetailModal';
 import ImporBpmnVpModal from '@/components/ImporBpmnVpModal';
@@ -42,7 +43,7 @@ async function apiFetch(path: string, token: string, options?: RequestInit) {
   return res;
 }
 
-const JENIS_OPTIONS = ['Pusat', 'Kantor Wilayah', 'Kantor Pertanahan'];
+const JENIS_OPTIONS = ['Pusat', 'Kantor Wilayah', 'Kantor Pertanahan', 'General'];
 
 // Simpan posisi tampilan tabel (tab + drill unit + filter) agar saat kembali dari
 // Studio (mode lihat) pengguna tetap berada di daftar dokumennya, tidak balik ke
@@ -52,13 +53,7 @@ function readSavedView(): { listTab?: string; rekapDrill?: { l1: string | null; 
   if (typeof window === 'undefined') return null;
   try { return JSON.parse(sessionStorage.getItem(VIEW_KEY) || 'null'); } catch { return null; }
 }
-const KLASIFIKASI_OPTIONS = [
-  'Layanan Administrasi Pemerintah',
-  'Layanan Pertanahan',
-  'Layanan Tata Ruang',
-  'Layanan Pengaduan dan Informasi',
-  'Layanan Data, Keamanan, dan Infrastruktur',
-];
+const KLASIFIKASI_OPTIONS = KLASIFIKASI_BPMN;
 
 interface BPMNModel {
   id: number; process_title: string; process_key: string; l1_id: number | null; l2_id: number | null;
@@ -339,7 +334,10 @@ export default function BPMNDashboardPage() {
   // sehingga dikelompokkan per unit kerja).
   // Rekap per unit berlaku di SEMUA tab admin: usulan, penyusunan, dan Daftar
   // Probis Terbit (agar dokumen yang sudah ditetapkan pun ditelusuri per unit).
-  const isAdminRekap = currentUser?.role === 'admin' && ['penyusunan', 'usulan', 'terbit'].includes(listTab);
+  // User (terbatas) di tab Terbit memakai tampilan rekap yang sama dgn admin, tetapi
+  // langsung dimulai dari daftar Sub-Unit (Level 2) unit kerjanya sendiri.
+  const isUserTerbit = currentUser?.role === 'user' && listTab === 'terbit';
+  const isAdminRekap = (currentUser?.role === 'admin' && ['penyusunan', 'usulan', 'terbit'].includes(listTab)) || isUserTerbit;
   // Tab usulan & terbit hanya perlu SATU kolom jumlah (semua dokumen berstatus sama).
   const rekapRingkas = listTab === 'usulan' || listTab === 'terbit';
   const rekapDataset = useMemo(() => (
@@ -347,6 +345,17 @@ export default function BPMNDashboardPage() {
       : listTab === 'terbit' ? currentFilteredModels.filter(m => m.status === 'approved')
       : currentFilteredModels.filter(m => m.status !== 'approved')
   ), [currentFilteredModels, listTab]);
+  // Unit Level 1 milik user = yang terbanyak di datanya (nama di dokumen bisa sedikit
+  // berbeda dari profil), cadangan: unit di profil.
+  const l1User = useMemo(() => {
+    if (!isUserTerbit) return null;
+    const hit = new Map<string, number>();
+    for (const m of rekapDataset) { const k = (m.unit_l1 || '(Tanpa Unit)'); hit.set(k, (hit.get(k) || 0) + 1); }
+    return [...hit.entries()].sort((a, b) => b[1] - a[1])[0]?.[0] || currentUser?.unit_l1 || '(Tanpa Unit)';
+  }, [isUserTerbit, rekapDataset, currentUser?.unit_l1]);
+  useEffect(() => {
+    if (l1User && rekapDrill.l1 !== l1User) setRekapDrill({ l1: l1User, l2: null });
+  }, [l1User, rekapDrill.l1]);
   const progressCounts = (docs: BPMNModel[]) => ({
     usulan: docs.filter(m => m.status === 'usulan').length,
     draft: docs.filter(m => !m.status || m.status === 'draft').length,
@@ -448,10 +457,30 @@ export default function BPMNDashboardPage() {
       urut.forEach(m => perSub.set(subUnit(m), (perSub.get(subUnit(m)) || 0) + 1));
       const subNames = [...perSub.keys()].sort((a, b) => a.localeCompare(b, 'id'));
       const fillOf = new Map(subNames.map((nama, i) => [nama, REKAP_L2_PALETTE[i % REKAP_L2_PALETTE.length]]));
+      const STATUS_ORDER = ['USULAN', 'DRAFT', 'MENUNGGU', 'VERIFIKASI TTD', 'MENUNGGU DOKUMEN FISIK PROSES BISNIS', 'MENUNGGU PENGESAHAN PIMPINAN', 'MENUNGGU PROSES PENETAPAN MENTERI', 'PERLU REVISI', 'DITETAPKAN'];
+      const perStatus = new Map<string, { count: number; color: string }>();
+      urut.forEach(m => {
+        const lbl = label(m);
+        perStatus.set(lbl, { count: (perStatus.get(lbl)?.count || 0) + 1, color: statusExcelColor(m) });
+      });
+      const statusNames = [...perStatus.keys()].sort((a, b) => {
+        const ia = STATUS_ORDER.indexOf(a), ib = STATUS_ORDER.indexOf(b);
+        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
+      });
+      // Rincian status PER SUB-UNIT (dipakai tabel Rekapitulasi per Sub-Unit).
+      const perSubStatus = new Map<string, Map<string, number>>();
+      urut.forEach(m => {
+        const su = subUnit(m), lbl = label(m);
+        const mp = perSubStatus.get(su) || new Map<string, number>();
+        mp.set(lbl, (mp.get(lbl) || 0) + 1);
+        perSubStatus.set(su, mp);
+      });
+      // Jumlah kolom lembar: minimal 4 (tabel daftar); rekap sub-unit = No | Sub-Unit | Jumlah | 1 kolom per status.
+      const nKol = Math.max(4, 3 + statusNames.length);
 
       const workbook = new ExcelJS.Workbook();
       const ws = workbook.addWorksheet('Proses Bisnis', { views: [{ showGridLines: false }] });
-      ws.columns = [{ width: 5 }, { width: 70 }, { width: 45 }, { width: 36 }];
+      ws.columns = [{ width: 5 }, { width: 70 }, { width: 45 }, { width: 36 }, ...Array.from({ length: Math.max(0, nKol - 4) }, () => ({ width: 18 }))];
 
       const THIN = { style: 'thin' as const, color: { argb: 'FF94A3B8' } };
       const BORDER_ALL = { top: THIN, left: THIN, bottom: THIN, right: THIN };
@@ -466,11 +495,11 @@ export default function BPMNDashboardPage() {
       };
 
       const titleRow = ws.addRow([`Daftar Proses Bisnis ${judulUnit}`]);
-      ws.mergeCells(titleRow.number, 1, titleRow.number, 4);
+      ws.mergeCells(titleRow.number, 1, titleRow.number, nKol);
       titleRow.font = titleFont;
       titleRow.height = 22;
       const infoRow = ws.addRow([`${infoUnit ? `Unit Kerja: ${infoUnit}  •  ` : ''}Tahap: ${tahapLabel}  •  Jumlah: ${urut.length} dokumen  •  Diekspor: ${new Date().toLocaleString('id-ID')}`]);
-      ws.mergeCells(infoRow.number, 1, infoRow.number, 4);
+      ws.mergeCells(infoRow.number, 1, infoRow.number, nKol);
       infoRow.font = { italic: true, size: 10, color: { argb: 'FF64748B' } };
       ws.addRow([]);
 
@@ -479,18 +508,19 @@ export default function BPMNDashboardPage() {
       const tampilRekapSub = scope === 'l1' || subNames.length > 1;
       if (tampilRekapSub) {
       const recapTitleRow = ws.addRow(['Rekapitulasi per Sub-Unit (Level 2)']);
-      ws.mergeCells(recapTitleRow.number, 1, recapTitleRow.number, 4);
+      ws.mergeCells(recapTitleRow.number, 1, recapTitleRow.number, nKol);
       recapTitleRow.font = { bold: true, size: 12, color: { argb: 'FF002855' } };
-      const recapHeadRow = ws.addRow(['No', 'Sub-Unit (Level 2)', 'Jumlah Proses Bisnis', '']);
+      const recapHeadRow = ws.addRow(['No', 'Sub-Unit (Level 2)', 'Jumlah Proses Bisnis', ...statusNames]);
       styleHeaderRow(recapHeadRow);
+      statusNames.forEach((nama, k) => { recapHeadRow.getCell(4 + k).font = { bold: true, color: { argb: perStatus.get(nama)!.color } }; });
       subNames.forEach((nama, i) => {
-        const row = ws.addRow([i + 1, nama, perSub.get(nama) || 0, '']);
-        row.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', wrapText: true }; });
-        row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center' };
+        const rinci = perSubStatus.get(nama);
+        const row = ws.addRow([i + 1, nama, perSub.get(nama) || 0, ...statusNames.map(st => rinci?.get(st) || 0)]);
+        row.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', horizontal: 'center', wrapText: true }; });
+        row.getCell(2).alignment = { vertical: 'middle', wrapText: true };
         row.getCell(2).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillOf.get(nama) || 'FFFFFFFF' } };
-        row.getCell(3).alignment = { vertical: 'middle', horizontal: 'center' };
       });
-      const totalRow = ws.addRow(['', 'TOTAL', urut.length, '']);
+      const totalRow = ws.addRow(['', 'TOTAL', urut.length, ...statusNames.map(st => perStatus.get(st)?.count || 0)]);
       totalRow.font = { bold: true };
       totalRow.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', horizontal: 'center' }; });
       ws.addRow([]);
@@ -500,18 +530,8 @@ export default function BPMNDashboardPage() {
       // (usulan → draft → menunggu → verifikasi → pengesahan → perlu revisi → ditetapkan),
       // BUKAN alfabet, supaya urutannya masuk akal dibaca. Warna teks Status Dokumen
       // sama persis dengan warna di kolom Status Dokumen pada tabel daftar di bawah.
-      const STATUS_ORDER = ['USULAN', 'DRAFT', 'MENUNGGU', 'VERIFIKASI TTD', 'MENUNGGU DOKUMEN FISIK PROSES BISNIS', 'MENUNGGU PENGESAHAN PIMPINAN', 'MENUNGGU PROSES PENETAPAN MENTERI', 'PERLU REVISI', 'DITETAPKAN'];
-      const perStatus = new Map<string, { count: number; color: string }>();
-      urut.forEach(m => {
-        const lbl = label(m);
-        perStatus.set(lbl, { count: (perStatus.get(lbl)?.count || 0) + 1, color: statusExcelColor(m) });
-      });
-      const statusNames = [...perStatus.keys()].sort((a, b) => {
-        const ia = STATUS_ORDER.indexOf(a), ib = STATUS_ORDER.indexOf(b);
-        return (ia === -1 ? 999 : ia) - (ib === -1 ? 999 : ib);
-      });
       const recap2TitleRow = ws.addRow(['Rekapitulasi per Status Dokumen']);
-      ws.mergeCells(recap2TitleRow.number, 1, recap2TitleRow.number, 4);
+      ws.mergeCells(recap2TitleRow.number, 1, recap2TitleRow.number, nKol);
       recap2TitleRow.font = { bold: true, size: 12, color: { argb: 'FF002855' } };
       const recap2HeadRow = ws.addRow(['No', 'Status Dokumen', 'Jumlah Proses Bisnis', '']);
       styleHeaderRow(recap2HeadRow);
@@ -645,7 +665,9 @@ export default function BPMNDashboardPage() {
   const skipDrillReset = useRef(true);
   useEffect(() => {
     if (skipDrillReset.current) { skipDrillReset.current = false; return; }
-    setRekapDrill({ l1: null, l2: null });
+    // User di tab Terbit langsung ke daftar Sub-Unit unitnya (bukan level Unit Kerja).
+    setRekapDrill({ l1: l1User, l2: null });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [listTab, filterUnit]);
   // Simpan posisi tampilan tiap kali berubah → dipulihkan saat halaman dipasang ulang.
   useEffect(() => {
@@ -1061,7 +1083,7 @@ export default function BPMNDashboardPage() {
         </div>
       )}
 
-      {/* IMPOR VISUAL PARADIGM (superadmin) */}
+      {/* IMPOR VISUAL PARADIGM — semua pengguna yang dapat menyusun (bukan viewer) */}
       <ImporBpmnVpModal open={showImporVp} onClose={() => setShowImporVp(false)}
         onTerapkan={(d, nama) => {
           try { sessionStorage.setItem('bpmn-impor-vp', JSON.stringify({ xml: d.xml, judul: d.nama, berkas: nama })); }
@@ -1114,14 +1136,15 @@ export default function BPMNDashboardPage() {
                 </div>
                 <div>
                   <h3 className={`text-lg font-extrabold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>Panduan Proses Bisnis (BPMN)</h3>
-                  <p className={`text-[11px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Elemen &amp; simbol BPMN 2.0, status &amp; alur persetujuan</p>
+                  <p className={`text-[11px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Fitur, elemen BPMN 2.0, status &amp; alur penetapan</p>
                 </div>
               </div>
               <button onClick={() => setShowPanduan(false)} className={`p-2.5 rounded-xl transition-colors ${isDarkMode ? 'hover:bg-slate-700 text-slate-400' : 'hover:bg-slate-100 text-slate-400'}`}>
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <div className="overflow-y-auto flex-1 p-5">
+            <div className="overflow-y-auto flex-1 p-5 space-y-6">
+              <FiturSection kind="bpmn" isDarkMode={isDarkMode} />
               <BPMNSymbolsSection isDarkMode={isDarkMode} />
             </div>
             <div className={`px-5 py-4 border-t shrink-0 flex justify-end ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
@@ -1274,7 +1297,7 @@ export default function BPMNDashboardPage() {
                       className={`w-full px-3 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-amber-500 cursor-pointer ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}
                     >
                       <option value="">— Pilih —</option>
-                      {KLASIFIKASI_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                      {denganNilaiSaatIni(KLASIFIKASI_OPTIONS, copyModal.form.klasifikasi_proses).map(o => <option key={o} value={o}>{o}</option>)}
                     </select>
                   </div>
                 </div>
@@ -1429,7 +1452,7 @@ export default function BPMNDashboardPage() {
                       className={`w-full px-3 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}
                     >
                       <option value="">— Pilih —</option>
-                      {KLASIFIKASI_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                      {denganNilaiSaatIni(KLASIFIKASI_OPTIONS, editMeta.klasifikasi_proses).map(o => <option key={o} value={o}>{o}</option>)}
                     </select>
                   </div>
                 </div>
@@ -1529,8 +1552,8 @@ export default function BPMNDashboardPage() {
             <button onClick={() => setShowManualDoc(true)} className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/30' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
               <FileUp className="w-4 h-4" /> Dokumen Manual
             </button>
-            {isSuperadmin && (
-              <button onClick={() => setShowImporVp(true)} title="Buat Proses Bisnis baru dari proyek Visual Paradigm .vpp (tahap uji — superadmin)" className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-violet-700 text-violet-300 hover:bg-violet-900/30' : 'border-violet-300 text-violet-700 hover:bg-violet-50'}`}>
+            {currentUser.role !== 'viewer' && (
+              <button onClick={() => setShowImporVp(true)} title="Buat Proses Bisnis baru dari proyek Visual Paradigm (.vpp)" className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-violet-700 text-violet-300 hover:bg-violet-900/30' : 'border-violet-300 text-violet-700 hover:bg-violet-50'}`}>
                 <FileInput className="w-4 h-4" /> Impor Visual Paradigm
               </button>
             )}
@@ -1709,7 +1732,7 @@ export default function BPMNDashboardPage() {
               </div>
               {/* User terbatas tak punya tampilan rekap per unit → tombol ekspor di toolbar:
                   seluruh dokumen unit kerjanya pada tab yang sedang dibuka. */}
-              {currentUser?.role === 'user' && renderExportBtn('saya', `Ekspor daftar Proses Bisnis ${currentUser.unit_l1 || 'unit kerja Anda'} ke Excel`, 'w-full sm:w-auto py-2.5')}
+              {currentUser?.role === 'user' && !isAdminRekap && renderExportBtn('saya', `Ekspor daftar Proses Bisnis ${currentUser.unit_l1 || 'unit kerja Anda'} ke Excel`, 'w-full sm:w-auto py-2.5')}
             </div>
           </div>
 
@@ -1723,8 +1746,8 @@ export default function BPMNDashboardPage() {
               )}
               <div className="flex items-center justify-between gap-3 mb-1 flex-wrap">
                 <div className="flex items-center gap-1.5 text-sm font-semibold flex-wrap">
-                  <button onClick={() => setRekapDrill({ l1: null, l2: null })} className={rekapDrill.l1 !== null ? 'text-blue-600 hover:underline' : (isDarkMode ? 'text-slate-200' : 'text-[#002855]')}>Semua Unit Kerja</button>
-                  {rekapDrill.l1 !== null && (<><ChevronRight className="w-4 h-4 text-slate-400" /><span className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{rekapDrill.l1}</span></>)}
+                  {!isUserTerbit && <button onClick={() => setRekapDrill({ l1: null, l2: null })} className={rekapDrill.l1 !== null ? 'text-blue-600 hover:underline' : (isDarkMode ? 'text-slate-200' : 'text-[#002855]')}>Semua Unit Kerja</button>}
+                  {rekapDrill.l1 !== null && (<>{!isUserTerbit && <ChevronRight className="w-4 h-4 text-slate-400" />}<span className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{rekapDrill.l1}</span></>)}
                 </div>
                 {/* Ekspor Excel — hanya setelah sebuah Unit Kerja Level 1 dipilih. */}
                 {rekapDrill.l1 !== null && renderExportBtn('l1', `Ekspor daftar Proses Bisnis ${rekapDrill.l1} (seluruh sub-unit) ke Excel`)}
@@ -1805,8 +1828,8 @@ export default function BPMNDashboardPage() {
           {isAdminRekap && rekapDrill.l2 !== null && (
             <div className={`p-4 sm:p-5 border-b flex items-center justify-between gap-3 flex-wrap ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
               <div className="flex items-center gap-1.5 text-sm font-semibold flex-wrap">
-                <button onClick={() => setRekapDrill({ l1: null, l2: null })} className="text-blue-600 hover:underline">Semua Unit</button>
-                <ChevronRight className="w-4 h-4 text-slate-400" />
+                {!isUserTerbit && (<><button onClick={() => setRekapDrill({ l1: null, l2: null })} className="text-blue-600 hover:underline">Semua Unit</button>
+                <ChevronRight className="w-4 h-4 text-slate-400" /></>)}
                 <button onClick={() => setRekapDrill({ l1: rekapDrill.l1, l2: null })} className="text-blue-600 hover:underline">{rekapDrill.l1}</button>
                 <ChevronRight className="w-4 h-4 text-slate-400" />
                 <span className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{rekapDrill.l2}</span>
@@ -1850,7 +1873,6 @@ export default function BPMNDashboardPage() {
                 ) : (
                   pagedModels.map((model) => (
                     <tr
-                      key={model.id}
                       onClick={() => isRegistri(model) ? bukaDokumenRegistri(model) : model.is_manual ? setManualDetail(model) : openPreview(model)}
                       className={`transition-colors cursor-pointer ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-blue-50/40'}`}
                     >
@@ -1995,7 +2017,6 @@ export default function BPMNDashboardPage() {
             ) : (
               pagedModels.map((model) => (
                 <div
-                  key={model.id}
                   onClick={() => isRegistri(model) ? bukaDokumenRegistri(model) : model.is_manual ? setManualDetail(model) : openPreview(model)}
                   className={`px-4 py-4 cursor-pointer transition-colors ${isDarkMode ? 'hover:bg-slate-800/60 divide-slate-800' : 'hover:bg-blue-50/40'}`}
                 >
@@ -2220,7 +2241,7 @@ export default function BPMNDashboardPage() {
                   <label className={`block text-xs font-bold mb-1.5 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Klasifikasi</label>
                   <select value={usulanForm.klasifikasi} onChange={e => setUsulanForm(f => ({ ...f, klasifikasi: e.target.value }))} className={`w-full px-3 py-2.5 text-sm border rounded-xl outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}>
                     <option value="">— Pilih —</option>
-                    {KLASIFIKASI_OPTIONS.map(o => <option key={o} value={o}>{o}</option>)}
+                    {denganNilaiSaatIni(KLASIFIKASI_OPTIONS, usulanForm.klasifikasi).map(o => <option key={o} value={o}>{o}</option>)}
                   </select>
                 </div>
               </div>

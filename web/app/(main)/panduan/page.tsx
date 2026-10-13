@@ -1,12 +1,13 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import {
   HelpCircle, BookOpen, GitBranch, FileSignature, ScrollText,
-  Users, FilePlus, X, ChevronRight, Headphones, MessageCircle,
+  Users, FilePlus, X, ChevronRight, Headphones, MessageCircle, ClipboardCheck,
+  FileText, Download, Eye, ExternalLink, LayoutDashboard,
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
-import { SOPSymbolsSection, BPMNSymbolsSection } from '@/components/PanduanSymbols';
+import { SOPSymbolsSection, BPMNSymbolsSection, FiturSection } from '@/components/PanduanSymbols';
 
 /* ---------- SVG Infografis mini per menu ---------- */
 
@@ -483,41 +484,60 @@ const PANDUAN_ITEMS = [
     ],
   },
   {
-    id: 'sop',
-    icon: FileSignature,
-    color: 'bg-emerald-50 text-emerald-600',
-    colorDark: 'bg-emerald-900/30 text-emerald-400',
-    border: 'border-emerald-100',
-    borderDark: 'border-emerald-800/30',
-    judul: 'Dokumen SOP',
-    ringkasan: 'Menyusun Standard Operating Procedure secara digital menggunakan Studio Editor interaktif.',
-    Illust: IllustSOP,
-    deskripsi: 'Menu khusus untuk menyusun Standard Operating Procedure (SOP) secara digital menggunakan Studio Editor SOP interaktif. Hasil SOP dapat diajukan ke Ortala MR untuk mendapatkan persetujuan.',
-    langkah: [
-      'Buka menu "Dokumen SOP" di sidebar kiri',
-      'Klik "Buat SOP Baru" dan isi informasi identitas SOP (Judul, Nomor, Unit Kerja)',
-      'Lengkapi tabel mutu baku di Studio Editor: isi kolom aktivitas, pelaksana, mutu baku, dan keterangan',
-      'Simpan SOP dan ubah status menjadi "Pending" untuk mengajukan ke Ortala MR',
-      'Admin Ortala MR akan menyetujui atau memberikan catatan revisi',
-    ],
-  },
-  {
     id: 'bpmn',
     icon: GitBranch,
     color: 'bg-indigo-50 text-indigo-600',
     colorDark: 'bg-indigo-900/30 text-indigo-400',
     border: 'border-indigo-100',
     borderDark: 'border-indigo-800/30',
-    judul: 'Proses Bisnis (BPMN)',
-    ringkasan: 'Memodelkan alur kerja menggunakan standar BPMN 2.0 dengan editor visual drag-and-drop.',
+    judul: 'Buat Proses Bisnis (BPMN)',
+    ringkasan: 'Memodelkan Proses Bisnis (BPMN 2.0) di studio, atau mengimpornya dari Visual Paradigm.',
     Illust: IllustBPMN,
-    deskripsi: 'Editor visual untuk memodelkan alur kerja dan proses bisnis unit kerja menggunakan standar Business Process Model and Notation (BPMN 2.0). Diagram dapat disimpan dan diajukan untuk persetujuan.',
+    deskripsi: 'Editor visual untuk memodelkan alur kerja unit kerja menggunakan standar Business Process Model and Notation (BPMN 2.0). Diagram dapat disusun langsung di studio atau diimpor dari proyek Visual Paradigm (.vpp), lalu diajukan ke Biro Ortala MR hingga ditetapkan.',
     langkah: [
-      'Buka menu "Proses Bisnis (BPMN)" di sidebar kiri',
-      'Klik "Buat BPMN Baru" untuk membuka studio editor visual',
-      'Gunakan panel elemen di sisi kiri untuk menarik elemen (Start Event, Task, Gateway, End Event) ke kanvas',
-      'Hubungkan elemen dengan klik dan tarik dari tepi elemen sumber ke elemen tujuan',
-      'Simpan diagram dan ajukan untuk mendapatkan persetujuan Admin Ortala MR',
+      'Buka menu "Proses Bisnis" → "Buat Proses Bisnis (BPMN) Level 3/Level N" di sidebar kiri',
+      'Klik "Buat Proses Bisnis Baru" (atau "Impor Visual Paradigm" bila diagram sudah ada di berkas .vpp), lalu isi judul, jenis, klasifikasi, dan Sub-Unit (Level 2) yang wajib dipilih',
+      'Susun diagram di studio: tarik elemen dari palet, hubungkan elemen, gunakan Pool/Lane dan Sub-Process bila perlu — perubahan tersimpan otomatis',
+      'Kirim ke Biro Ortala MR; bila Perlu Revisi, perbaiki sesuai catatan di panel studio lalu kirim ulang',
+      'Setelah disetujui, serahkan dokumen fisik; admin menetapkan dan dokumen pindah ke Daftar Probis Level 3 Terbit',
+    ],
+  },
+  {
+    id: 'sop',
+    icon: FileSignature,
+    color: 'bg-emerald-50 text-emerald-600',
+    colorDark: 'bg-emerald-900/30 text-emerald-400',
+    border: 'border-emerald-100',
+    borderDark: 'border-emerald-800/30',
+    judul: 'Buat SOP',
+    ringkasan: 'Menyusun Standard Operating Procedure di Studio SOP interaktif, atau mengimpornya dari berkas PDF.',
+    Illust: IllustSOP,
+    deskripsi: 'Menu untuk menyusun Standard Operating Procedure (SOP) secara digital — cover, bagan alir, dan tabel mutu baku — menggunakan Studio SOP. SOP yang sudah ada dalam bentuk PDF dapat diimpor agar tidak perlu diketik ulang. SOP diajukan ke Biro Ortala MR hingga disahkan dan ditetapkan.',
+    langkah: [
+      'Buka menu "Buat SOP" di sidebar kiri',
+      'Klik "Buat SOP Baru" (atau "Impor PDF" bila SOP sudah ada dalam PDF), lalu isi judul, jenis, klasifikasi, pengesah, dan Sub-Unit (Level 2) yang wajib dipilih',
+      'Lengkapi cover dan bagan alir di Studio SOP; tautkan SOP/Proses Bisnis terkait melalui panel Properti Dokumen',
+      'Kirim ke Biro Ortala MR; bila Perlu Revisi, perbaiki sesuai catatan lalu kirim ulang',
+      'Setelah disetujui: unggah cover bertanda tangan, serahkan dokumen fisik, lalu admin menetapkan dan SOP terbit',
+    ],
+  },
+  {
+    id: 'sp',
+    icon: ClipboardCheck,
+    color: 'bg-sky-50 text-sky-600',
+    colorDark: 'bg-sky-900/30 text-sky-400',
+    border: 'border-sky-100',
+    borderDark: 'border-sky-800/30',
+    judul: 'Buat Standar Pelayanan',
+    ringkasan: 'Menyusun naskah Standar Pelayanan (Permenpan RB 15/2014) di Studio SP, atau mengimpornya dari Word.',
+    Illust: IllustTambah,
+    deskripsi: 'Menu untuk menyusun naskah Standar Pelayanan (SP) pada kertas F4 sesuai Permenpan RB 15/2014, mulai dari komponen Service Delivery hingga Manufacturing. Naskah dapat disusun langsung, diimpor dari berkas Word, atau dicatat sebagai dokumen manual.',
+    langkah: [
+      'Buka menu "Buat SP" di sidebar kiri',
+      'Klik "Buat SP Baru" atau "Impor Word" untuk mengambil naskah dari berkas .docx',
+      'Lengkapi setiap komponen di Studio SP — naskah tersimpan otomatis dan dapat diekspor ke PDF/Word',
+      'Kirim ke Biro Ortala MR; bila Perlu Revisi, perbaiki sesuai catatan lalu kirim ulang',
+      'Setelah disahkan dan ditetapkan, SP pindah ke Daftar SP Terbit',
     ],
   },
   {
@@ -573,7 +593,8 @@ const PANDUAN_ITEMS = [
       'Menu ini hanya tersedia bagi pengguna dengan peran Administrator Ortala MR',
       'Buka "Manajemen Pengguna" di sidebar kiri',
       'Klik "Tambah Pengguna" untuk mendaftarkan akun baru dengan username dan password',
-      'Tetapkan peran (Admin/Viewer) dan unit kerja yang sesuai',
+      'Tetapkan peran (Admin, User Terbatas untuk penyusun unit kerja, atau Viewer yang hanya dapat melihat) beserta unit kerjanya',
+      'Akun Admin dan User dapat dipakai bersama di maksimal 4 perangkat sekaligus; jumlah sesi aktif terlihat pada daftar pengguna',
       'Edit atau nonaktifkan akun pengguna yang sudah tidak aktif',
     ],
   },
@@ -631,6 +652,11 @@ function PanduanModal({ item, onClose }: { item: typeof PANDUAN_ITEMS[0]; onClos
             </div>
           </div>
 
+          {/* Fitur per modul — sumber sama dengan tombol Panduan di halaman modul */}
+          {(item.id === 'bpmn' || item.id === 'sop' || item.id === 'sp') && (
+            <FiturSection kind={item.id} isDarkMode={isDarkMode} />
+          )}
+
           {/* Legenda Elemen khusus BPMN */}
           {item.id === 'bpmn' && (
             <div>
@@ -678,6 +704,130 @@ function PanduanModal({ item, onClose }: { item: typeof PANDUAN_ITEMS[0]; onClos
   );
 }
 
+/* ---------- Dokumen Pedoman (unduh + pratinjau langsung) ---------- */
+
+const PEDOMAN_DOCS = [
+  {
+    id: 'pedoman',
+    judul: 'Handbook Penggunaan SIMPEL',
+    ringkasan: 'Buku pedoman lengkap (47 halaman): peran & hak akses, panduan tiap menu, simbol BPMN/SOP, alur persetujuan, dan FAQ.',
+    meta: 'PDF · Versi 3.0 · Oktober 2026',
+    url: '/e-sop-atrbpn/pedoman/Pedoman-Penggunaan-SIMPEL-2026.pdf',
+    unduhNama: 'Handbook Penggunaan SIMPEL 2026.pdf',
+    icon: FileText,
+    accent: 'from-[#002855] to-[#0b4a8f]',
+  },
+  {
+    id: 'infografis',
+    judul: 'Tata Cara Penggunaan SIMPEL',
+    ringkasan: 'Ringkasan visual 10 halaman: dari login hingga penyusunan Proses Bisnis, SOP, Standar Pelayanan, dan menu pendukung.',
+    meta: 'PDF · Infografis · Edisi 2026',
+    url: '/e-sop-atrbpn/pedoman/Infografis-Pedoman-SIMPEL.pdf',
+    unduhNama: 'Tata Cara Penggunaan SIMPEL.pdf',
+    icon: LayoutDashboard,
+    accent: 'from-[#b8860b] to-[#d4a437]',
+  },
+] as const;
+
+function PedomanPreviewModal({ doc, onClose, isDarkMode }: { doc: typeof PEDOMAN_DOCS[number]; onClose: () => void; isDarkMode: boolean }) {
+  return (
+    <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-2 sm:p-4" onClick={onClose}>
+      <div
+        className={`w-full max-w-6xl h-[92vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden ${isDarkMode ? 'bg-[#151F32]' : 'bg-white'}`}
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className={`flex items-center gap-3 px-4 py-3 border-b shrink-0 ${isDarkMode ? 'border-slate-800' : 'border-slate-100'}`}>
+          <h3 className={`font-extrabold text-sm sm:text-base truncate flex-1 ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{doc.judul}</h3>
+          <a
+            href={doc.url} target="_blank" rel="noopener noreferrer"
+            className={`hidden sm:inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold border transition-colors ${isDarkMode ? 'border-slate-700 text-slate-300 hover:bg-slate-800' : 'border-slate-200 text-slate-600 hover:bg-slate-50'}`}
+          >
+            <ExternalLink className="w-3.5 h-3.5" /> Buka di Tab Baru
+          </a>
+          <a
+            href={doc.url} download={doc.unduhNama}
+            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" /> Unduh
+          </a>
+          <button
+            onClick={onClose} aria-label="Tutup pratinjau"
+            className={`p-2 rounded-lg transition-colors ${isDarkMode ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-500 hover:bg-slate-100'}`}
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+        <iframe
+          src={`${doc.url}#view=FitH&navpanes=0`}
+          title={`Pratinjau ${doc.judul}`}
+          className="flex-1 w-full bg-slate-100"
+        />
+        <p className={`px-4 py-2 text-[11px] border-t shrink-0 ${isDarkMode ? 'border-slate-800 text-slate-500' : 'border-slate-100 text-slate-400'}`}>
+          Pratinjau tidak tampil sempurna di sebagian HP/tablet? Gunakan tombol <b>Buka di Tab Baru</b> atau <b>Unduh</b>.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function PedomanSection({ isDarkMode }: { isDarkMode: boolean }) {
+  const [preview, setPreview] = useState<typeof PEDOMAN_DOCS[number] | null>(null);
+  // Cek ketersediaan berkas (HEAD) — kartu ditandai "belum tersedia" bila berkas belum diunggah.
+  const [ada, setAda] = useState<Record<string, boolean | undefined>>({});
+  useEffect(() => {
+    PEDOMAN_DOCS.forEach(d => {
+      fetch(d.url, { method: 'HEAD' })
+        .then(r => setAda(prev => ({ ...prev, [d.id]: r.ok })))
+        .catch(() => setAda(prev => ({ ...prev, [d.id]: false })));
+    });
+  }, []);
+
+  return (
+    <div>
+      <h3 className={`text-sm font-extrabold uppercase tracking-wider mb-3 ${isDarkMode ? 'text-slate-300' : 'text-[#002855]'}`}>Dokumen Pedoman</h3>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {PEDOMAN_DOCS.map(d => {
+          const Icon = d.icon;
+          const tersedia = ada[d.id] !== false;
+          return (
+            <div key={d.id} className={`rounded-2xl border shadow-sm overflow-hidden flex flex-col ${isDarkMode ? 'bg-[#151F32] border-slate-800' : 'bg-white border-slate-100'}`}>
+              <div className={`bg-linear-to-br ${d.accent} px-5 py-4 flex items-center gap-3 text-white`}>
+                <div className="p-2.5 rounded-xl bg-white/15"><Icon className="w-6 h-6" /></div>
+                <div className="min-w-0">
+                  <h4 className="font-extrabold text-base leading-tight">{d.judul}</h4>
+                  <p className="text-[11px] text-white/75 mt-0.5">{d.meta}</p>
+                </div>
+              </div>
+              <div className="p-4 flex flex-col gap-4 flex-1">
+                <p className={`text-xs leading-relaxed flex-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{d.ringkasan}</p>
+                {tersedia ? (
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setPreview(d)}
+                      className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700 transition-all active:scale-95"
+                    >
+                      <Eye className="w-4 h-4" /> Lihat Pratinjau
+                    </button>
+                    <a
+                      href={d.url} download={d.unduhNama}
+                      className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-xs font-bold border transition-all active:scale-95 ${isDarkMode ? 'border-slate-700 text-slate-200 hover:bg-slate-800' : 'border-slate-200 text-slate-700 hover:bg-slate-50'}`}
+                    >
+                      <Download className="w-4 h-4" /> Unduh PDF
+                    </a>
+                  </div>
+                ) : (
+                  <div className={`text-center text-xs font-semibold py-2.5 rounded-xl ${isDarkMode ? 'bg-slate-800 text-slate-500' : 'bg-slate-100 text-slate-400'}`}>Dokumen belum tersedia</div>
+                )}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+      {preview && <PedomanPreviewModal doc={preview} onClose={() => setPreview(null)} isDarkMode={isDarkMode} />}
+    </div>
+  );
+}
+
 /* ---------- Halaman utama ---------- */
 
 export default function PanduanPage() {
@@ -719,7 +869,11 @@ export default function PanduanPage() {
           </p>
         </div>
 
+        {/* Dokumen pedoman: unduh + pratinjau langsung */}
+        <PedomanSection isDarkMode={isDarkMode} />
+
         {/* Grid kartu panduan */}
+        <h3 className={`text-sm font-extrabold uppercase tracking-wider -mb-2 ${isDarkMode ? 'text-slate-300' : 'text-[#002855]'}`}>Panduan per Fitur</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {visibleItems.map(item => {
             const { icon: Icon, color, colorDark, border, borderDark, judul, ringkasan, Illust } = item;

@@ -76,7 +76,7 @@ export default function AboutPage() {
         {/* ---------- Header halaman ---------- */}
         <div className="mb-2">
           <h2 className={`text-2xl md:text-3xl font-extrabold tracking-tight ${heading}`}>
-            About
+            E-Simpel (Sistem Informasi Manajemen Prosedur dan Pelayanan)
           </h2>
           <p className={`mt-2 text-sm font-medium ${muted}`}>
             Mengenal lebih dekat aplikasi yang Anda gunakan sehari-hari
@@ -92,7 +92,7 @@ export default function AboutPage() {
             <div>
               <h3 className={`text-base font-extrabold ${heading}`}>Tentang Aplikasi Ini</h3>
               <p className={`text-xs ${muted}`}>
-                SIMPEL — Sistem Informasi Manajemen Peta Layanan
+                E-Simpel
               </p>
             </div>
           </div>

@@ -9,6 +9,7 @@
 //  - Aksi alur: pending → (Setujui admin) penetapan → (unggah PDF ber-TTD)
 //    verifikasi → (Tetapkan admin) terbit/approved; Tolak/Kembalikan + catatan.
 import { useState, useEffect, useRef } from 'react';
+import { denganNilaiSaatIni, klasifikasiUntuk } from '@/lib/klasifikasi';
 import {
   X, FileText, ExternalLink, CheckCircle, XCircle, Stamp, Upload, Pencil,
   Building2, Calendar, Hash, AlertTriangle, Clock, Landmark, Link2, History, RotateCcw, Inbox,
@@ -309,7 +310,7 @@ export default function ManualDocDetailModal({ kind, model, token, role, isDarkM
                   <label className={label}>Klasifikasi</label>
                   <select value={editForm.klasifikasi} onChange={e => setEditForm(f => ({ ...f, klasifikasi: e.target.value }))} className={input}>
                     <option value="">-- Pilih --</option>
-                    {KLASIFIKASI_OPTIONS.map(k => <option key={k} value={k}>{k}</option>)}
+                    {denganNilaiSaatIni(klasifikasiUntuk(kind), editForm.klasifikasi).map(k => <option key={k} value={k}>{k}</option>)}
                   </select>
                 </div>
               </div>

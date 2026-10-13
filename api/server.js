@@ -33,6 +33,27 @@ const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGIN || 'https://tlrb.ortalamr.id
 app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
 app.use(express.json({ limit: '10mb' }));
 
+// KLASIFIKASI PROSES: "Layanan Pengaduan dan Informasi" sudah dihapus dari pilihan (9 Okt
+// 2026) → pilihan lama dialihkan ke Administrasi Pemerintah. Padanan klien: lib/klasifikasi.ts.
+// Diterapkan pada SEMUA penulisan (simpan, salin, impor Excel, usulan) lewat satu titik ini,
+// termasuk salinan di dalam sop_data (klasifikasiSOP).
+const normalisasiKlasifikasi = (v) => {
+  const t = String(v ?? '').trim();
+  if (/pengaduan\s+dan\s+informasi/i.test(t)) return /^SOP\b/i.test(t) ? 'SOP Administrasi Pemerintah' : 'Layanan Administrasi Pemerintah';
+  return v;
+};
+app.use('/api', (req, res, next) => {
+  const b = req.body;
+  if (b && typeof b === 'object' && !Array.isArray(b) && req.method !== 'GET') {
+    for (const k of ['klasifikasi_proses', 'klasifikasi', 'klasifikasiSOP']) if (typeof b[k] === 'string') b[k] = normalisasiKlasifikasi(b[k]);
+    if (typeof b.sop_data === 'string' && /pengaduan\s+dan\s+informasi/i.test(b.sop_data)) {
+      try { const d = JSON.parse(b.sop_data); d.klasifikasiSOP = normalisasiKlasifikasi(d.klasifikasiSOP); b.sop_data = JSON.stringify(d); } catch { /* biarkan */ }
+    }
+    if (Array.isArray(b.rows)) for (const r of b.rows) if (r && typeof r.klasifikasi === 'string') r.klasifikasi = normalisasiKlasifikasi(r.klasifikasi);
+  }
+  next();
+});
+
 // JARING PENGAMAN PAYLOAD: kolom cache besar (PDF base64, ratusan KB–MB per baris)
 // hanya dipakai server. Tanpa ini, endpoint yang memakai `RETURNING *` / `SELECT *`
 // ikut mengirimkannya ke browser — mis. simpan SOP dari studio pernah mengembalikan
@@ -469,6 +490,12 @@ const initDatabase = async () => {
         BEGIN ALTER TABLE sop_models ALTER COLUMN process_key DROP NOT NULL; EXCEPTION WHEN others THEN NULL; END;
       END $$;
     `);
+
+    // MIGRASI (9 Okt 2026): klasifikasi "Layanan Pengaduan dan Informasi" → Administrasi
+    // Pemerintah (idempoten; mencakup dokumen di Kotak Sampah & salinan di sop_data).
+    await client.query(`UPDATE bpmn_models SET klasifikasi_proses = 'Layanan Administrasi Pemerintah' WHERE klasifikasi_proses ILIKE '%pengaduan dan informasi%'`);
+    await client.query(`UPDATE sop_models SET klasifikasi_proses = 'SOP Administrasi Pemerintah' WHERE klasifikasi_proses ILIKE '%pengaduan dan informasi%'`);
+    await client.query(`UPDATE sop_models SET sop_data = replace(sop_data, 'SOP Layanan Pengaduan dan Informasi', 'SOP Administrasi Pemerintah') WHERE sop_data LIKE '%SOP Layanan Pengaduan dan Informasi%'`);
 
     // MIGRASI: bpmn_models.process_key nullable (field opsional, agar save tidak gagal 500)
     await client.query(`
@@ -960,7 +987,15 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
     const expiresAt = new Date(Date.now() + (remember ? 720 * 3600000 : 12 * 3600000));
     const sessionId = crypto.randomUUID();
 
-    const MAX_USER_SESSIONS = 4;
+    // Akun admin TERNYATA juga dipakai bersama oleh beberapa staf (mis. akun
+    // "adm_tatalaksana" dipakai bergantian oleh tim Tatalaksana, bukan satu orang) — sama
+    // seperti akun role 'user'. Dulu admin dibatasi SATU sesi per akun: begitu rekan lain
+    // login dari komputer lain, sesi admin yang sedang menyusun SOP langsung ditendang
+    // ("sesi telah berakhir") di tengah pekerjaan. Diputuskan 7 Okt 2026: KHUSUS admin
+    // disamakan dgn 'user' (maks N sesi bersamaan, gusur sesi idle bila penuh).
+    // superadmin & viewer TETAP satu sesi per akun (atas permintaan eksplisit).
+    // Batas perangkat per akun: user (terbatas) 8, admin 4 (diubah 12 Okt 2026).
+    const MAX_USER_SESSIONS = userRole === 'user' ? 8 : 4;
     const loginClient = await pool.connect();
     try {
       await loginClient.query('BEGIN');
@@ -975,8 +1010,8 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
         "DELETE FROM audit_logs WHERE action = 'LOGIN' AND created_at < NOW() - INTERVAL '3 days'"
       );
 
-      if (userRole === 'user') {
-        // Role 'user': izinkan hingga MAX_USER_SESSIONS sesi bersamaan
+      if (userRole === 'user' || userRole === 'admin') {
+        // Role 'user' & 'admin': izinkan hingga MAX_USER_SESSIONS sesi bersamaan
         let { rows: [{ count }] } = await loginClient.query(
           "SELECT COUNT(*) FROM sessions WHERE user_id = $1 AND expires_at > NOW()",
           [user.id]
@@ -1009,7 +1044,7 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
           [sessionId, user.id, token, expiresAt, req.ip, req.headers['user-agent']]
         );
       } else {
-        // Role lain (admin, superadmin, viewer): satu sesi per akun
+        // Role lain (superadmin, viewer): satu sesi per akun
         await loginClient.query("DELETE FROM sessions WHERE user_id = $1", [user.id]);
         await loginClient.query(
           `INSERT INTO sessions (id, user_id, token, expires_at, ip_address, user_agent) VALUES ($1,$2,$3,$4,$5,$6)`,
@@ -3486,6 +3521,53 @@ app.get('/api/sp/keterkaitan', authenticate, requireRole('admin', 'superadmin', 
     res.json([
       ...studio.rows.map(r => ({ sumber: 'studio', kind, id: r.id, judul: r.judul, unit: r.unit || null, tahun: null, link: null })),
       ...registri.rows.map(r => ({ sumber: 'registri', kind, id: r.id, judul: r.judul, unit: r.unit || null, tahun: r.tahun || null, link: r.link || null })),
+    ].slice(0, BATAS));
+  } catch (err) {
+    console.error('[ROUTE ERROR]', req.method, req.path, err.message);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+// ── Pencarian dokumen untuk "Keterkaitan Dokumen" di panel properti Buat SOP ──
+// BEDA dgn /api/sp/keterkaitan di atas: SP hanya menautkan ke dokumen yang SUDAH
+// DITETAPKAN (SOP perlu rujukan mulai dari penyusunan — Proses Bisnis & SOP lain
+// yang masih draf/berproses penetapan pun relevan sbg dasar penyusunan). Jadi di
+// sini SELURUH status (kecuali yang di Kotak Sampah) ikut dicari, bukan hanya final.
+// Sumbernya juga dua: studio (sop_models/bpmn_models, SEMUA status) + registri
+// (dokumen Kepmen lama yang tak lahir dari studio). `excludeId` membuang dokumen
+// itu sendiri dari hasil pencarian SOP (tak masuk akal menautkan diri sendiri).
+app.get('/api/sop/keterkaitan', authenticate, requireRole('admin', 'superadmin', 'user'), async (req, res) => {
+  try {
+    const kind = req.query.kind === 'bpmn' ? 'bpmn' : 'sop';
+    const q = String(req.query.q || '').replace(/\s+/g, ' ').trim();
+    const pola = `%${q}%`;
+    const BATAS = 20;
+    const excludeId = parseInt(req.query.excludeId, 10) || 0;
+
+    const registri = await pool.query(
+      `SELECT d.id, d.nama AS judul, d.tahun, d.link, u1.nama AS unit
+       FROM dokumen d
+       LEFT JOIN unit_kerja_l1 u1 ON d.l1_id = u1.id
+       WHERE d.jenis = $1 AND ($2 = '' OR d.nama ILIKE $3)
+       ORDER BY d.tahun DESC NULLS LAST, d.id DESC
+       LIMIT $4`, [JENIS_REGISTRI[kind], q, pola, BATAS]);
+
+    // Studio: SEMUA status (bukan hanya final) — hindari dobel dgn yg sudah tercatat
+    // di registri (disinkron saat terbit/approved) lewat NOT EXISTS yang sama.
+    const tabel = kind === 'sop' ? 'sop_models' : 'bpmn_models';
+    const studio = await pool.query(
+      `SELECT m.id, m.process_title AS judul, m.status, u1.nama AS unit
+       FROM ${tabel} m
+       LEFT JOIN unit_kerja_l1 u1 ON m.l1_id = u1.id
+       WHERE m.deleted_at IS NULL AND ($1 = '' OR m.process_title ILIKE $2)
+         AND ($3 = 0 OR m.id != $3)
+         AND NOT EXISTS (SELECT 1 FROM dokumen d WHERE d.source_type = $4 AND d.source_id = m.id)
+       ORDER BY m.updated_at DESC NULLS LAST, m.id DESC
+       LIMIT $5`, [q, pola, excludeId, kind, BATAS]);
+
+    res.json([
+      ...studio.rows.map(r => ({ sumber: 'studio', kind, id: r.id, judul: r.judul, status: r.status, unit: r.unit || null, tahun: null, link: null })),
+      ...registri.rows.map(r => ({ sumber: 'registri', kind, id: r.id, judul: r.judul, status: null, unit: r.unit || null, tahun: r.tahun || null, link: r.link || null })),
     ].slice(0, BATAS));
   } catch (err) {
     console.error('[ROUTE ERROR]', req.method, req.path, err.message);
