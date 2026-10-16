@@ -23,7 +23,8 @@ export default function LoginPage() {
 
   const ADMINS = [
     { name: 'Bima Karismanto', phone: '6285292724654' },
-    { name: 'Nanda Ferdiansyah', phone: '6285713595915' },
+    { name: 'Bisma Saputra', phone: '6289608305216' },
+    { name: 'Naufal Ammar Azada', phone: '6289656610687' },
   ];
 
   useEffect(() => {

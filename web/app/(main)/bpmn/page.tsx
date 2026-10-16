@@ -7,7 +7,8 @@ import {
   Plus, Edit, CheckCircle,
   Clock, XCircle, Search, X, FileEdit, FileStack, AlertCircle, Filter,
   Trash2, Calendar, GitCommit, HelpCircle, GitBranch, ChevronRight, Save, History as HistoryIcon, RotateCcw,
-  ExternalLink, Building2, Copy, Landmark, Lock, FileUp, FileText, MessageSquare, Eye, ZoomIn, ZoomOut, Maximize2, FileSpreadsheet, Inbox, FileInput
+  ExternalLink, Building2, Copy, Landmark, Lock, FileUp, FileText, MessageSquare, Eye, ZoomIn, ZoomOut, Maximize2, FileSpreadsheet, Inbox, FileInput,
+  ArrowUp, ArrowDown, ArrowUpDown,
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
 import { BPMNSymbolsSection, FiturSection } from '@/components/PanduanSymbols';
@@ -121,7 +122,14 @@ export default function BPMNDashboardPage() {
     } catch { /* sessionStorage diblokir — lanjut tanpa penanda */ }
     setPendingDocId(Number(doc));
   }, []);
-  const [filterUnit, setFilterUnit] = useState(() => readSavedView()?.filterUnit ?? 'Semua');
+  // Filter Unit Kerja di toolbar sudah ditiadakan → jangan pulihkan nilai lama dari sesi
+  // (bisa menyaring diam-diam tanpa kontrol yang terlihat).
+  const [filterUnit, setFilterUnit] = useState('Semua');
+  // Admin/superadmin: filter Jenis Kewenangan (menggantikan filter Unit Kerja di toolbar —
+  // rekap per unit sudah tersedia lewat tabel rekap & Dashboard).
+  const [filterJenis, setFilterJenis] = useState('Semua');
+  // Urutan lewat klik judul kolom tabel (menimpa pilihan "Urut:" selama aktif).
+  const [urutKolom, setUrutKolom] = useState<{ kolom: 'info' | 'unit' | 'status'; arah: 'asc' | 'desc' } | null>(null);
   const [filterStatus, setFilterStatus] = useState('Semua');
   // Urutan daftar: terbaru diperbarui (default) / terbaru dibuat / terlama / judul.
   const [sortBy, setSortBy] = useState<'updated' | 'created' | 'oldest' | 'title'>(() => (readSavedView()?.sortBy as 'updated' | 'created' | 'oldest' | 'title') ?? 'updated');
@@ -295,13 +303,14 @@ export default function BPMNDashboardPage() {
                            (m.process_key || '').toLowerCase().includes(searchQuery.toLowerCase());
 
       const matchesUnit = filterUnit === 'Semua' || m.unit_l1 === filterUnit;
+      const matchesJenis = filterJenis === 'Semua' || (filterJenis === '-' ? !m.jenis_proses : m.jenis_proses === filterJenis);
       const currentStatus = (m.status || 'draft').toLowerCase();
       const targetStatus = filterStatus.toLowerCase();
       const matchesStatus = filterStatus === 'Semua' || currentStatus === targetStatus;
 
-      return matchesSearch && matchesUnit && matchesStatus;
+      return matchesSearch && matchesUnit && matchesJenis && matchesStatus;
     });
-  }, [modelsPlusTetap, searchQuery, filterUnit, filterStatus]);
+  }, [modelsPlusTetap, searchQuery, filterUnit, filterJenis, filterStatus]);
 
   // Dokumen untuk panel "klik kartu": difilter status kartu + kotak cari, lintas unit.
   const CARD_MATCH: Record<string, (m: BPMNModel) => boolean> = {
@@ -589,7 +598,26 @@ export default function BPMNDashboardPage() {
 
   // Pengurutan daftar dokumen — dokumen terbaru/baru diperbarui di paling atas.
   const waktu = (v?: string) => (v ? new Date(v).getTime() : 0);
+  // Nomor dokumen utk urutan kolom "Informasi Dokumen": nomor/kode dulu, yang kosong
+  // menyusul diurutkan menurut nama.
+  const nomorDok = (m: BPMNModel) => ((m.process_key || (m.is_manual && !(m as { _registri?: boolean })._registri ? m.manual_nomor : '') || '') as string).trim();
+  const URUT_STATUS = ['usulan', 'draft', 'pending', 'rejected', 'verifikasi', 'fisik', 'penetapan', 'approved'];
+  const urutkanKolom = (arr: BPMNModel[], u: NonNullable<typeof urutKolom>) => {
+    const k = u.arah === 'asc' ? 1 : -1;
+    const teks = (a: string, b: string) => a.localeCompare(b, 'id', { numeric: true, sensitivity: 'base' });
+    return [...arr].sort((a, b) => {
+      if (u.kolom === 'info') {
+        const na = nomorDok(a), nb = nomorDok(b);
+        if (!!na !== !!nb) return na ? -1 : 1; // yang bernomor selalu di atas
+        return k * (na ? teks(na, nb) || teks(a.process_title, b.process_title) : teks(a.process_title, b.process_title));
+      }
+      if (u.kolom === 'unit') { const m = a; const ua = `${m.unit_l1 || ''} ${m.unit_l2 || ''}`; { const m = b; const ub = `${m.unit_l1 || ''} ${m.unit_l2 || ''}`; return k * teks(ua, ub) || teks(a.process_title, b.process_title); } }
+      const ia = URUT_STATUS.indexOf(a.status || 'draft'), ib = URUT_STATUS.indexOf(b.status || 'draft');
+      return k * (ia - ib) || teks(a.process_title, b.process_title);
+    });
+  };
   const urutkan = <T extends { process_title: string; created_at?: string; updated_at?: string }>(arr: T[]) => {
+    if (urutKolom) return urutkanKolom(arr as unknown as BPMNModel[], urutKolom) as unknown as T[];
     const out = [...arr];
     if (sortBy === 'title') return out.sort((a, b) => a.process_title.localeCompare(b.process_title, 'id'));
     if (sortBy === 'created') return out.sort((a, b) => waktu(b.created_at) - waktu(a.created_at));
@@ -597,13 +625,18 @@ export default function BPMNDashboardPage() {
     return out.sort((a, b) => (waktu(b.updated_at) || waktu(b.created_at)) - (waktu(a.updated_at) || waktu(a.created_at)));
   };
 
+  const klikUrut = (kolom: 'info' | 'unit' | 'status') => setUrutKolom(u =>
+    !u || u.kolom !== kolom ? { kolom, arah: 'asc' } : u.arah === 'asc' ? { kolom, arah: 'desc' } : null);
+  const ikonUrut = (kolom: 'info' | 'unit' | 'status') => urutKolom?.kolom !== kolom
+    ? <ArrowUpDown className="w-3 h-3 opacity-40" />
+    : urutKolom.arah === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />;
   const visibleModels = useMemo(() => {
     if (isAdminRekap && rekapDrill.l2 !== null) {
       return urutkan(rekapDataset.filter(m => (m.unit_l1 || '(Tanpa Unit)') === rekapDrill.l1 && (m.unit_l2 || '(Tanpa Sub-Unit)') === rekapDrill.l2));
     }
     return urutkan(currentFilteredModels.filter(m => tabOf(m.status) === listTab));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentFilteredModels, listTab, isAdminRekap, rekapDrill, rekapDataset, sortBy]);
+  }, [currentFilteredModels, listTab, isAdminRekap, rekapDrill, rekapDataset, sortBy, urutKolom]);
   // Ambil SVG diagram untuk pratinjau saat modal detail dibuka (endpoint daftar
   // sengaja tidak mengirim svg_xml agar ringan — lihat optimasi payload).
   useEffect(() => {
@@ -659,7 +692,7 @@ export default function BPMNDashboardPage() {
     () => visibleModels.slice((currentPage - 1) * pageSize, currentPage * pageSize),
     [visibleModels, currentPage, pageSize]
   );
-  useEffect(() => { setCurrentPage(1); }, [listTab, searchQuery, filterUnit, filterStatus, pageSize, rekapDrill, sortBy]);
+  useEffect(() => { setCurrentPage(1); }, [listTab, searchQuery, filterUnit, filterJenis, filterStatus, pageSize, rekapDrill, sortBy, urutKolom]);
   // Reset drill saat pengguna GANTI tab/filter — tapi lewati saat mount agar drill
   // yang dipulihkan dari sessionStorage (kembali dari Studio) tidak ikut terhapus.
   const skipDrillReset = useRef(true);
@@ -1549,9 +1582,12 @@ export default function BPMNDashboardPage() {
                 <Trash2 className="w-4 h-4" /> <span className="hidden sm:inline">Kotak Sampah</span>
               </button>
             )}
-            <button onClick={() => setShowManualDoc(true)} className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/30' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
-              <FileUp className="w-4 h-4" /> Dokumen Manual
-            </button>
+            {/* Dokumen Manual: sementara khusus admin/superadmin — user terbatas diarahkan ke Impor PDF/VP. */}
+            {(currentUser.role === 'admin' || currentUser.role === 'superadmin') && (
+              <button onClick={() => setShowManualDoc(true)} className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/30' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
+                <FileUp className="w-4 h-4" /> Dokumen Manual
+              </button>
+            )}
             {currentUser.role !== 'viewer' && (
               <button onClick={() => setShowImporVp(true)} title="Buat Proses Bisnis baru dari proyek Visual Paradigm (.vpp)" className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-violet-700 text-violet-300 hover:bg-violet-900/30' : 'border-violet-300 text-violet-700 hover:bg-violet-50'}`}>
                 <FileInput className="w-4 h-4" /> Impor Visual Paradigm
@@ -1707,9 +1743,10 @@ export default function BPMNDashboardPage() {
               {currentUser.role === 'admin' && (
                 <div className="relative w-full sm:w-56">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Filter className={`h-4 w-4 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} /></div>
-                  <select value={filterUnit} onChange={(e) => setFilterUnit(e.target.value)} className={`w-full pl-10 pr-4 py-2.5 border rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}>
-                    <option value="Semua">Unit Kerja: Semua</option>
-                    {listUnitL1.filter(u => u !== 'Semua').map(unit => (<option key={unit as string} value={unit as string}>{unit as string}</option>))}
+                  <select value={filterJenis} onChange={(e) => setFilterJenis(e.target.value)} title="Saring menurut Jenis Kewenangan" className={`w-full pl-10 pr-4 py-2.5 border rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}>
+                    <option value="Semua">Jenis Kewenangan: Semua</option>
+                    {JENIS_OPTIONS.map(j => <option key={j} value={j}>Jenis Kewenangan: {j}</option>)}
+                    <option value="-">Jenis Kewenangan: Belum diisi</option>
                   </select>
                 </div>
               )}
@@ -1725,7 +1762,7 @@ export default function BPMNDashboardPage() {
                   <option value="approved">Status: Ditetapkan</option>
                 </select>
               </div>
-              <select value={sortBy} onChange={e => setSortBy(e.target.value as typeof sortBy)} title="Urutkan daftar dokumen" className={`w-full sm:w-48 px-3 py-2.5 border rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}><option value="updated">Urut: Baru Diperbarui</option><option value="created">Urut: Terbaru Dibuat</option><option value="oldest">Urut: Terlama</option><option value="title">Urut: Judul (A–Z)</option></select>
+              <select value={sortBy} onChange={e => { setSortBy(e.target.value as typeof sortBy); setUrutKolom(null); }} title="Urutkan daftar dokumen" className={`w-full sm:w-48 px-3 py-2.5 border rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}><option value="updated">Urut: Baru Diperbarui</option><option value="created">Urut: Terbaru Dibuat</option><option value="oldest">Urut: Terlama</option><option value="title">Urut: Judul (A–Z)</option></select>
               <div className="relative w-full sm:flex-1 sm:min-w-48">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Search className={`h-4 w-4 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} /></div>
                 <input type="text" placeholder="Cari judul atau kode..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className={`w-full pl-10 pr-4 py-2.5 border rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white placeholder:text-slate-500' : 'bg-white border-slate-300 text-slate-900'}`} />
@@ -1852,9 +1889,9 @@ export default function BPMNDashboardPage() {
             <table className="w-full text-sm text-left">
               <thead className={`text-[11px] font-bold uppercase tracking-wider border-b ${isDarkMode ? 'text-slate-400 bg-slate-800/50 border-slate-700' : 'text-slate-500 bg-slate-50/80 border-slate-200'}`}>
                 <tr>
-                  <th className="px-6 py-4 w-1/3">Informasi Dokumen</th>
-                  <th className="px-6 py-4 w-1/4">Unit Kerja</th>
-                  <th className="px-6 py-4">Status Pengajuan</th>
+                  <th className="px-6 py-4 w-1/3"><button type="button" onClick={() => klikUrut('info')} title="Urutkan menurut kolom ini (klik lagi untuk membalik, klik ketiga untuk mematikan)" className={`inline-flex items-center gap-1.5 whitespace-nowrap uppercase tracking-wider font-bold hover:text-blue-600 ${urutKolom?.kolom === 'info' ? 'text-blue-600' : ''}`}>Informasi Dokumen{ikonUrut('info')}</button></th>
+                  <th className="px-6 py-4 w-1/4"><button type="button" onClick={() => klikUrut('unit')} title="Urutkan menurut kolom ini (klik lagi untuk membalik, klik ketiga untuk mematikan)" className={`inline-flex items-center gap-1.5 whitespace-nowrap uppercase tracking-wider font-bold hover:text-blue-600 ${urutKolom?.kolom === 'unit' ? 'text-blue-600' : ''}`}>Unit Kerja{ikonUrut('unit')}</button></th>
+                  <th className="px-6 py-4"><button type="button" onClick={() => klikUrut('status')} title="Urutkan menurut kolom ini (klik lagi untuk membalik, klik ketiga untuk mematikan)" className={`inline-flex items-center gap-1.5 whitespace-nowrap uppercase tracking-wider font-bold hover:text-blue-600 ${urutKolom?.kolom === 'status' ? 'text-blue-600' : ''}`}>Status Pengajuan{ikonUrut('status')}</button></th>
                   <th className="px-6 py-4 text-center w-48">Aksi / Tindakan</th>
                 </tr>
               </thead>
@@ -1873,6 +1910,7 @@ export default function BPMNDashboardPage() {
                 ) : (
                   pagedModels.map((model) => (
                     <tr
+                      key={model.id}
                       onClick={() => isRegistri(model) ? bukaDokumenRegistri(model) : model.is_manual ? setManualDetail(model) : openPreview(model)}
                       className={`transition-colors cursor-pointer ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-blue-50/40'}`}
                     >
@@ -2017,6 +2055,7 @@ export default function BPMNDashboardPage() {
             ) : (
               pagedModels.map((model) => (
                 <div
+                  key={model.id}
                   onClick={() => isRegistri(model) ? bukaDokumenRegistri(model) : model.is_manual ? setManualDetail(model) : openPreview(model)}
                   className={`px-4 py-4 cursor-pointer transition-colors ${isDarkMode ? 'hover:bg-slate-800/60 divide-slate-800' : 'hover:bg-blue-50/40'}`}
                 >

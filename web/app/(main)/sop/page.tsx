@@ -7,9 +7,11 @@ import {
   ArrowLeft, Plus, Edit, CheckCircle,
   Clock, XCircle, Search, X, FileEdit, FileStack, AlertCircle, Filter,
   Trash2, Calendar, GitCommit, FileSignature, Lock, HelpCircle, ChevronRight, History as HistoryIcon, RotateCcw,
-  Save, ExternalLink, Building2, Copy, Upload, Stamp, Eye, ClipboardCheck, Landmark, FileUp, FileText, MessageSquare, RefreshCw, Maximize2, FileSpreadsheet, Inbox, FileInput
+  Save, ExternalLink, Building2, Copy, Upload, Stamp, Eye, ClipboardCheck, Landmark, FileUp, FileText, MessageSquare, RefreshCw, Maximize2, FileSpreadsheet, Inbox, FileInput,
+  ArrowUp, ArrowDown, ArrowUpDown,
 } from 'lucide-react';
 import { SOPSymbolsSection, FiturSection } from '@/components/PanduanSymbols';
+import { bacaPdfCover, gambarHalamanCover, type InfoPdfCover } from '@/lib/coverPdf';
 import ManualDocModal from '@/components/ManualDocModal';
 import ManualDocDetailModal from '@/components/ManualDocDetailModal';
 import ImporSopPdfModal from '@/components/ImporSopPdfModal';
@@ -112,7 +114,14 @@ export default function SOPDashboardPage() {
     } catch { /* sessionStorage diblokir — lanjut tanpa penanda */ }
     setPendingDocId(Number(doc));
   }, []);
-  const [filterUnit, setFilterUnit] = useState(() => readSavedView()?.filterUnit ?? 'Semua');
+  // Filter Unit Kerja di toolbar sudah ditiadakan → jangan pulihkan nilai lama dari sesi
+  // (bisa menyaring diam-diam tanpa kontrol yang terlihat).
+  const [filterUnit, setFilterUnit] = useState('Semua');
+  // Admin/superadmin: filter Jenis Kewenangan (menggantikan filter Unit Kerja di toolbar —
+  // rekap per unit sudah tersedia lewat tabel rekap & Dashboard).
+  const [filterJenis, setFilterJenis] = useState('Semua');
+  // Urutan lewat klik judul kolom tabel (menimpa pilihan "Urut:" selama aktif).
+  const [urutKolom, setUrutKolom] = useState<{ kolom: 'info' | 'unit' | 'status'; arah: 'asc' | 'desc' } | null>(null);
   const [filterStatus, setFilterStatus] = useState('Semua');
   // Urutan daftar: terbaru diperbarui (default) / terbaru dibuat / terlama / judul.
   const [sortBy, setSortBy] = useState<'updated' | 'created' | 'oldest' | 'title'>(() => (readSavedView()?.sortBy as 'updated' | 'created' | 'oldest' | 'title') ?? 'updated');
@@ -156,8 +165,12 @@ export default function SOPDashboardPage() {
   // Modal unggah cover bertanda tangan
   const [coverModal, setCoverModal] = useState<{ isOpen: boolean; model: SOPModel | null }>({ isOpen: false, model: null });
   const [coverData, setCoverData] = useState<{ dataUrl: string; name: string; size: number } | null>(null);
+  // PDF berisi lebih dari 1 halaman (mis. dokumen TTE e-Office utuh): pilih halaman cover-nya.
+  const [coverPdf, setCoverPdf] = useState<{ buf: ArrayBuffer; info: InfoPdfCover; pilih: number[] } | null>(null);
+  const [membacaCover, setMembacaCover] = useState(false);
   const [uploadingCover, setUploadingCover] = useState(false);
   const MAX_COVER_BYTES = 2 * 1024 * 1024;
+  const MAX_DOK_TTE_BYTES = 5 * 1024 * 1024; // PDF utuh (cover dipilih dari halamannya)
   // Modal isian penetapan (dasar hukum & tanggal) saat menekan "Ditetapkan"
   const [penetapanModal, setPenetapanModal] = useState<{ isOpen: boolean; model: SOPModel | null; dasar: string; tanggal: string }>({ isOpen: false, model: null, dasar: '', tanggal: '' });
   const [submittingPenetapan, setSubmittingPenetapan] = useState(false);
@@ -425,13 +438,14 @@ export default function SOPDashboardPage() {
       const matchesSearch = title.toLowerCase().includes(searchQuery.toLowerCase()) ||
                             key.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesUnit = filterUnit === 'Semua' || unitL1 === filterUnit;
+      const matchesJenis = filterJenis === 'Semua' || (filterJenis === '-' ? !m.jenis_proses : m.jenis_proses === filterJenis);
       const currentStatus = (m.status || 'draft').toLowerCase();
       const targetStatus = filterStatus.toLowerCase();
       const matchesStatus = filterStatus === 'Semua' || currentStatus === targetStatus;
 
-      return matchesSearch && matchesUnit && matchesStatus;
+      return matchesSearch && matchesUnit && matchesJenis && matchesStatus;
     });
-  }, [modelsPlusTetap, searchQuery, filterUnit, filterStatus]);
+  }, [modelsPlusTetap, searchQuery, filterUnit, filterJenis, filterStatus]);
 
   // Pisahkan berdasarkan tab. SOP baru pindah ke Daftar SOP saat berstatus 'terbit'
   // (cover bertanda tangan sudah diunggah); 'approved' tetap di Pengajuan (menunggu cover TTD).
@@ -697,7 +711,26 @@ export default function SOPDashboardPage() {
 
   // Pengurutan daftar dokumen — dokumen terbaru/baru diperbarui di paling atas.
   const waktu = (v?: string) => (v ? new Date(v).getTime() : 0);
+  // Nomor dokumen utk urutan kolom "Informasi Dokumen": nomor/kode dulu, yang kosong
+  // menyusul diurutkan menurut nama.
+  const nomorDok = (m: SOPModel) => ((m.process_key || (m.is_manual && !(m as { _registri?: boolean })._registri ? m.manual_nomor : '') || '') as string).trim();
+  const URUT_STATUS = ['usulan', 'draft', 'pending', 'rejected', 'approved', 'verifikasi', 'fisik', 'penetapan', 'terbit'];
+  const urutkanKolom = (arr: SOPModel[], u: NonNullable<typeof urutKolom>) => {
+    const k = u.arah === 'asc' ? 1 : -1;
+    const teks = (a: string, b: string) => a.localeCompare(b, 'id', { numeric: true, sensitivity: 'base' });
+    return [...arr].sort((a, b) => {
+      if (u.kolom === 'info') {
+        const na = nomorDok(a), nb = nomorDok(b);
+        if (!!na !== !!nb) return na ? -1 : 1; // yang bernomor selalu di atas
+        return k * (na ? teks(na, nb) || teks(a.process_title, b.process_title) : teks(a.process_title, b.process_title));
+      }
+      if (u.kolom === 'unit') { const m = a; const ua = `${getDisplayUnitL1(m)} ${getDisplayUnitL2(m)}`; { const m = b; const ub = `${getDisplayUnitL1(m)} ${getDisplayUnitL2(m)}`; return k * teks(ua, ub) || teks(a.process_title, b.process_title); } }
+      const ia = URUT_STATUS.indexOf(a.status || 'draft'), ib = URUT_STATUS.indexOf(b.status || 'draft');
+      return k * (ia - ib) || teks(a.process_title, b.process_title);
+    });
+  };
   const urutkan = <T extends { process_title: string; created_at?: string; updated_at?: string }>(arr: T[]) => {
+    if (urutKolom) return urutkanKolom(arr as unknown as SOPModel[], urutKolom) as unknown as T[];
     const out = [...arr];
     if (sortBy === 'title') return out.sort((a, b) => a.process_title.localeCompare(b.process_title, 'id'));
     if (sortBy === 'created') return out.sort((a, b) => waktu(b.created_at) - waktu(a.created_at));
@@ -705,13 +738,18 @@ export default function SOPDashboardPage() {
     return out.sort((a, b) => (waktu(b.updated_at) || waktu(b.created_at)) - (waktu(a.updated_at) || waktu(a.created_at)));
   };
 
+  const klikUrut = (kolom: 'info' | 'unit' | 'status') => setUrutKolom(u =>
+    !u || u.kolom !== kolom ? { kolom, arah: 'asc' } : u.arah === 'asc' ? { kolom, arah: 'desc' } : null);
+  const ikonUrut = (kolom: 'info' | 'unit' | 'status') => urutKolom?.kolom !== kolom
+    ? <ArrowUpDown className="w-3 h-3 opacity-40" />
+    : urutKolom.arah === 'asc' ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />;
   const visibleModels = useMemo(() => {
     if (isAdminRekap && rekapDrill.l2 !== null) {
       return urutkan(rekapDataset.filter(m => getDisplayUnitL1(m) === rekapDrill.l1 && (getDisplayUnitL2(m) || '(Tanpa Sub-Unit)') === rekapDrill.l2));
     }
     return urutkan(currentFilteredModels.filter(m => tabOf(m.status) === listTab));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentFilteredModels, listTab, isAdminRekap, rekapDrill, rekapDataset, sortBy]);
+  }, [currentFilteredModels, listTab, isAdminRekap, rekapDrill, rekapDataset, sortBy, urutKolom]);
 
   // Panel "klik kartu": semua dokumen berstatus kartu + kotak cari, lintas unit.
   const CARD_MATCH: Record<string, (m: SOPModel) => boolean> = {
@@ -834,7 +872,7 @@ export default function SOPDashboardPage() {
     () => visibleModels.slice((currentPage - 1) * pageSize, currentPage * pageSize),
     [visibleModels, currentPage, pageSize]
   );
-  useEffect(() => { setCurrentPage(1); }, [listTab, searchQuery, filterUnit, filterStatus, pageSize, rekapDrill, sortBy]);
+  useEffect(() => { setCurrentPage(1); }, [listTab, searchQuery, filterUnit, filterJenis, filterStatus, pageSize, rekapDrill, sortBy, urutKolom]);
   useEffect(() => { if (currentPage > totalPages) setCurrentPage(totalPages); }, [currentPage, totalPages]);
   // Reset drill saat pindah tab / ubah filter — lewati mount agar drill hasil
   // pemulihan sessionStorage (kembali dari Studio) tidak ikut terhapus.
@@ -859,26 +897,46 @@ export default function SOPDashboardPage() {
     if (!file) return;
     const okTypes = ['application/pdf', 'image/jpeg', 'image/png'];
     if (!okTypes.includes(file.type)) { alert('Format harus PDF, JPG, atau PNG.'); return; }
-    if (file.size > MAX_COVER_BYTES) { alert(`Ukuran file ${(file.size / 1024 / 1024).toFixed(2)} MB melebihi batas 2 MB. Kompres/scan ulang dengan resolusi lebih rendah.`); return; }
+    const batas = file.type === 'application/pdf' ? MAX_DOK_TTE_BYTES : MAX_COVER_BYTES;
+    if (file.size > batas) { alert(`Ukuran file ${(file.size / 1024 / 1024).toFixed(2)} MB melebihi batas ${batas / 1024 / 1024} MB. Kompres/scan ulang dengan resolusi lebih rendah.`); return; }
+    setCoverPdf(null);
     const reader = new FileReader();
     reader.onload = () => setCoverData({ dataUrl: reader.result as string, name: file.name, size: file.size });
     reader.onerror = () => alert('Gagal membaca file.');
     reader.readAsDataURL(file);
+    if (file.type === 'application/pdf') {
+      setMembacaCover(true);
+      file.arrayBuffer()
+        .then(async buf => {
+          const info = await bacaPdfCover(buf);
+          if (info.total > 1) setCoverPdf({ buf, info, pilih: info.saran });
+          else if (file.size > MAX_COVER_BYTES) { setCoverData(null); alert('Cover 1 halaman maksimal 2 MB.'); }
+        })
+        .catch(e => { console.error(e); })
+        .finally(() => setMembacaCover(false));
+    }
   };
+  const tutupCoverModal = () => { setCoverModal({ isOpen: false, model: null }); setCoverData(null); setCoverPdf(null); };
 
   const submitCover = async () => {
     if (!coverModal.model || !coverData) return;
+    if (coverPdf && !coverPdf.pilih.length) { alert('Centang minimal satu halaman cover.'); return; }
     setUploadingCover(true);
     try {
-      const res = await apiFetch(`/sop/models/${coverModal.model.id}/cover`, token, {
+      const kirim = (tambahan: Record<string, unknown> = {}) => apiFetch(`/sop/models/${coverModal.model!.id}/cover`, token, {
         method: 'POST',
-        body: JSON.stringify({ cover: coverData.dataUrl, filename: coverData.name }),
+        body: JSON.stringify({ cover: coverData.dataUrl, filename: coverData.name, ...(coverPdf ? { halaman: coverPdf.pilih } : {}), ...tambahan }),
       });
+      let res = await kirim();
+      // PDF terkunci/terenkripsi: server tak bisa memotong halamannya → kirim gambar halaman cover.
+      if (res.status === 422 && coverPdf) {
+        const gambar = await gambarHalamanCover(coverPdf.buf, coverPdf.pilih);
+        res = await kirim({ gambar_cover: gambar });
+      }
       if (res.ok) {
         const mid = coverModal.model.id;
         setSavedModels(prev => prev.map(m => m.id === mid ? { ...m, status: 'verifikasi', has_cover: true, catatan: '' } : m));
-        setCoverModal({ isOpen: false, model: null });
-        setCoverData(null);
+        tutupCoverModal();
         alert('✅ Cover berhasil diunggah. Menunggu verifikasi admin (TTD & nomor SOP) sebelum diterbitkan.');
       } else {
         const e = await res.json().catch(() => ({}));
@@ -1932,9 +1990,12 @@ export default function SOPDashboardPage() {
                 <FileInput className="w-4 h-4" /> Impor PDF
               </button>
             )}
-            <button onClick={() => setShowManualDoc(true)} className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/30' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
-              <FileUp className="w-4 h-4" /> Dokumen Manual
-            </button>
+            {/* Dokumen Manual: sementara khusus admin/superadmin — user terbatas diarahkan ke Impor PDF/VP. */}
+            {(currentUser.role === 'admin' || currentUser.role === 'superadmin') && (
+              <button onClick={() => setShowManualDoc(true)} className={`whitespace-nowrap shrink-0 px-3 py-2.5 xl:px-4 xl:py-3 border rounded-xl flex items-center gap-2 font-bold text-sm transition-all ${isDarkMode ? 'border-amber-700 text-amber-400 hover:bg-amber-900/30' : 'border-amber-300 text-amber-700 hover:bg-amber-50'}`}>
+                <FileUp className="w-4 h-4" /> Dokumen Manual
+              </button>
+            )}
             <button onClick={handleOpenNewSOP} className="whitespace-nowrap shrink-0 px-4 py-2.5 xl:px-5 xl:py-3 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl shadow-md flex items-center gap-2 font-bold transition-all">
               <Plus size={18} /> Buat SOP Baru
             </button>
@@ -2085,9 +2146,10 @@ export default function SOPDashboardPage() {
               {currentUser.role === 'admin' && (
                 <div className="relative w-full sm:w-56">
                   <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Filter className={`h-4 w-4 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} /></div>
-                  <select value={filterUnit} onChange={(e) => setFilterUnit(e.target.value)} className={`w-full pl-10 pr-4 py-2.5 border rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-emerald-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}>
-                    <option value="Semua">Unit Kerja: Semua</option>
-                    {listUnitL1.filter(u => u !== 'Semua').map(unit => (<option key={unit as string} value={unit as string}>{unit as string}</option>))}
+                  <select value={filterJenis} onChange={(e) => setFilterJenis(e.target.value)} title="Saring menurut Jenis Kewenangan" className={`w-full pl-10 pr-4 py-2.5 border rounded-xl text-sm font-semibold outline-none focus:ring-2 focus:ring-emerald-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}>
+                    <option value="Semua">Jenis Kewenangan: Semua</option>
+                    {JENIS_OPTIONS.map(j => <option key={j} value={j}>Jenis Kewenangan: {j}</option>)}
+                    <option value="-">Jenis Kewenangan: Belum diisi</option>
                   </select>
                 </div>
               )}
@@ -2105,7 +2167,7 @@ export default function SOPDashboardPage() {
                   <option value="terbit">Status: Terbit</option>
                 </select>
               </div>
-              <select value={sortBy} onChange={e => setSortBy(e.target.value as typeof sortBy)} title="Urutkan daftar dokumen" className={`w-full sm:w-48 px-3 py-2.5 border rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}><option value="updated">Urut: Baru Diperbarui</option><option value="created">Urut: Terbaru Dibuat</option><option value="oldest">Urut: Terlama</option><option value="title">Urut: Judul (A–Z)</option></select>
+              <select value={sortBy} onChange={e => { setSortBy(e.target.value as typeof sortBy); setUrutKolom(null); }} title="Urutkan daftar dokumen" className={`w-full sm:w-48 px-3 py-2.5 border rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}><option value="updated">Urut: Baru Diperbarui</option><option value="created">Urut: Terbaru Dibuat</option><option value="oldest">Urut: Terlama</option><option value="title">Urut: Judul (A–Z)</option></select>
               <div className="relative w-full sm:flex-1 sm:min-w-48">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Search className={`h-4 w-4 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} /></div>
                 <input type="text" placeholder="Cari judul atau nomor SOP..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className={`w-full pl-10 pr-4 py-2.5 border rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-emerald-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white placeholder:text-slate-500' : 'bg-white border-slate-300 text-slate-900'}`} />
@@ -2235,9 +2297,9 @@ export default function SOPDashboardPage() {
             <table className="w-full text-sm text-left">
               <thead className={`text-[11px] font-bold uppercase tracking-wider border-b ${isDarkMode ? 'text-slate-400 bg-slate-800/50 border-slate-700' : 'text-slate-500 bg-slate-50/80 border-slate-200'}`}>
                 <tr>
-                  <th className="px-6 py-4 w-1/3">Informasi Dokumen</th>
-                  <th className="px-6 py-4 w-1/4">Unit Kerja</th>
-                  <th className="px-6 py-4">Status Pengajuan</th>
+                  <th className="px-6 py-4 w-1/3"><button type="button" onClick={() => klikUrut('info')} title="Urutkan menurut kolom ini (klik lagi untuk membalik, klik ketiga untuk mematikan)" className={`inline-flex items-center gap-1.5 whitespace-nowrap uppercase tracking-wider font-bold hover:text-emerald-600 ${urutKolom?.kolom === 'info' ? 'text-emerald-600' : ''}`}>Informasi Dokumen{ikonUrut('info')}</button></th>
+                  <th className="px-6 py-4 w-1/4"><button type="button" onClick={() => klikUrut('unit')} title="Urutkan menurut kolom ini (klik lagi untuk membalik, klik ketiga untuk mematikan)" className={`inline-flex items-center gap-1.5 whitespace-nowrap uppercase tracking-wider font-bold hover:text-emerald-600 ${urutKolom?.kolom === 'unit' ? 'text-emerald-600' : ''}`}>Unit Kerja{ikonUrut('unit')}</button></th>
+                  <th className="px-6 py-4"><button type="button" onClick={() => klikUrut('status')} title="Urutkan menurut kolom ini (klik lagi untuk membalik, klik ketiga untuk mematikan)" className={`inline-flex items-center gap-1.5 whitespace-nowrap uppercase tracking-wider font-bold hover:text-emerald-600 ${urutKolom?.kolom === 'status' ? 'text-emerald-600' : ''}`}>Status Pengajuan{ikonUrut('status')}</button></th>
                   <th className="px-6 py-4 text-center w-auto min-w-55 xl:min-w-70">Aksi / Tindakan</th>
                 </tr>
               </thead>
@@ -2256,6 +2318,7 @@ export default function SOPDashboardPage() {
                 ) : (
                   pagedModels.map((model) => (
                     <tr
+                      key={model.id}
                       onClick={() => isRegistri(model) ? bukaDokumenRegistri(model) : model.is_manual ? setManualDetail(model) : openPreview(model)}
                       className={`transition-colors cursor-pointer ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-emerald-50/40'}`}
                     >
@@ -2439,6 +2502,7 @@ export default function SOPDashboardPage() {
             ) : (
               pagedModels.map((model) => (
                 <div
+                  key={model.id}
                   onClick={() => isRegistri(model) ? bukaDokumenRegistri(model) : model.is_manual ? setManualDetail(model) : openPreview(model)}
                   className={`px-4 py-4 cursor-pointer transition-colors ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-emerald-50/40'}`}
                 >
@@ -2634,18 +2698,18 @@ export default function SOPDashboardPage() {
 
       {/* MODAL UNGGAH COVER BERTANDA TANGAN */}
       {coverModal.isOpen && coverModal.model && (
-        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => { if (!uploadingCover) { setCoverModal({ isOpen: false, model: null }); setCoverData(null); } }}>
-          <div className={`w-full max-w-md rounded-2xl shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col ${isDarkMode ? 'bg-[#151F32] border border-slate-700' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => { if (!uploadingCover) tutupCoverModal(); }}>
+          <div className={`w-full ${coverPdf ? 'max-w-2xl' : 'max-w-md'} max-h-[92vh] rounded-2xl shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col ${isDarkMode ? 'bg-[#151F32] border border-slate-700' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
             <div className={`flex items-start gap-3 p-5 border-b ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
               <div className="w-10 h-10 rounded-xl bg-amber-100 text-amber-600 grid place-items-center shrink-0"><FileSignature className="w-5 h-5" /></div>
               <div className="flex-1 min-w-0">
                 <h3 className={`text-base font-bold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>Unggah Cover Bertanda Tangan</h3>
                 <p className={`text-xs mt-0.5 truncate ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{coverModal.model.process_title}</p>
               </div>
-              <button onClick={() => { if (!uploadingCover) { setCoverModal({ isOpen: false, model: null }); setCoverData(null); } }} className={`${isDarkMode ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-700'}`}><X className="w-5 h-5" /></button>
+              <button onClick={() => { if (!uploadingCover) tutupCoverModal(); }} className={`${isDarkMode ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-700'}`}><X className="w-5 h-5" /></button>
             </div>
-            <div className="p-5 space-y-4">
-              <p className={`text-xs leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>SOP yang sudah disahkan/disetujui/ditandatangani pimpinan, cover-nya di-scan lalu diunggah di sini. Setelah diunggah, status SOP menjadi <b className="text-emerald-600">TERBIT</b> dan konten SOP dikunci dari perubahan.</p>
+            <div className="p-5 space-y-4 overflow-y-auto">
+              <p className={`text-xs leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Cover yang ditandatangani <b>basah (TTD Basah)</b>: scan lalu unggah (PDF/JPG/PNG, maks. 2 MB). Dokumen yang ditandatangani <b>elektronik (TTE)</b>: unggah PDF-nya <b>utuh</b> (maks. 5 MB) lalu centang halaman cover-nya — berkas asli tetap disimpan utuh agar keabsahan TTE dapat dicek.</p>
               <label className={`flex flex-col items-center justify-center gap-2 border-2 border-dashed rounded-xl p-6 cursor-pointer transition-colors ${isDarkMode ? 'border-slate-600 hover:border-amber-500 bg-[#0F172A]' : 'border-slate-300 hover:border-amber-400 bg-slate-50'}`}>
                 <Upload className={`w-7 h-7 ${coverData ? 'text-amber-500' : 'text-slate-400'}`} />
                 {coverData ? (
@@ -2653,12 +2717,34 @@ export default function SOPDashboardPage() {
                 ) : (
                   <span className={`text-sm font-semibold ${isDarkMode ? 'text-slate-300' : 'text-slate-600'}`}>Pilih file (PDF/JPG/PNG)</span>
                 )}
-                <span className="text-[11px] text-slate-400">Maksimal 2 MB</span>
+                <span className="text-[11px] text-slate-400">Cover scan maks. 2 MB · PDF TTE utuh maks. 5 MB</span>
                 <input type="file" accept="application/pdf,image/jpeg,image/png" className="hidden" onChange={e => onCoverPick(e.target.files?.[0])} />
               </label>
+              {membacaCover && <p className="text-xs text-slate-400 flex items-center gap-2"><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Membaca halaman PDF…</p>}
+              {coverPdf && (
+                <div className={`rounded-xl border p-3 ${isDarkMode ? 'border-slate-700 bg-[#0F172A]' : 'border-amber-200 bg-amber-50/50'}`}>
+                  <p className={`text-xs font-bold mb-1 ${isDarkMode ? 'text-slate-200' : 'text-[#002855]'}`}>Dokumen berisi {coverPdf.info.total} halaman — centang halaman COVER-nya</p>
+                  <p className={`text-[11px] mb-2.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Terpilih otomatis: halaman sebelum tabel alur (Kegiatan/Pelaksana). Hanya halaman tercentang yang dipakai sebagai cover; halaman alur tetap dari sistem.</p>
+                  <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5">
+                    {coverPdf.info.halaman.map(h => {
+                      const on = coverPdf.pilih.includes(h.no);
+                      return (
+                        <button key={h.no} type="button" onClick={() => setCoverPdf(c => c && ({ ...c, pilih: on ? c.pilih.filter(x => x !== h.no) : [...c.pilih, h.no].sort((a, b) => a - b) }))}
+                          className={`relative rounded-lg border-2 overflow-hidden bg-white transition-all ${on ? 'border-amber-500 ring-2 ring-amber-300' : 'border-slate-200 opacity-70 hover:opacity-100'}`}>
+                          {/* eslint-disable-next-line @next/next/no-img-element */}
+                          <img src={h.thumb} alt={`Halaman ${h.no}`} className="w-full h-auto block" />
+                          <span className={`absolute top-1 left-1 px-1.5 py-0.5 rounded text-[10px] font-bold ${on ? 'bg-amber-500 text-white' : 'bg-slate-700/70 text-white'}`}>{on ? '✓ ' : ''}Hal. {h.no}</span>
+                          {h.alur && <span className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-100 text-slate-500">Alur</span>}
+                        </button>
+                      );
+                    })}
+                  </div>
+                  {coverPdf.info.total > coverPdf.info.halaman.length && <p className="text-[11px] text-slate-400 mt-2">Hanya {coverPdf.info.halaman.length} halaman pertama yang ditampilkan.</p>}
+                </div>
+              )}
             </div>
             <div className={`flex justify-end gap-2 p-5 border-t ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
-              <button onClick={() => { setCoverModal({ isOpen: false, model: null }); setCoverData(null); }} disabled={uploadingCover} className={`px-4 py-2.5 text-sm font-bold rounded-xl border disabled:opacity-50 ${isDarkMode ? 'border-slate-600 text-slate-300' : 'border-slate-200 text-slate-600'}`}>Batal</button>
+              <button onClick={tutupCoverModal} disabled={uploadingCover} className={`px-4 py-2.5 text-sm font-bold rounded-xl border disabled:opacity-50 ${isDarkMode ? 'border-slate-600 text-slate-300' : 'border-slate-200 text-slate-600'}`}>Batal</button>
               <button onClick={submitCover} disabled={!coverData || uploadingCover} className="px-5 py-2.5 text-sm font-bold bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-xl flex items-center gap-2"><Upload className="w-4 h-4" />{uploadingCover ? 'Mengunggah...' : 'Unggah & Terbitkan'}</button>
             </div>
           </div>

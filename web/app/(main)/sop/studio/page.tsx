@@ -45,6 +45,7 @@ function SOPStudioContent() {
   // Berapa halaman cover yang discan unit kerja (umumnya 1 = halaman bertanda tangan);
   // sisanya tetap dipakai dari sistem agar halaman cover lanjutan tidak hilang.
   const [coverPages, setCoverPages] = useState(1);
+  const [coverAsli, setCoverAsli] = useState(false); // dokumen TTE utuh tersimpan
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [coverMime, setCoverMime] = useState<string>('');
   const [editConflict, setEditConflict] = useState<{username: string; nama_lengkap: string}[]>([]);
@@ -125,6 +126,7 @@ function SOPStudioContent() {
            if (data && data.sop_data) setInitialData(data.sop_data);
            if (data && data.status) setDocStatus(data.status);
            if (data && data.cover_pages) setCoverPages(Math.max(1, Number(data.cover_pages) || 1));
+           setCoverAsli(!!data?.cover_asli);
            loadedOkRef.current = true; // izinkan autosave HANYA setelah dokumen benar termuat
            // Cek apakah perangkat lain sedang mengedit dokumen ini (termasuk akun sama beda perangkat).
            // Mode lihat / dokumen terkunci tidak perlu peringatan — pembaca tidak menimbulkan konflik.
@@ -387,6 +389,13 @@ function SOPStudioContent() {
       signedCoverMime={coverMime}
       hasSignedCover={['terbit', 'verifikasi', 'fisik', 'penetapan'].includes(docStatus || '')}
       signedCoverPages={coverPages}
+      onUnduhDokumenTte={coverAsli && currentId ? async () => {
+        const res = await apiFetch(`/sop/models/${currentId}/cover?asli=1`);
+        if (!res.ok) { alert('Dokumen TTE asli tidak tersedia.'); return; }
+        const url = URL.createObjectURL(await res.blob());
+        window.open(url, '_blank');
+        setTimeout(() => URL.revokeObjectURL(url), 60000);
+      } : undefined}
       onSaveTrigger={handleSave}
       onSubmitTrigger={handleSubmit}
       onBackTrigger={handleBack}

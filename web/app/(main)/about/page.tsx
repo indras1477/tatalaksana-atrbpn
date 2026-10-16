@@ -1,7 +1,7 @@
 'use client';
 
 import {
-  Info, Coffee, Heart, ShieldCheck, Sparkles, ExternalLink,
+  Info, Coffee, ShieldCheck, Sparkles, ExternalLink, Briefcase,
   FileSignature, GitBranch, ClipboardCheck, ScrollText, Home, Share2,
   Bell, History, Layers,
 } from 'lucide-react';
@@ -221,17 +221,17 @@ export default function AboutPage() {
                   memakai, dan layak untuk terus dirawat.
                 </p>
                 <p className={`text-sm leading-relaxed mt-2.5 font-semibold ${isDarkMode ? 'text-blue-300/90' : 'text-[#002855]/90'}`}>
-                  Pindai kode QR di samping, atau tekan tombol di bawah ini.
+                  Pindai atau tekan kode QR di samping.
                 </p>
 
                 <a
-                  href="https://saweria.co/nandaferdiansyah"
+                  href="https://nanda-portfolio-flax.vercel.app"
                   target="_blank"
                   rel="noopener noreferrer"
                   className="mt-4 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold text-white bg-linear-to-r from-[#001F43] to-[#000F24] hover:from-[#002855] hover:to-[#001F43] shadow-sm hover:shadow-md transition-all active:scale-95"
                 >
-                  <Heart className="w-4 h-4" />
-                  Dukung Pengembang
+                  <Briefcase className="w-4 h-4" />
+                  Kunjungi Portofolioku
                   <ExternalLink className="w-3.5 h-3.5 opacity-80" />
                 </a>
               </div>
@@ -257,7 +257,7 @@ export default function AboutPage() {
                   />
                 </a>
                 <p className={`text-[11px] text-center font-semibold ${muted}`}>
-                  Pindai dengan kamera ponsel
+                  Pindai dengan kamera ponsel/klik gambar QR di atas
                 </p>
               </div>
             </div>

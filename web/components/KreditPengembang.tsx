@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Coffee, Heart, ExternalLink, X, Briefcase } from 'lucide-react';
+import { Coffee, ExternalLink, X, Briefcase } from 'lucide-react';
 
 const SAWERIA_URL = 'https://saweria.co/nandaferdiansyah';
 const PORTOFOLIO_URL = 'https://nanda-portfolio-flax.vercel.app';
@@ -106,19 +106,8 @@ export default function KreditPengembang({ isDarkMode = false }: Props) {
                     height={128}
                   />
                 </a>
-                <p className={`text-[11px] font-semibold ${muted}`}>Pindai dengan kamera ponsel</p>
+                <p className={`text-[11px] font-semibold text-center ${muted}`}>Pindai dengan kamera ponsel/klik gambar QR di atas</p>
               </div>
-
-              <a
-                href={SAWERIA_URL}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="mt-4 w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold text-white bg-linear-to-r from-[#001F43] to-[#000F24] hover:from-[#002855] hover:to-[#001F43] shadow-sm hover:shadow-md transition-all active:scale-95"
-              >
-                <Heart className="w-4 h-4" />
-                Dukung Pengembang
-                <ExternalLink className="w-3.5 h-3.5 opacity-80" />
-              </a>
             </div>
 
             {/* Tombol portofolio */}
@@ -130,15 +119,11 @@ export default function KreditPengembang({ isDarkMode = false }: Props) {
                 href={PORTOFOLIO_URL}
                 target="_blank"
                 rel="noopener noreferrer"
-                className={`w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border transition-all active:scale-95 ${
-                  isDarkMode
-                    ? 'border-slate-700 text-slate-200 hover:bg-slate-800 hover:border-slate-600'
-                    : 'border-slate-200 text-slate-700 hover:bg-slate-50 hover:border-slate-300'
-                }`}
+                className="w-full inline-flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold text-white bg-linear-to-r from-[#001F43] to-[#000F24] hover:from-[#002855] hover:to-[#001F43] shadow-sm hover:shadow-md transition-all active:scale-95"
               >
                 <Briefcase className="w-4 h-4" />
                 Kunjungi Portofolioku
-                <ExternalLink className="w-3.5 h-3.5 opacity-70" />
+                <ExternalLink className="w-3.5 h-3.5 opacity-80" />
               </a>
             </div>
           </div>

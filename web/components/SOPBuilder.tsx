@@ -7,7 +7,7 @@ import {
   Circle, Square, Diamond, Shield,
   FileSpreadsheet, Send, ArrowLeft, Info, MousePointer2, X, ChevronLeft, ChevronRight,
   Edit2, FileDown, Loader2, ChevronDown, Undo2, Redo2, Bold, Italic, Minus, Type,
-  FileText, Link2, ExternalLink, Search, AlertTriangle,
+  FileText, Link2, ExternalLink, Search, AlertTriangle, Scissors,
 } from 'lucide-react';
 import { HIERARKI_UNIT } from '@/lib/constants';
 import { KLASIFIKASI_SOP, denganNilaiSaatIni } from '@/lib/klasifikasi';
@@ -128,6 +128,8 @@ export interface SOPBuilderProps {
   signedCoverMime?: string;
   hasSignedCover?: boolean;
   signedCoverPages?: number;
+  /** Ada dokumen TTE utuh yang diunggah → tombol unduh berkas aslinya di pratinjau cover. */
+  onUnduhDokumenTte?: () => void;
   // ID dokumen tersimpan — untuk tombol Bagikan (tautan view publik). Null = belum tersimpan.
   shareModelId?: number | null;
   // Tombol tambahan di kanan toolbar (mis. "Setujui" utk admin di mode lihat).
@@ -737,7 +739,7 @@ const EditableCell = ({ value, onChange, className, placeholder, center = false,
 const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   initialData, initialTitle, initialKey, initialL1, initialL2, initialJenis, initialKlasifikasi,
   isViewOnly = false, allowLocalDraft = true, onSaveTrigger, onSubmitTrigger, onBackTrigger, onDownloadPdf,
-  signedCoverUrl = null, signedCoverMime = '', hasSignedCover = false, signedCoverPages = 1, shareModelId = null, toolbarExtra = null,
+  signedCoverUrl = null, signedCoverMime = '', hasSignedCover = false, signedCoverPages = 1, onUnduhDokumenTte, shareModelId = null, toolbarExtra = null,
   bolehKeterkaitan = false, cariDokumenTerkait, rapikanSaatMuat = false,
 }, ref) => {
   const searchParams = useSearchParams();
@@ -1497,6 +1499,49 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     return () => clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTab, steps, pelaksanaHeaders, colCount, judul, jenisSOP, klasifikasiSOP, effectiveIsViewOnly, rapikanHalaman, fontSiap]);
+  // ── PERINGATAN COVER MELEBIHI KERTAS F4 ─────────────────────────────────────────────
+  // Auto-flow cover (di atas) memindah BARIS ke halaman berikutnya; tetapi bila SATU baris
+  // (mis. Dasar Hukum yang panjang) sudah lebih tinggi dari sisa kertas, auto-flow tak bisa
+  // menolong. Diukur SETELAH auto-flow sempat berjalan, lalu penyusun diberi saran tabel mana
+  // yang menabrak + tombol ✂️ Pisah / ➕ Tabel Lanjutan (aksi yang sudah ada). Hanya peringatan.
+  type LuapanCover = { hal: number; mm: number; rowId: string; baseId: number; judulKolom: string; judulBaris: string; pisahDari: string | null };
+  const [luapanCover, setLuapanCover] = useState<LuapanCover[]>([]);
+  const [coverDiabaikan, setCoverDiabaikan] = useState(false);
+  useEffect(() => {
+    if (activeTab !== 'cover' || effectiveIsViewOnly) { setLuapanCover(prev => (prev.length ? [] : prev)); return; }
+    const t = setTimeout(() => {
+      const hasil: LuapanCover[] = [];
+      document.querySelectorAll<HTMLElement>('.cover-page-container').forEach((c, hal) => {
+        // Diukur dari DASAR TABEL, bukan tinggi kotak halaman: kotak cover (flex-child dgn
+        // min-height 215mm) bisa menyusut ke 215mm di layar sementara tabelnya meluber keluar.
+        const tabel = c.querySelector('table');
+        if (!c.offsetWidth || !tabel) return;
+        const kotak = c.getBoundingClientRect();
+        const skala = kotak.width / c.offsetWidth || 1;
+        const batas = kotak.top + (813 - (parseFloat(getComputedStyle(c).paddingBottom) || 0)) * skala;
+        const lebihPx = (tabel.getBoundingClientRect().bottom - batas) / skala;
+        if (lebihPx <= 2) return;
+        const baris = Array.from(c.querySelectorAll<HTMLElement>('tr[data-cover-row]'));
+        const iTabrak = baris.findIndex(tr => tr.getBoundingClientRect().bottom > batas + 1);
+        if (iTabrak < 0) return;
+        const tr = baris[iTabrak];
+        // Kolom penyebab = sisi yang isinya lebih tinggi.
+        const [kiri, kanan] = Array.from(tr.querySelectorAll<HTMLElement>('[data-cover-isi]'));
+        const sisiKiri = !kanan || (kiri?.scrollHeight || 0) >= (kanan?.scrollHeight || 0);
+        const judulKolom = ((sisiKiri ? tr.dataset.judulKiri : tr.dataset.judulKanan) || '').replace(/:\s*$/, '');
+        hasil.push({
+          hal, mm: Math.max(1, Math.round(lebihPx * 25.4 / 96)),
+          rowId: tr.dataset.coverRow || '', baseId: Number(tr.dataset.baseId),
+          judulKolom,
+          judulBaris: [tr.dataset.judulKiri, tr.dataset.judulKanan].filter(Boolean).map(x => (x as string).replace(/:\s*$/, '')).join(' & '),
+          pisahDari: iTabrak > 0 ? (baris[iTabrak - 1].dataset.coverRow || null) : null,
+        });
+      });
+      setLuapanCover(prev => (JSON.stringify(prev) === JSON.stringify(hasil) ? prev : hasil));
+      if (!hasil.length) setCoverDiabaikan(false);
+    }, 1300); // > debounce auto-flow (500ms) + render ulang
+    return () => clearTimeout(t);
+  }, [activeTab, effectiveIsViewOnly, coverBreaks, coverCont, dasarHukum, kualifikasi, keterkaitan, peralatan, peringatan, pencatatan, colCount, fontsTick, judul, jabatanPengesah]);
   // Jumlah halaman berubah → hasil ukur halaman lain sudah tidak berlaku.
   useEffect(() => { setLuapan(prev => Object.fromEntries(Object.entries(prev).filter(([k]) => Number(k) < chunkedSteps.length))); }, [chunkedSteps.length]);
 
@@ -2600,6 +2645,39 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         </div>
       )}
 
+      {/* Peringatan cover melebihi kertas F4 — hanya saran, boleh diabaikan. */}
+      {!effectiveIsViewOnly && activeTab === 'cover' && luapanCover.length > 0 && !coverDiabaikan && (
+        <div className="w-full max-w-[330mm] bg-amber-50 border border-amber-300 text-amber-800 text-[12px] font-sans p-3 rounded-xl mb-4 print:hidden shadow-sm space-y-2.5">
+          {luapanCover.map((l, i) => {
+            const rapi = (x: string) => x.toLowerCase().replace(/(^|[\s/(&])\S/g, h => h.toUpperCase());
+            const kolom = l.judulKolom ? rapi(l.judulKolom) : 'tabel ini';
+            const baris = l.judulBaris ? rapi(l.judulBaris) : kolom;
+            return (
+              <div key={`${l.hal}-${l.rowId}`} className="flex flex-col sm:flex-row sm:items-center gap-2.5">
+                <div className="flex items-start gap-2 flex-1 min-w-0">
+                  <AlertTriangle size={18} className="shrink-0 mt-0.5 text-amber-500" />
+                  <p>
+                    <b>Cover halaman {l.hal + 1} melebihi batas kertas F4 (±{l.mm} mm)</b> — tabel <b>{baris}</b> (bergaris merah putus-putus) melewati batas kertas dan akan terpotong/bergeser saat diunduh PDF.{' '}
+                    Saran: {l.pisahDari ? <>pindahkan tabel ini ke halaman baru dengan <b>Pisah ke Halaman Baru</b>, atau </> : null}
+                    pindahkan sebagian isi {kolom} ke <b>+ Tabel Lanjutan</b> (halaman berikutnya), lalu potong-tempel butir yang tidak muat ke tabel lanjutan tersebut.
+                    {i === luapanCover.length - 1 && <>{' '}<span className="text-amber-700/80">Peringatan ini boleh diabaikan.</span></>}
+                  </p>
+                </div>
+                <div className="flex gap-2 shrink-0 flex-wrap">
+                  {l.pisahDari && (
+                    <button onClick={() => setCoverBreaks(prev => ({ ...prev, [l.pisahDari as string]: true }))} className="px-3 py-1.5 rounded-lg bg-white border border-amber-300 hover:bg-amber-100 text-amber-800 text-xs font-bold whitespace-nowrap inline-flex items-center gap-1"><Scissors size={13} /> Pisah ke Halaman Baru</button>
+                  )}
+                  <button onClick={() => addCoverCont(l.baseId)} className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-xs font-bold shadow-sm whitespace-nowrap inline-flex items-center gap-1"><Plus size={13} strokeWidth={3} /> Tabel Lanjutan {kolom}</button>
+                  {i === luapanCover.length - 1 && (
+                    <button onClick={() => setCoverDiabaikan(true)} className="px-3 py-1.5 rounded-lg bg-white border border-amber-300 hover:bg-amber-100 text-amber-800 text-xs font-bold whitespace-nowrap">Abaikan</button>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+
       {!effectiveIsViewOnly && activeTab !== 'cover' && (
         <div className="w-full max-w-[330mm] bg-emerald-50 border border-emerald-200 text-emerald-700 text-[11px] font-sans p-3 rounded-xl mb-4 print:hidden flex items-start gap-2 shadow-sm">
           <MousePointer2 size={16} className="shrink-0 mt-0.5" />
@@ -2640,7 +2718,10 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
           ikut sebagai halaman, bukan tangkapan layar). */}
       {signedCoverUrl && activeTab === 'cover' && (
         <div className="paper-f4-landscape-auto shadow-2xl border border-slate-300 text-black flex-col flex mb-8 no-print relative bg-white items-center justify-center p-[6mm]">
-          <div className="absolute top-2 left-2 bg-emerald-600 text-white text-[10px] font-bold px-2 py-1 rounded font-sans z-10">COVER BERTANDA TANGAN (hasil scan)</div>
+          <div className="absolute top-2 left-2 bg-emerald-600 text-white text-[10px] font-bold px-2 py-1 rounded font-sans z-10">{onUnduhDokumenTte ? 'COVER BERTANDA TANGAN ELEKTRONIK (TTE)' : 'COVER BERTANDA TANGAN (hasil scan)'}</div>
+          {onUnduhDokumenTte && (
+            <button onClick={onUnduhDokumenTte} title="Buka dokumen TTE utuh seperti yang diunggah (untuk pengecekan keabsahan)" className="absolute top-2 right-2 bg-white hover:bg-emerald-50 text-emerald-700 border border-emerald-300 text-[11px] font-bold px-2.5 py-1 rounded-lg font-sans z-10 shadow-sm">Buka Dokumen TTE Asli</button>
+          )}
           {signedCoverMime.includes('pdf') ? (
             <iframe src={`${signedCoverUrl}#toolbar=0&navpanes=0&scrollbar=0&view=FitH`} title="Cover bertanda tangan" className="w-full h-[195mm] border-0" />
           ) : (
@@ -2726,7 +2807,8 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                   const conts = coverCont[row.baseId] || [];
                   const isChainEnd = row.contIdx === undefined ? conts.length === 0 : row.contIdx === conts.length - 1;
                   return (
-                  <tr key={`cover-row-${row.id}`}>
+                  <tr key={`cover-row-${row.id}`} data-cover-row={String(row.id)} data-base-id={row.baseId} data-judul-kiri={row.leftTitle} data-judul-kanan={row.rightTitle}
+                    style={luapanCover.some(l => l.rowId === String(row.id)) && !coverDiabaikan && !effectiveIsViewOnly ? { outline: '2px dashed #ef4444', outlineOffset: '-3px' } : undefined}>
                     <td colSpan={5} className="border-2 border-black align-top p-0 relative">
                        <div className="relative p-1.5 bg-slate-100 font-bold uppercase text-[12px] border-b-2 border-black">
                          {row.leftTitle}
@@ -2734,7 +2816,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                            <button onClick={() => removeCoverCont(row.baseId, row.contIdx as number)} title="Hapus tabel lanjutan ini" className="no-print font-sans normal-case absolute right-1.5 top-1/2 -translate-y-1/2 px-2 py-0.5 bg-red-50 hover:bg-red-500 hover:text-white text-red-600 text-[10px] font-bold rounded-full border border-red-200 transition-all leading-none">🗑 Hapus Lanjutan</button>
                          )}
                        </div>
-                       <div className={`p-2 text-[12px] ${row.minH}`}><EditableCell value={row.leftVal} onChange={row.leftSetter} justify={true} /></div>
+                       <div data-cover-isi="kiri" className={`p-2 text-[12px] ${row.minH}`}><EditableCell value={row.leftVal} onChange={row.leftSetter} justify={true} /></div>
                        {!effectiveIsViewOnly && !coverBreaks[row.id] && nextRow && !nextRow.forceBreakBefore && (
                          <div className="absolute bottom-0 right-0 translate-x-1/2 translate-y-1/2 z-30 no-print font-sans pointer-events-auto">
                            <button onClick={() => setCoverBreaks({...coverBreaks, [row.id]: true})} className="px-3 py-1 bg-white hover:bg-slate-100 text-slate-600 text-[10px] font-bold rounded-full border border-slate-300 shadow-md transition-all active:scale-95 whitespace-nowrap">✂️ Pisah ke Halaman Baru</button>
@@ -2748,7 +2830,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                     </td>
                     <td colSpan={5} className="border-2 border-black align-top p-0">
                        <div className="p-1.5 bg-slate-100 font-bold uppercase text-[12px] border-b-2 border-black">{row.rightTitle}</div>
-                       <div className={`p-2 text-[12px] ${row.minH}`}><EditableCell value={row.rightVal} onChange={row.rightSetter} justify={true} /></div>
+                       <div data-cover-isi="kanan" className={`p-2 text-[12px] ${row.minH}`}><EditableCell value={row.rightVal} onChange={row.rightSetter} justify={true} /></div>
                     </td>
                   </tr>
                   );

@@ -356,6 +356,18 @@ const initDatabase = async () => {
         created_at TIMESTAMP DEFAULT NOW()
       );
       ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_seen_at TIMESTAMP;
+      /* Notifikasi dibatasi sampai Sub-Unit (L2): biro lain di bawah unit utama yang sama
+         tidak boleh saling melihat notifikasi. NULL = berlaku untuk seluruh L1. */
+      ALTER TABLE notifications ADD COLUMN IF NOT EXISTS unit_l2 TEXT;
+      UPDATE notifications n SET unit_l2 = u2.nama
+        FROM bpmn_models m JOIN unit_kerja_l2 u2 ON u2.id = m.l2_id
+        WHERE n.kind = 'bpmn' AND n.model_id = m.id AND n.unit_l2 IS NULL AND n.for_role = 'user';
+      UPDATE notifications n SET unit_l2 = u2.nama
+        FROM sop_models m JOIN unit_kerja_l2 u2 ON u2.id = m.l2_id
+        WHERE n.kind = 'sop' AND n.model_id = m.id AND n.unit_l2 IS NULL AND n.for_role = 'user';
+      UPDATE notifications n SET unit_l2 = u2.nama
+        FROM sp_models m JOIN unit_kerja_l2 u2 ON u2.id = m.l2_id
+        WHERE n.kind = 'sp' AND n.model_id = m.id AND n.unit_l2 IS NULL AND n.for_role = 'user';
 
       CREATE TABLE IF NOT EXISTS manual_files (
         id SERIAL PRIMARY KEY,
@@ -521,6 +533,12 @@ const initDatabase = async () => {
       -- memindai halaman pertama (yang bertanda tangan); halaman cover LANJUTAN
       -- tetap harus dipakai dari sistem, bukan ikut hilang.
       ALTER TABLE sop_covers ADD COLUMN IF NOT EXISTS pages INTEGER;
+      -- Dokumen TTE (tanda tangan elektronik e-Office) diunggah UTUH: kolom data = halaman
+      -- cover yang dipilih saja (dipakai tampilan & gabung PDF seperti biasa), sedangkan
+      -- berkas aslinya disimpan apa adanya di sini agar keabsahan TTE tetap dapat dicek.
+      ALTER TABLE sop_covers ADD COLUMN IF NOT EXISTS asli_data TEXT;
+      ALTER TABLE sop_covers ADD COLUMN IF NOT EXISTS asli_filename VARCHAR(255);
+      ALTER TABLE sop_covers ADD COLUMN IF NOT EXISTS halaman_cover TEXT;
     `);
 
     // Riwayat/log aktivitas dokumen BPMN & SOP: tercatat di tiap transisi status.
@@ -2968,6 +2986,35 @@ async function hitungHalamanCover(dataBase64, mime) {
   } catch { return 1; }
 }
 
+// Ambil halaman tertentu (1-based) dari PDF → PDF baru berisi halaman itu saja.
+// Dokumen TTE e-Office umumnya TIDAK terenkripsi; bila terenkripsi pdf-lib gagal
+// memuat → dilempar dgn kode PDF_TERKUNCI agar klien mengirim gambar halamannya.
+async function potongHalamanPdf(buf, halaman) {
+  let src;
+  try { src = await PDFDocument.load(buf); }
+  catch (e) { const err = new Error('PDF terkunci/terenkripsi'); err.kode = 'PDF_TERKUNCI'; throw err; }
+  const total = src.getPageCount();
+  const idx = [...new Set(halaman.map(Number))].filter(n => Number.isInteger(n) && n >= 1 && n <= total).sort((a, b) => a - b).map(n => n - 1);
+  if (!idx.length) { const err = new Error('Halaman cover tidak valid'); err.kode = 'HALAMAN'; throw err; }
+  const out = await PDFDocument.create();
+  (await out.copyPages(src, idx)).forEach(p => out.addPage(p));
+  return { bytes: Buffer.from(await out.save()), jumlah: idx.length, total };
+}
+// Susun PDF dari gambar halaman (JPEG/PNG dataURL) — cadangan untuk PDF terkunci.
+async function pdfDariGambar(gambar) {
+  const out = await PDFDocument.create();
+  for (const g of gambar) {
+    const m = /^data:(image\/(?:jpeg|png));base64,(.+)$/s.exec(g.data || '');
+    if (!m) continue;
+    const bytes = Buffer.from(m[2], 'base64');
+    const img = m[1] === 'image/png' ? await out.embedPng(bytes) : await out.embedJpg(bytes);
+    const w = Number(g.w) || img.width, h = Number(g.h) || img.height; // ukuran halaman asli (pt)
+    out.addPage([w, h]).drawImage(img, { x: 0, y: 0, width: w, height: h });
+  }
+  if (!out.getPageCount()) throw new Error('Gambar halaman cover kosong');
+  return Buffer.from(await out.save());
+}
+
 // ============ KOTAK SAMPAH (soft delete, retensi 30 hari) ============
 // Dokumen yang dihapus tidak langsung lenyap — admin/superadmin dapat memulihkannya
 // dalam 30 hari. Lewat itu, dibersihkan permanen secara otomatis.
@@ -3086,10 +3133,22 @@ async function pushNotif({ kind, row, event, req, pesan }) {
       const u = await pool.query('SELECT nama FROM unit_kerja_l1 WHERE id = $1', [row.l1_id]);
       unitNama = u.rows[0]?.nama || null;
     }
+    let unitL2Nama = null;
+    if (row.l2_id) {
+      const u2 = await pool.query('SELECT nama FROM unit_kerja_l2 WHERE id = $1', [row.l2_id]);
+      unitL2Nama = u2.rows[0]?.nama || null;
+    }
     let forRole = isAdmin ? 'user' : 'admin';
     let text = pesan;
     if (!text) {
-      const dari = unitNama || req.user?.username || 'Unit kerja';
+      // Pengirim = IDENTITAS AKUN (username) yang mengajukan. Nama lengkap akun unit bersama
+      // umumnya sama dgn nama unit penempatan, sehingga admin tak bisa membedakan akun
+      // mana (mis. phpt_atrbpn3) yang mengirim — username yang dipakai untuk pengecekan.
+      let namaAkun = null;
+      if (!req.user?.username && req.user?.id) {
+        try { namaAkun = (await pool.query('SELECT nama_lengkap FROM users WHERE id = $1', [req.user.id])).rows[0]?.nama_lengkap || null; } catch { /* pakai fallback */ }
+      }
+      const dari = req.user?.username || namaAkun || unitNama || 'Unit kerja';
       if (isAdmin) {
         if (event === 'rejected') text = `Ortala MR telah mereview dan memberi catatan revisi pada ${jenis} “${judul}”.`;
         else if (event === 'fisik') text = kind === 'sop'
@@ -3107,8 +3166,8 @@ async function pushNotif({ kind, row, event, req, pesan }) {
     }
     if (!text) return;
     await pool.query(
-      'INSERT INTO notifications (kind, model_id, judul, event, pesan, for_role, unit_l1, actor) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)',
-      [kind, row.id, judul, event, text, forRole, forRole === 'user' ? unitNama : null, req.user?.username || null]
+      'INSERT INTO notifications (kind, model_id, judul, event, pesan, for_role, unit_l1, unit_l2, actor) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [kind, row.id, judul, event, text, forRole, forRole === 'user' ? unitNama : null, forRole === 'user' ? unitL2Nama : null, req.user?.username || null]
     );
     // Retensi notifikasi 3 hari (permintaan user: riwayat yang sudah dibaca hilang).
     await pool.query("DELETE FROM notifications WHERE created_at < NOW() - INTERVAL '3 days'");
@@ -3134,8 +3193,12 @@ app.get('/api/notifications', authenticate, async (req, res) => {
     const items = isAdmin
       ? await pool.query('SELECT * FROM notifications WHERE for_role = $1 ORDER BY created_at DESC LIMIT $2', ['admin', limit])
       : await pool.query(
-          "SELECT * FROM notifications WHERE for_role = 'user' AND (unit_l1 IS NULL OR LOWER(unit_l1) = LOWER($1)) ORDER BY created_at DESC LIMIT $2",
-          [req.user.unit_l1 || '', limit]);
+          `SELECT * FROM notifications
+           WHERE for_role = 'user'
+             AND (unit_l1 IS NULL OR LOWER(unit_l1) = LOWER($1))
+             AND ($3 = '' OR LOWER($3) = 'seluruh unit' OR unit_l2 IS NULL OR LOWER(unit_l2) = LOWER($3))
+           ORDER BY created_at DESC LIMIT $2`,
+          [req.user.unit_l1 || '', limit, String(req.user.unit_l2 || '').trim()]);
     const seen = await pool.query('SELECT notif_seen_at FROM users WHERE id = $1', [req.user.id]);
     const seenAt = seen.rows[0]?.notif_seen_at || null;
     const unseen = items.rows.filter(n => !seenAt || new Date(n.created_at) > new Date(seenAt)).length;
@@ -3616,7 +3679,8 @@ app.get('/api/sop/models', authenticate, async (req, res) => {
     let query = `
       SELECT ${SOP_COLS}, u1.nama as unit_l1, u2.nama as unit_l2,
              EXISTS(SELECT 1 FROM sop_covers c WHERE c.sop_id = s.id) AS has_cover,
-             (SELECT COALESCE(c.pages, 1) FROM sop_covers c WHERE c.sop_id = s.id) AS cover_pages
+             (SELECT COALESCE(c.pages, 1) FROM sop_covers c WHERE c.sop_id = s.id) AS cover_pages,
+             EXISTS(SELECT 1 FROM sop_covers c WHERE c.sop_id = s.id AND c.asli_data IS NOT NULL) AS cover_asli
       FROM sop_models s
       LEFT JOIN unit_kerja_l1 u1 ON s.l1_id = u1.id
       LEFT JOIN unit_kerja_l2 u2 ON s.l2_id = u2.id
@@ -3662,7 +3726,8 @@ app.get('/api/sop/models/:id', authenticate, async (req, res) => {
     const result = await pool.query(`
       SELECT ${SOP_COLS}, u1.nama as unit_l1, u2.nama as unit_l2,
              EXISTS(SELECT 1 FROM sop_covers c WHERE c.sop_id = s.id) AS has_cover,
-             (SELECT COALESCE(c.pages, 1) FROM sop_covers c WHERE c.sop_id = s.id) AS cover_pages
+             (SELECT COALESCE(c.pages, 1) FROM sop_covers c WHERE c.sop_id = s.id) AS cover_pages,
+             EXISTS(SELECT 1 FROM sop_covers c WHERE c.sop_id = s.id AND c.asli_data IS NOT NULL) AS cover_asli
       FROM sop_models s
       LEFT JOIN unit_kerja_l1 u1 ON s.l1_id = u1.id
       LEFT JOIN unit_kerja_l2 u2 ON s.l2_id = u2.id
@@ -3982,6 +4047,16 @@ app.put('/api/sop/models/:id', authenticate, async (req, res) => {
     }
     res.json(result.rows[0]);
   } catch (err) {
+    if (err.code === '23505' && err.constraint === 'sop_models_process_key_key') {
+      // Nomor SOP bentrok dgn dokumen lain — beri pesan jelas (bukan 500) agar penyusun bisa mengganti nomornya.
+      const m = /\)=\((.*)\) already exists/.exec(err.detail || '');
+      let pemilik = '';
+      try {
+        const o = await pool.query('SELECT process_title FROM sop_models WHERE process_key = $1 AND id <> $2 LIMIT 1', [m ? m[1] : '', req.params.id]);
+        if (o.rows[0]) pemilik = ` (dipakai SOP "${o.rows[0].process_title}")`;
+      } catch { /* abaikan */ }
+      return res.status(409).json({ error: `Nomor SOP "${m ? m[1] : ''}" sudah dipakai dokumen lain${pemilik}. Ganti Nomor SOP lewat tombol Edit Info, lalu simpan lagi.` });
+    }
     console.error(err);
     res.status(500).json({ error: 'Internal Server Error' });
   }
@@ -4036,7 +4111,7 @@ app.patch('/api/sop/models/status/:id', authenticate, requireRole('admin', 'supe
 // Hanya saat status 'approved' atau 'verifikasi' (unggah ulang). Batas 2 MB, PDF/JPG/PNG.
 app.post('/api/sop/models/:id/cover', authenticate, async (req, res) => {
   const { id } = req.params;
-  const { cover, filename } = req.body;
+  const { cover, filename, halaman, gambar_cover } = req.body;
   if (!cover) return res.status(400).json({ error: 'File cover wajib diunggah' });
   try {
     const chk = await pool.query('SELECT id, created_by, status, sop_data, l1_id, process_title FROM sop_models WHERE id = $1', [id]);
@@ -4067,22 +4142,46 @@ app.post('/api/sop/models/:id/cover', authenticate, async (req, res) => {
     const allowed = ['application/pdf', 'image/jpeg', 'image/png'];
     if (!allowed.includes(mime)) return res.status(400).json({ error: 'Format harus PDF, JPG, atau PNG' });
     const bytes = Buffer.byteLength(b64, 'base64');
-    if (bytes > 2 * 1024 * 1024) return res.status(400).json({ error: 'Ukuran file melebihi 2 MB' });
+    // Dokumen TTE utuh (PDF + halaman cover dipilih) boleh s.d. 5 MB; selain itu tetap 2 MB.
+    const tteUtuh = mime === 'application/pdf' && Array.isArray(halaman) && halaman.length > 0;
+    const batas = tteUtuh ? 5 : 2;
+    if (bytes > batas * 1024 * 1024) return res.status(400).json({ error: `Ukuran file melebihi ${batas} MB` });
+
+    // Dokumen utuh → simpan aslinya, dan cover = halaman yang dipilih saja.
+    let dataCover = cover, mimeCover = mime, asliData = null, asliNama = null, halamanCover = null;
+    if (tteUtuh) {
+      try {
+        const hasil = await potongHalamanPdf(Buffer.from(b64, 'base64'), halaman);
+        dataCover = `data:application/pdf;base64,${hasil.bytes.toString('base64')}`;
+      } catch (e) {
+        if (e.kode === 'PDF_TERKUNCI' && Array.isArray(gambar_cover) && gambar_cover.length) {
+          dataCover = `data:application/pdf;base64,${(await pdfDariGambar(gambar_cover)).toString('base64')}`;
+        } else if (e.kode === 'PDF_TERKUNCI') {
+          return res.status(422).json({ error: 'PDF terkunci/terenkripsi — halaman cover akan dikirim sebagai gambar.', kode: 'PDF_TERKUNCI' });
+        } else return res.status(400).json({ error: e.message });
+      }
+      mimeCover = 'application/pdf';
+      asliData = cover; asliNama = (filename || 'dokumen-tte.pdf').slice(0, 255);
+      halamanCover = JSON.stringify([...new Set(halaman.map(Number))].sort((a, b) => a - b));
+    }
 
     await pool.query(`
-      INSERT INTO sop_covers (sop_id, data, filename, mime, uploaded_by, uploaded_at, pages)
-      VALUES ($1, $2, $3, $4, $5, NOW(), $6)
+      INSERT INTO sop_covers (sop_id, data, filename, mime, uploaded_by, uploaded_at, pages, asli_data, asli_filename, halaman_cover)
+      VALUES ($1, $2, $3, $4, $5, NOW(), $6, $7, $8, $9)
       ON CONFLICT (sop_id) DO UPDATE
         SET data = EXCLUDED.data, filename = EXCLUDED.filename, mime = EXCLUDED.mime,
-            uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW(), pages = EXCLUDED.pages
-    `, [id, cover, (filename || 'cover-sop.pdf').slice(0, 255), mime, req.user.id,
-        await hitungHalamanCover(cover, mime)]);
+            uploaded_by = EXCLUDED.uploaded_by, uploaded_at = NOW(), pages = EXCLUDED.pages,
+            asli_data = EXCLUDED.asli_data, asli_filename = EXCLUDED.asli_filename, halaman_cover = EXCLUDED.halaman_cover
+    `, [id, dataCover, (filename || 'cover-sop.pdf').slice(0, 255), mimeCover, req.user.id,
+        await hitungHalamanCover(dataCover, mimeCover), asliData, asliNama, halamanCover]);
 
     // Cover masuk → status 'verifikasi' (menunggu admin memeriksa TTD & nomor SOP). Belum terbit,
     // belum masuk registry Dashboard — itu terjadi saat admin menyetujui (status → 'terbit').
     await pool.query("UPDATE sop_models SET status = 'verifikasi', updated_at = NOW() WHERE id = $1", [id]);
     pushNotif({ kind: 'sop', row, event: 'verifikasi', req });
-    logDocHistory('sop', id, req, 'verifikasi', 'Mengunggah cover bertanda tangan pimpinan');
+    logDocHistory('sop', id, req, 'verifikasi', asliData
+      ? `Mengunggah dokumen bertanda tangan elektronik (TTE) utuh — halaman cover: ${JSON.parse(halamanCover).join(', ')}`
+      : 'Mengunggah cover bertanda tangan pimpinan');
     res.json({ ok: true, id: Number(id), status: 'verifikasi' });
   } catch (err) {
     console.error('Upload cover SOP:', err);
@@ -4094,9 +4193,13 @@ app.post('/api/sop/models/:id/cover', authenticate, async (req, res) => {
 app.get('/api/sop/models/:id/cover', authenticate, async (req, res) => {
   const { id } = req.params;
   try {
-    const r = await pool.query('SELECT data, filename, mime FROM sop_covers WHERE sop_id = $1', [id]);
+    const r = await pool.query('SELECT data, filename, mime, asli_data, asli_filename FROM sop_covers WHERE sop_id = $1', [id]);
     if (r.rowCount === 0) return res.status(404).json({ error: 'Cover belum diunggah' });
-    const { data, filename, mime } = r.rows[0];
+    // ?asli=1 → dokumen TTE utuh yang diunggah (bila ada), selain itu cover yang dipakai.
+    const asli = req.query.asli === '1' && r.rows[0].asli_data;
+    const data = asli ? r.rows[0].asli_data : r.rows[0].data;
+    const filename = asli ? r.rows[0].asli_filename : r.rows[0].filename;
+    const mime = asli ? 'application/pdf' : r.rows[0].mime;
     const parsed = /^data:([^;]+);base64,(.+)$/s.exec(data);
     const buf = Buffer.from(parsed ? parsed[2] : data, 'base64');
     // HTTP header hanya boleh ASCII — filename* (RFC 6266) untuk Unicode + fallback ASCII.

@@ -710,8 +710,8 @@ const PEDOMAN_DOCS = [
   {
     id: 'pedoman',
     judul: 'Handbook Penggunaan SIMPEL',
-    ringkasan: 'Buku pedoman lengkap (47 halaman): peran & hak akses, panduan tiap menu, simbol BPMN/SOP, alur persetujuan, dan FAQ.',
-    meta: 'PDF · Versi 3.0 · Oktober 2026',
+    ringkasan: 'Buku pedoman lengkap (50 halaman): peran & hak akses, panduan tiap menu, simbol BPMN/SOP, unggah cover TTD basah & TTE, alur persetujuan, dan FAQ.',
+    meta: 'PDF · Versi 3.1 · Oktober 2026',
     url: '/e-sop-atrbpn/pedoman/Pedoman-Penggunaan-SIMPEL-2026.pdf',
     unduhNama: 'Handbook Penggunaan SIMPEL 2026.pdf',
     icon: FileText,
@@ -837,7 +837,8 @@ export default function PanduanPage() {
 
   const ADMINS = [
     { name: 'Bima Karismanto', phone: '6285292724654' },
-    { name: 'Nanda Ferdiansyah', phone: '6285713595915' },
+    { name: 'Bisma Saputra', phone: '6289608305216' },
+    { name: 'Naufal Ammar Azada', phone: '6289656610687' },
   ];
   // Non-admin: sembunyikan Manajemen Pengguna & Upload Manual (Tambah Dokumen).
   const visibleItems = (currentUser?.role === 'admin' || currentUser?.role === 'superadmin')
@@ -869,11 +870,34 @@ export default function PanduanPage() {
           </p>
         </div>
 
+        {/* Kontak bantuan */}
+        <div className={`rounded-2xl border p-5 text-center ${isDarkMode ? 'bg-[#151F32] border-slate-800' : 'bg-white border-slate-100'}`}>
+          <p className={`text-sm font-bold mb-1 ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>
+            Butuh bantuan lebih lanjut?
+          </p>
+          <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+            Hubungi tim Biro Organisasi, Tata Laksana, dan Manajemen Risiko (Ortala MR) ATR/BPN
+          </p>
+          <button
+            type="button"
+            onClick={() => setShowCallCenter(true)}
+            title="Hubungi Admin via WhatsApp"
+            className={`mt-4 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border transition-all active:scale-95 ${
+              isDarkMode
+                ? 'bg-green-900/20 border-green-800/40 text-green-400 hover:bg-green-900/40 hover:border-green-700'
+                : 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100 hover:border-green-300'
+            }`}
+          >
+            <MessageCircle className="w-4 h-4" />
+            Hubungi Admin
+          </button>
+        </div>
+
         {/* Dokumen pedoman: unduh + pratinjau langsung */}
         <PedomanSection isDarkMode={isDarkMode} />
 
         {/* Grid kartu panduan */}
-        <h3 className={`text-sm font-extrabold uppercase tracking-wider -mb-2 ${isDarkMode ? 'text-slate-300' : 'text-[#002855]'}`}>Panduan per Fitur</h3>
+        <h3 className={`text-sm font-extrabold uppercase tracking-wider ${isDarkMode ? 'text-slate-300' : 'text-[#002855]'}`}>Panduan per Fitur</h3>
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
           {visibleItems.map(item => {
             const { icon: Icon, color, colorDark, border, borderDark, judul, ringkasan, Illust } = item;
@@ -914,28 +938,6 @@ export default function PanduanPage() {
           })}
         </div>
 
-        {/* Kontak bantuan */}
-        <div className={`rounded-2xl border p-5 text-center ${isDarkMode ? 'bg-[#151F32] border-slate-800' : 'bg-white border-slate-100'}`}>
-          <p className={`text-sm font-bold mb-1 ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>
-            Butuh bantuan lebih lanjut?
-          </p>
-          <p className={`text-sm ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
-            Hubungi tim Biro Organisasi, Tata Laksana, dan Manajemen Risiko (Ortala MR) ATR/BPN
-          </p>
-          <button
-            type="button"
-            onClick={() => setShowCallCenter(true)}
-            title="Hubungi Admin via WhatsApp"
-            className={`mt-4 inline-flex items-center gap-2 px-4 py-2.5 rounded-xl text-sm font-bold border transition-all active:scale-95 ${
-              isDarkMode
-                ? 'bg-green-900/20 border-green-800/40 text-green-400 hover:bg-green-900/40 hover:border-green-700'
-                : 'bg-green-50 border-green-200 text-green-700 hover:bg-green-100 hover:border-green-300'
-            }`}
-          >
-            <MessageCircle className="w-4 h-4" />
-            Hubungi Admin
-          </button>
-        </div>
       </div>
 
       {/* Modal popup panduan */}
