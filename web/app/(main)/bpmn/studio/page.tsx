@@ -643,10 +643,10 @@ function BPMNStudioContent() {
 
           <div className="flex items-center gap-2 min-w-0">
             <GitBranch className="w-5 h-5 text-blue-600 shrink-0" />
-            <h1 className="text-lg font-bold shrink-0">Studio Editor</h1>
+            <h1 className={`text-lg font-bold shrink-0 ${config.processTitle ? 'hidden 2xl:block' : ''}`}>Studio Editor</h1>
             {config.processTitle && (
-              <span className={`ml-1 sm:ml-3 px-3 py-1 rounded-md text-sm font-extrabold shadow-sm flex items-center gap-2 max-w-25 sm:max-w-xs truncate ${isDarkMode ? 'bg-slate-800 text-blue-300' : 'bg-blue-100 text-[#002855]'}`}>
-                <span className="truncate">{config.processTitle}</span>
+              <span title={config.processTitle} className={`ml-1 sm:ml-3 px-3 py-1 rounded-md text-sm font-extrabold shadow-sm flex items-center gap-2 min-w-0 max-w-[40vw] sm:max-w-[min(52vw,46rem)] ${isDarkMode ? 'bg-slate-800 text-blue-300' : 'bg-blue-100 text-[#002855]'}`}>
+                <span className="min-w-0 line-clamp-2 break-words leading-snug">{config.processTitle}</span>
                 {isViewOnly && <span className="text-red-500 font-bold ml-2 shrink-0">(Mode Baca)</span>}
                 {currentModel?.status && (
                     <span className={`shrink-0 ml-2 px-1.5 py-0.5 rounded text-[11px] sm:text-xs uppercase tracking-wide border ${

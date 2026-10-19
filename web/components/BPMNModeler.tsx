@@ -1800,7 +1800,7 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
             {breadcrumbs.map((item, index) => (
               <React.Fragment key={item.id}>
                 {index > 0 && <ChevronRight size={14} className="mx-2 text-slate-400 shrink-0" />}
-                <button onClick={() => (modelerRef.current?.get('canvas') as BpmnCanvas).setRootElement(item.element)} className={`font-medium truncate max-w-30 ${index === breadcrumbs.length - 1 ? 'text-blue-600' : 'text-slate-500'}`}>
+                <button onClick={() => (modelerRef.current?.get('canvas') as BpmnCanvas).setRootElement(item.element)} title={item.name} className={`font-medium text-left leading-tight line-clamp-2 break-words ${index === breadcrumbs.length - 1 ? 'max-w-[min(45vw,34rem)] text-blue-600' : 'max-w-[min(25vw,16rem)] text-slate-500'}`}>
                   {item.name}
                 </button>
               </React.Fragment>
