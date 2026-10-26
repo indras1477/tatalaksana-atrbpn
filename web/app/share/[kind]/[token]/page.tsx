@@ -136,7 +136,7 @@ export default function SharePage() {
       <Shell>
         <div className="flex-1 relative min-h-0">
           {doc.bpmn_xml
-            ? <BPMNViewer xml={doc.bpmn_xml} />
+            ? <BPMNViewer xml={doc.bpmn_xml} projectName={doc.process_title} />
             : <div className="absolute inset-0 flex items-center justify-center text-slate-400 text-sm">Diagram belum tersedia.</div>}
         </div>
       </Shell>

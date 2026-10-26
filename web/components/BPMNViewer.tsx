@@ -127,6 +127,9 @@ export type BpmnViewerExport = () => Promise<{ svg: string; subSvgs: BpmnSubSvg[
 
 interface BPMNViewerProps {
   xml?: string;
+  // Judul dokumen — dipakai sebagai nama breadcrumb akar (nama proses di dalam XML
+  // bisa berupa sisa judul yang belum selesai diketik).
+  projectName?: string;
   // Daftarkan fungsi ekspor (SVG proses utama + tiap plane sub-proses) agar halaman
   // studio bisa mengunduh PDF/SVG saat mode baca — sama seperti dari editor.
   registerExportApi?: (fn: BpmnViewerExport) => void;
@@ -154,7 +157,7 @@ type BpmnElementRegistry = {
   filter: (fn: (el: { type?: string; parent?: { id?: string } }) => boolean) => unknown[];
 };
 
-export default function BPMNViewer({ xml, registerExportApi }: BPMNViewerProps) {
+export default function BPMNViewer({ xml, projectName, registerExportApi }: BPMNViewerProps) {
   const containerRef = useRef<HTMLDivElement>(null);
   const viewerRef = useRef<InstanceType<typeof NavigatedViewer> | null>(null);
   const navStackRef = useRef<BreadcrumbItem[]>([]);
@@ -459,15 +462,15 @@ export default function BPMNViewer({ xml, registerExportApi }: BPMNViewerProps) 
               {index > 0 && <ChevronRight size={12} className="mx-0.5 text-slate-400 shrink-0" />}
               <button
                 onClick={() => navigateToItem(item)}
-                title={index === 0 ? 'Proses Utama' : item.name}
-                className={`flex items-center gap-1 truncate max-w-40 font-medium transition-colors px-1 py-0.5 rounded ${
+                title={index === 0 ? (projectName || 'Proses Utama') : item.name}
+                className={`flex items-center gap-1 truncate ${index === 0 ? 'max-w-[min(50vw,32rem)]' : 'max-w-56'} font-medium transition-colors px-1 py-0.5 rounded ${
                   index === breadcrumbs.length - 1
                     ? 'text-blue-600 pointer-events-none'
                     : 'text-slate-500 hover:text-slate-800 hover:bg-slate-200'
                 }`}
               >
                 {index === 0 && <Home size={11} className="shrink-0" />}
-                <span className="truncate">{item.name}</span>
+                <span className="truncate">{index === 0 && projectName ? projectName : item.name}</span>
               </button>
             </React.Fragment>
           ))}

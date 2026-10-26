@@ -733,7 +733,7 @@ function BPMNStudioContent() {
       <div className="flex flex-1 overflow-hidden relative">
         <div className="flex-1 w-full h-full bg-white relative">
             {!isLoadingDocument && isViewOnly && currentModel && (
-                <Viewer xml={initialXml} registerExportApi={(fn) => { viewerExportRef.current = fn; }} />
+                <Viewer xml={initialXml} projectName={config.processTitle} registerExportApi={(fn) => { viewerExportRef.current = fn; }} />
             )}
             {!isLoadingDocument && !isViewOnly && (currentModel || (config.processTitle && !documentId)) && (
                 <Modeler

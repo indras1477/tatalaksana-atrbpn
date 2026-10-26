@@ -1060,9 +1060,9 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
       setLoadError(null);
       try {
         let xmlToLoad = (xml && xml.includes('bpmn:definitions')) ? xml : DEFAULT_XML;
-        if (projectNameRef.current && xmlToLoad.includes('id="Process_1"') && !xmlToLoad.includes('id="Process_1" name=')) {
-           xmlToLoad = xmlToLoad.replace('id="Process_1"', `id="Process_1" name="${projectNameRef.current}"`);
-        }
+        // Nama proses TIDAK lagi disuntikkan dari judul: Modeler bisa terpasang saat judul
+        // baru separuh diketik ("U", "Pe", …) sehingga nama proses tersimpan keliru.
+        // Breadcrumb akar kini selalu memakai judul dokumen saat render (lihat <nav>).
 
         // Repair XML: move orphaned process elements into their SubProcess flowElements,
         // remove Pool shapes with no position, strip sopext comment.
@@ -1800,8 +1800,8 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
             {breadcrumbs.map((item, index) => (
               <React.Fragment key={item.id}>
                 {index > 0 && <ChevronRight size={14} className="mx-2 text-slate-400 shrink-0" />}
-                <button onClick={() => (modelerRef.current?.get('canvas') as BpmnCanvas).setRootElement(item.element)} title={item.name} className={`font-medium text-left leading-tight line-clamp-2 break-words ${index === breadcrumbs.length - 1 ? 'max-w-[min(45vw,34rem)] text-blue-600' : 'max-w-[min(25vw,16rem)] text-slate-500'}`}>
-                  {item.name}
+                <button onClick={() => (modelerRef.current?.get('canvas') as BpmnCanvas).setRootElement(item.element)} title={index === 0 && projectName ? projectName : item.name} className={`font-medium text-left leading-tight line-clamp-2 break-words ${index === breadcrumbs.length - 1 ? 'max-w-[min(45vw,34rem)] text-blue-600' : 'max-w-[min(25vw,16rem)] text-slate-500'}`}>
+                  {index === 0 && projectName ? projectName : item.name}
                 </button>
               </React.Fragment>
             ))}
