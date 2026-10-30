@@ -613,10 +613,15 @@ class CustomRules extends (RuleProvider as unknown as { new(eb: BpmnEventBus): R
 // agar lane tetap menjadi anak pool-nya.
 type GroupDropEl = { type?: string; parent?: GroupDropEl } | undefined;
 class GroupDropBehavior extends (CommandInterceptor as unknown as { new(eb: BpmnEventBus): CommandInterceptor }) {
-  static $inject = ['eventBus', 'elementRegistry', 'modeling'];
+  static $inject = ['eventBus', 'elementRegistry', 'modeling', 'commandStack'];
 
-  constructor(eventBus: BpmnEventBus, elementRegistry: BpmnElementRegistry, modeling: BpmnModeling) {
+  constructor(eventBus: BpmnEventBus, elementRegistry: BpmnElementRegistry, modeling: BpmnModeling, commandStack: { _currentExecution?: { actions?: { command: string }[] } }) {
     super(eventBus);
+    // Sedang di dalam perintah pembuatan/tempel (paste, buat dari palet, dll.)? Saat menempel
+    // Sub-Proses, bpmn-js MEMINDAHKAN isi salinannya ke plane Sub-Proses baru lewat
+    // 'elements.move' ber-delta non-nol. Itu pemindahan PROGRAMATIK — bukan geseran pengguna.
+    const sedangMembuat = () => (commandStack._currentExecution?.actions || [])
+      .some(a => a.command === 'elements.create' || a.command === 'shape.create' || a.command === 'shape.replace');
     const self = this as unknown as {
       preExecute: (events: string[], priority: number, handler: (event: { context: Record<string, unknown> }) => void) => void;
       postExecute: (events: string[], handler: (event: { context: Record<string, unknown> }) => void) => void;
@@ -677,6 +682,10 @@ class GroupDropBehavior extends (CommandInterceptor as unknown as { new(eb: Bpmn
 
     self.preExecute(['elements.move'], 5000, (event) => {
       const ctx = event.context as { shapes?: (BpmnShapeElement & { waypoints?: unknown; labelTarget?: BpmnShapeElement })[]; delta?: { x: number; y: number } };
+      // Pemindahan programatik akibat tempel/buat: JANGAN menyeret elemen lain yang kebetulan
+      // berada di dalam area Pool/Lane salinan (dulu elemen & Sub-Proses yang sudah ada di
+      // plane tujuan "ketarik" masuk ke Sub-Proses hasil tempel → tampak hilang) dan jangan clamp.
+      if (sedangMembuat()) return;
       let shapes = ctx.shapes || [];
       // Label eksternal Pool/Lane TIDAK boleh dipindah terpisah dari Group-nya —
       // buang dari set bila Group-nya tidak ikut (teks selalu menyatu dgn pool).
@@ -1110,6 +1119,35 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
         // Both calls are no-ops for NavigatedViewer (no CommandStack).
         drainCmdStack();
         cmdStack?.clear();
+
+        // PENGAMAN UNDO: membatalkan (undo) tempel Sub-Proses BERISI membuat model rusak —
+        // bug bawaan bpmn-js 17.11 (urutan revert 'shape/connection.move' setelah 'create' →
+        // error "reading 'children'", sisa elemen yatim, Sub-Proses tampak hilang). Tolak
+        // undo untuk langkah semacam itu; pengguna cukup menghapus hasil tempel secara manual.
+        if (cmdStack) {
+          const csi = cmdStack as unknown as {
+            undo: () => void; _stackIdx: number;
+            _stack: { id: unknown; command: string; context?: { shape?: { type?: string } } }[];
+            __undoAman?: boolean;
+          };
+          if (!csi.__undoAman) {
+            csi.__undoAman = true;
+            const undoAsli = csi.undo.bind(csi);
+            csi.undo = () => {
+              const top = csi._stack?.[csi._stackIdx];
+              if (top) {
+                const batch = csi._stack.slice(0, csi._stackIdx + 1).filter(a => a.id === top.id);
+                const tempelSubProses = batch.some(a => a.command === 'shape.create' && a.context?.shape?.type === 'bpmn:SubProcess')
+                  && batch.some(a => a.command === 'shape.move' || a.command === 'connection.move');
+                if (tempelSubProses) {
+                  alert('Langkah terakhir adalah menempel Sub-Proses beserta isinya — langkah ini tidak dapat dibatalkan dengan Undo (dapat merusak diagram). Untuk membatalkannya, pilih Sub-Proses hasil tempel lalu tekan Delete.');
+                  return;
+                }
+              }
+              undoAsli();
+            };
+          }
+        }
 
         // ===== Helper struktur Pool/Group (dipakai re-parent & pin label) =====
         const registryAll = modeler.get('elementRegistry') as BpmnElementRegistry;
