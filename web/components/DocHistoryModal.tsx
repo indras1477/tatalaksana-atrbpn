@@ -33,6 +33,8 @@ function narasi(kind: 'bpmn' | 'sop' | 'sp', action: string): string {
     case 'penetapan': return `menerima dokumen fisik ${doc} — menunggu proses penetapan menteri`;
     case 'terbit': return `menetapkan & menerbitkan dokumen ${doc}`;
     case 'relink': return `memperbarui tautan dokumen ${doc}`;
+    case 'tanggapan': return `menanggapi catatan revisi dokumen ${doc}`;
+    case 'nomor': return `mengisi nomor dokumen ${doc} dari cover bertanda tangan`;
     default: return `memperbarui dokumen ${doc} (${action})`;
   }
 }
@@ -41,15 +43,19 @@ const dotCls: Record<string, string> = {
   create: 'bg-slate-400', draft: 'bg-slate-400', usulan: 'bg-slate-400',
   pending: 'bg-blue-500', rejected: 'bg-red-500', approved: 'bg-emerald-500',
   verifikasi: 'bg-cyan-500', fisik: 'bg-orange-500', penetapan: 'bg-violet-500', terbit: 'bg-emerald-600', relink: 'bg-teal-500',
+  nomor: 'bg-sky-500', tanggapan: 'bg-indigo-500',
 };
 
-export default function DocHistoryModal({ kind, modelId, title, token, isDarkMode, onClose }: {
+export default function DocHistoryModal({ kind, modelId, title, token, isDarkMode, onClose, mengambang = false }: {
   kind: 'bpmn' | 'sop' | 'sp';
   modelId: number;
   title?: string;
   token: string;
   isDarkMode?: boolean;
   onClose: () => void;
+  /** Panel di sisi kanan TANPA latar gelap — dipakai di studio agar penyusun bisa
+   *  membaca catatan riwayat sambil tetap menyunting kanvas. */
+  mengambang?: boolean;
 }) {
   const [rows, setRows] = useState<HistRow[] | null>(null);
   const [err, setErr] = useState('');
@@ -71,8 +77,10 @@ export default function DocHistoryModal({ kind, modelId, title, token, isDarkMod
   };
 
   return (
-    <div className="fixed inset-0 z-70 flex items-start sm:items-center justify-center overflow-y-auto bg-black/60 backdrop-blur-sm p-2 sm:p-4" onClick={onClose}>
-      <div className={`w-full max-w-lg my-4 rounded-2xl shadow-2xl flex flex-col max-h-[85vh] ${isDarkMode ? 'bg-[#0F172A] text-white' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
+    <div className={mengambang
+      ? 'fixed inset-0 z-70 pointer-events-none flex items-start justify-end px-2 sm:px-4 pb-32 pt-56 no-print font-sans'
+      : 'fixed inset-0 z-70 flex items-start sm:items-center justify-center overflow-y-auto bg-black/60 backdrop-blur-sm p-2 sm:p-4'} onClick={mengambang ? undefined : onClose}>
+      <div className={`w-full max-w-lg rounded-2xl shadow-2xl flex flex-col ${mengambang ? 'pointer-events-auto sm:w-104 max-h-[calc(100dvh-22rem)] border border-slate-200' : 'my-4 max-h-[85vh]'} ${isDarkMode ? 'bg-[#0F172A] text-white' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
         <div className={`flex items-center justify-between px-5 py-4 border-b shrink-0 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="p-2 rounded-xl bg-indigo-100 text-indigo-700 shrink-0"><History className="w-5 h-5" /></div>
@@ -109,6 +117,8 @@ export default function DocHistoryModal({ kind, modelId, title, token, isDarkMod
                     {h.detail && (
                       <div className={`mt-1.5 rounded-xl border px-3 py-2 text-[12px] leading-relaxed flex gap-2 ${h.action === 'rejected'
                         ? (isDarkMode ? 'bg-amber-900/20 border-amber-800 text-amber-300' : 'bg-amber-50 border-amber-200 text-amber-800')
+                        : h.action === 'tanggapan'
+                        ? (isDarkMode ? 'bg-indigo-900/20 border-indigo-800 text-indigo-200' : 'bg-indigo-50 border-indigo-200 text-indigo-800')
                         : (isDarkMode ? 'bg-slate-800/60 border-slate-700 text-slate-300' : 'bg-slate-50 border-slate-200 text-slate-600')}`}>
                         <MessageSquare className="w-3.5 h-3.5 mt-0.5 shrink-0" />
                         <span className="whitespace-pre-wrap">{h.detail}</span>

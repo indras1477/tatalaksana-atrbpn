@@ -9,6 +9,7 @@ import {
   Trash2, Calendar, GitCommit, HelpCircle, GitBranch, ChevronRight, Save, History as HistoryIcon, RotateCcw,
   ExternalLink, Building2, Copy, Landmark, Lock, FileUp, FileText, MessageSquare, Eye, ZoomIn, ZoomOut, Maximize2, FileSpreadsheet, Inbox, FileInput,
   ArrowUp, ArrowDown, ArrowUpDown,
+  Download, RefreshCw,
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
 import { BPMNSymbolsSection, FiturSection } from '@/components/PanduanSymbols';
@@ -132,7 +133,7 @@ export default function BPMNDashboardPage() {
   const [urutKolom, setUrutKolom] = useState<{ kolom: 'info' | 'unit' | 'status'; arah: 'asc' | 'desc' } | null>(null);
   const [filterStatus, setFilterStatus] = useState('Semua');
   // Urutan daftar: terbaru diperbarui (default) / terbaru dibuat / terlama / judul.
-  const [sortBy, setSortBy] = useState<'updated' | 'created' | 'oldest' | 'title'>(() => (readSavedView()?.sortBy as 'updated' | 'created' | 'oldest' | 'title') ?? 'updated');
+  const [sortBy, setSortBy] = useState<'updated' | 'created' | 'oldest' | 'title' | 'nomor'>(() => (readSavedView()?.sortBy as 'updated' | 'created' | 'oldest' | 'title' | 'nomor') ?? 'updated');
   const [listTab, setListTab] = useState<'usulan' | 'penyusunan' | 'terbit'>(() => (readSavedView()?.listTab as 'usulan' | 'penyusunan' | 'terbit') ?? 'penyusunan');
   const [rekapDrill, setRekapDrill] = useState<{ l1: string | null; l2: string | null }>(() => readSavedView()?.rekapDrill ?? { l1: null, l2: null });
   // Filter cepat via klik kartu ringkasan (khusus admin/superadmin): tampilkan
@@ -179,6 +180,27 @@ export default function BPMNDashboardPage() {
   // Pratinjau diagram di modal detail (SVG tersimpan — instan, tak perlu render ulang).
   const [previewSvg, setPreviewSvg] = useState<string | null>(null);
   const [loadingSvg, setLoadingSvg] = useState(false);
+  const [unduhPdfBusy, setUnduhPdfBusy] = useState(false);
+  // Unduh PDF F4 proses utama langsung dari popup detail (tanpa membuka studio).
+  const unduhPdfBpmn = async () => {
+    if (!previewModel || !previewSvg || unduhPdfBusy) return;
+    setUnduhPdfBusy(true);
+    try {
+      const title = previewModel.process_title || 'Dokumen BPMN';
+      const res = await apiFetch('/bpmn/pdf', token, {
+        method: 'POST',
+        body: JSON.stringify({ title, unit1: previewModel.unit_l1 || '', unit2: previewModel.unit_l2 || '',
+          filename: previewModel.process_key || title, pages: [{ svg: previewSvg, label: 'PROSES BISNIS', judul: title }] }),
+      });
+      if (!res.ok) { const e = await res.json().catch(() => ({} as { error?: string })); alert(`❌ ${e.error || 'Gagal membuat PDF.'}`); return; }
+      const blob = await res.blob();
+      const nama = (previewModel.process_key || title).replace(/[\\/]+/g, '_').replace(/[:*?"<>|]+/g, '').trim() || 'BPMN';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = `${nama}.pdf`; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } catch { alert('❌ Gagal mengunduh PDF — periksa koneksi.'); }
+    finally { setUnduhPdfBusy(false); }
+  };
   const [svgZoom, setSvgZoom] = useState(1);      // 1 = pas kotak (fit)
   const [svgFull, setSvgFull] = useState(false);  // pratinjau layar penuh
   const [editMeta, setEditMeta] = useState({ process_title: '', jenis_proses: '', klasifikasi_proses: '' });
@@ -312,6 +334,22 @@ export default function BPMNDashboardPage() {
     });
   }, [modelsPlusTetap, searchQuery, filterUnit, filterJenis, filterStatus]);
 
+  // Dokumen untuk panel "klik kartu"
+
+  // KARTU INTERAKTIF (admin/superadmin): angka kartu status mengikuti cakupan drill rekap —
+  // "Semua Unit Kerja" = keseluruhan; klik Unit Kerja Level 1 = hanya unit itu; klik Sub-Unit
+  // (Level 2) = hanya sub-unit itu. User (terbatas) tidak terpengaruh (datanya sudah unit sendiri).
+  const kartuInteraktif = currentUser?.role === 'admin';
+  const dalamCakupan = (m: BPMNModel) => !kartuInteraktif || (
+    (rekapDrill.l1 === null || ((x: BPMNModel) => x.unit_l1 || '(Tanpa Unit)')(m) === rekapDrill.l1) &&
+    (rekapDrill.l2 === null || (((x: BPMNModel) => x.unit_l2 || '(Tanpa Sub-Unit)')(m)) === rekapDrill.l2));
+  const kartuModels = useMemo(() => currentFilteredModels.filter(dalamCakupan),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentFilteredModels, rekapDrill, kartuInteraktif]);
+  const kartuUsulan = useMemo(() => kartuModels.filter(m => m.status === 'usulan').length, [kartuModels]);
+  const cakupanKartu = kartuInteraktif && rekapDrill.l1 !== null
+    ? (rekapDrill.l2 !== null ? `${rekapDrill.l1} › ${rekapDrill.l2}` : rekapDrill.l1) : null;
+
   // Dokumen untuk panel "klik kartu": difilter status kartu + kotak cari, lintas unit.
   const CARD_MATCH: Record<string, (m: BPMNModel) => boolean> = {
     total: () => true,
@@ -328,10 +366,10 @@ export default function BPMNDashboardPage() {
   const cardFilterModels = useMemo(() => {
     if (!cardFilter) return [];
     const q = searchQuery.toLowerCase();
-    return savedModels.filter(m => CARD_MATCH[cardFilter](m) &&
+    return savedModels.filter(m => CARD_MATCH[cardFilter](m) && dalamCakupan(m) &&
       ((m.process_title || '').toLowerCase().includes(q) || (m.process_key || '').toLowerCase().includes(q)));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cardFilter, modelsPlusTetap, searchQuery]);
+  }, [cardFilter, modelsPlusTetap, searchQuery, rekapDrill]);
   const isAdminRole = currentUser?.role === 'admin';
   const toggleCard = (key: typeof cardFilter) => { if (isAdminRole) setCardFilter(cur => cur === key ? null : key); };
 
@@ -404,6 +442,85 @@ export default function BPMNDashboardPage() {
   // sebuah Unit Kerja Level 1 diklik. Isinya seluruh dokumen pada tab yang sedang
   // dibuka, dikelompokkan per Sub-Unit (Level 2), plus rekap jumlah per sub-unit.
   const [exportingRekap, setExportingRekap] = useState(false);
+  // Pilih beberapa BPMN lalu unduh PDF F4 proses utamanya sekaligus (ZIP).
+  const bolehFiturMassal = !!currentUser && currentUser.role !== 'viewer';
+  const [pilihPdf, setPilihPdf] = useState<number[]>([]);
+  const [unduhPdfMassal, setUnduhPdfMassal] = useState<{ selesai: number; total: number; gagal: number } | null>(null);
+  const bisaPilihPdf = (m: BPMNModel) => !m.is_manual && !(m as { _registri?: boolean })._registri && m.status !== 'usulan';
+  // 1 dokumen terpilih → langsung berkas PDF (pilihan: proses utama saja / + sub-proses);
+  // ≥2 dokumen → ZIP, tiap PDF otomatis memuat semua sub-prosesnya.
+  const unduhPdfTerpilih = async (denganSub: boolean) => {
+    const daftar = pilihPdf.map(id => visibleModels.find(m => m.id === id)).filter((m): m is BPMNModel => !!m);
+    if (!daftar.length || unduhPdfMassal) return;
+    const tunggal = daftar.length === 1;
+    const pakaiSub = tunggal ? denganSub : true;
+    setUnduhPdfMassal({ selesai: 0, total: daftar.length, gagal: 0 });
+    const simpan = (blob: Blob, nama: string) => {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = nama;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    };
+    try {
+      const berkas: Record<string, Uint8Array> = {};
+      const dipakai = new Set<string>();
+      let gagal = 0, blobTunggal: { blob: Blob; nama: string } | null = null;
+      for (let i = 0; i < daftar.length; i++) {
+        const m = daftar[i];
+        try {
+          const title = m.process_title || 'Dokumen BPMN';
+          let utama = '';
+          let subs: { svg: string; name: string; depth: number; path: string[] }[] = [];
+          if (pakaiSub) {
+            const rm = await apiFetch(`/bpmn/models/${m.id}`, token);
+            const xml = rm.ok ? ((await rm.json()) as { bpmn_xml?: string | null }).bpmn_xml : null;
+            if (xml) {
+              try { const h = await (await import('@/lib/bpmnHalaman')).ambilHalamanBpmn(xml); utama = h.svg; subs = h.subs; }
+              catch (e) { console.error('Sub-proses gagal dibaca, pakai proses utama saja:', m.id, e); }
+            }
+          }
+          if (!utama) {
+            const rs = await apiFetch(`/bpmn/models/${m.id}/svg`, token);
+            const svg = rs.ok ? ((await rs.json()) as { svg_xml?: string | null }).svg_xml : null;
+            if (!svg) throw new Error('tanpa diagram');
+            utama = svgAgarMuat(svg);
+          }
+          const pages = [
+            { svg: utama, label: 'PROSES BISNIS', judul: title },
+            ...subs.map(sb => {
+              const level = (sb.depth || 0) + 1;
+              return { svg: sb.svg, label: level > 1 ? `SUB-PROSES LV.${level} — ${title.toUpperCase()}` : `SUB-PROSES — ${title.toUpperCase()}`, judul: sb.path && sb.path.length > 1 ? sb.path.join(' › ') : sb.name };
+            }),
+          ];
+          const r = await apiFetch('/bpmn/pdf', token, {
+            method: 'POST',
+            body: JSON.stringify({ title, unit1: m.unit_l1 || '', unit2: m.unit_l2 || '', filename: m.process_key || title, pages }),
+          });
+          if (!r.ok) throw new Error(String(r.status));
+          const dasar = `${nomorDok(m) ? nomorDok(m) + ' - ' : ''}${title}`.replace(/[\\/]/g, '_').replace(/[:*?"<>|\x00-\x1f]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 120) || `BPMN ${m.id}`;
+          let nama = `${dasar}.pdf`, n = 2;
+          while (dipakai.has(nama)) nama = `${dasar} (${n++}).pdf`;
+          dipakai.add(nama);
+          const buf = await r.arrayBuffer();
+          if (tunggal) blobTunggal = { blob: new Blob([buf], { type: 'application/pdf' }), nama };
+          else berkas[nama] = new Uint8Array(buf);
+        } catch { gagal++; }
+        setUnduhPdfMassal({ selesai: i + 1, total: daftar.length, gagal });
+      }
+      if (tunggal) {
+        if (!blobTunggal) { alert('Gagal membuat PDF (dokumen belum punya diagram?).'); return; }
+        simpan(blobTunggal.blob, blobTunggal.nama);
+        setPilihPdf([]);
+        return;
+      }
+      if (!Object.keys(berkas).length) { alert('Tidak ada PDF yang berhasil dibuat.'); return; }
+      const { zipSync } = await import('fflate');
+      simpan(new Blob([zipSync(berkas, { level: 0 }) as BlobPart], { type: 'application/zip' }), `BPMN_${new Date().toISOString().slice(0, 10)}_${Object.keys(berkas).length}-dokumen.zip`);
+      if (gagal) alert(`${gagal} dokumen gagal dibuat PDF-nya (mis. belum punya diagram) dan tidak masuk ZIP.`);
+      setPilihPdf([]);
+    } catch (e) { alert('Gagal mengunduh PDF: ' + (e instanceof Error ? e.message : String(e))); }
+    finally { setUnduhPdfMassal(null); }
+  };
   const tahapLabel = listTab === 'usulan' ? 'Usulan' : listTab === 'terbit' ? 'Telah Ditetapkan' : 'Proses Penyusunan';
   // Palet fill warna Unit Kerja (Level 2) — tiap sub-unit dapat satu warna tetap
   // (siklus 8 warna pastel) supaya baris yang sesekaqli tersebar di tabel daftar
@@ -485,11 +602,23 @@ export default function BPMNDashboardPage() {
         perSubStatus.set(su, mp);
       });
       // Jumlah kolom lembar: minimal 4 (tabel daftar); rekap sub-unit = No | Sub-Unit | Jumlah | 1 kolom per status.
-      const nKol = Math.max(4, 3 + statusNames.length);
+      // Tautan view-only: hanya dokumen final (Dokumen Fisik, Menunggu Penetapan, Telah Ditetapkan).
+      let tautan: Record<string, string> = {};
+      const adaKolTautan = bolehFiturMassal;
+      if (adaKolTautan) {
+        try {
+          const ids = urut.filter(m => ['fisik', 'penetapan', 'approved'].includes(m.status || '') && typeof m.id === 'number' && !(m as { _registri?: boolean })._registri).map(m => m.id);
+          if (ids.length) {
+            const r = await apiFetch('/bpmn/share-bulk', token, { method: 'POST', body: JSON.stringify({ ids }) });
+            if (r.ok) tautan = (await r.json()).links || {};
+          }
+        } catch { /* tautan dikosongkan — ekspor tetap jalan */ }
+      }
+      const nKol = Math.max(adaKolTautan ? 5 : 4, 3 + statusNames.length);
 
       const workbook = new ExcelJS.Workbook();
       const ws = workbook.addWorksheet('Proses Bisnis', { views: [{ showGridLines: false }] });
-      ws.columns = [{ width: 5 }, { width: 70 }, { width: 45 }, { width: 36 }, ...Array.from({ length: Math.max(0, nKol - 4) }, () => ({ width: 18 }))];
+      ws.columns = [{ width: 5 }, { width: 70 }, { width: 45 }, { width: 36 }, ...(adaKolTautan ? [{ width: 48 }] : []), ...Array.from({ length: Math.max(0, nKol - (adaKolTautan ? 5 : 4)) }, () => ({ width: 18 }))];
 
       const THIN = { style: 'thin' as const, color: { argb: 'FF94A3B8' } };
       const BORDER_ALL = { top: THIN, left: THIN, bottom: THIN, right: THIN };
@@ -557,18 +686,24 @@ export default function BPMNDashboardPage() {
 
       // 2) DAFTAR PROSES BISNIS (RINCIAN) — kolom Unit Kerja (L2) diberi fill color
       // sesuai palet di atas, kolom Status Dokumen diberi warna TEKS sesuai status.
-      const HEAD = ['No', 'Proses Bisnis (Level 3)', 'Unit Kerja', 'Status Dokumen'];
+      const HEAD = ['No', 'Proses Bisnis (Level 3)', 'Unit Kerja', 'Status Dokumen', ...(adaKolTautan ? ['Tautan View-Only'] : [])];
       const headRow = ws.addRow(HEAD);
       styleHeaderRow(headRow);
       urut.forEach((m, i) => {
         const su = subUnit(m);
-        const row = ws.addRow([i + 1, m.process_title, su, label(m)]);
+        const row = ws.addRow([i + 1, m.process_title, su, label(m), ...(adaKolTautan ? [''] : [])]);
         row.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', wrapText: true }; });
         row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
         row.getCell(3).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
         row.getCell(3).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillOf.get(su) || 'FFFFFFFF' } };
         row.getCell(4).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
         row.getCell(4).font = { bold: true, color: { argb: statusExcelColor(m) } };
+        if (adaKolTautan) {
+          const path = tautan[m.id];
+          const c = row.getCell(5);
+          if (path) { const u = `${window.location.origin}/e-sop-atrbpn${path}`; c.value = { text: u, hyperlink: u }; c.font = { color: { argb: 'FF0563C1' }, underline: true }; }
+          else { c.value = '-'; c.font = { italic: true, color: { argb: 'FF94A3B8' } }; c.alignment = { vertical: 'middle', horizontal: 'center' }; }
+        }
       });
 
       const buf = await workbook.xlsx.writeBuffer();
@@ -619,6 +754,7 @@ export default function BPMNDashboardPage() {
   const urutkan = <T extends { process_title: string; created_at?: string; updated_at?: string }>(arr: T[]) => {
     if (urutKolom) return urutkanKolom(arr as unknown as BPMNModel[], urutKolom) as unknown as T[];
     const out = [...arr];
+    if (sortBy === 'nomor') return urutkanKolom(out as unknown as BPMNModel[], { kolom: 'info', arah: 'asc' }) as unknown as T[];
     if (sortBy === 'title') return out.sort((a, b) => a.process_title.localeCompare(b.process_title, 'id'));
     if (sortBy === 'created') return out.sort((a, b) => waktu(b.created_at) - waktu(a.created_at));
     if (sortBy === 'oldest') return out.sort((a, b) => (waktu(a.updated_at) || waktu(a.created_at)) - (waktu(b.updated_at) || waktu(b.created_at)));
@@ -919,6 +1055,7 @@ export default function BPMNDashboardPage() {
   };
 
   // Penyusun boleh menanggapi bila dokumen di unit kerjanya / miliknya & status rejected.
+  const adaTanggapan = (m: BPMNModel) => currentUser?.role === 'admin' && !!(m.tanggapan || '').trim();
   const canRespond = (m: BPMNModel) => currentUser?.role === 'user' && m.status === 'rejected' &&
     (m.created_by === currentUser?.id ||
       (!!m.unit_l1 && !!currentUser?.unit_l1 && m.unit_l1.toLowerCase() === currentUser.unit_l1.toLowerCase()));
@@ -1046,6 +1183,9 @@ export default function BPMNDashboardPage() {
     <div className="flex items-center justify-end gap-1.5 flex-wrap min-w-max">
       {canRespond(model) && (
         <button onClick={(e) => { e.stopPropagation(); setTanggapanModal({ isOpen: true, model, pesan: '' }); }} className="px-3 py-2 bg-indigo-100 hover:bg-indigo-600 hover:text-white text-indigo-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><MessageSquare className="w-4 h-4" /> Tanggapi</button>
+      )}
+      {adaTanggapan(model) && (
+        <button onClick={(e) => { e.stopPropagation(); setTanggapanModal({ isOpen: true, model, pesan: '' }); }} className="p-2.5 bg-indigo-100 ring-1 ring-indigo-400 hover:bg-indigo-600 hover:text-white text-indigo-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1" title="Lihat tanggapan penyusun"><MessageSquare className="w-4 h-4" /></button>
       )}
       {currentUser?.role === 'admin' && ['pending', 'draft', 'rejected'].includes(model.status || 'draft') && (<>
         <button onClick={(e) => { e.stopPropagation(); handleApprove(model); }} className="px-3 py-2 bg-emerald-100 hover:bg-emerald-500 hover:text-white text-emerald-700 text-xs font-extrabold rounded-lg uppercase transition-all">Setujui</button>
@@ -1517,6 +1657,16 @@ export default function BPMNDashboardPage() {
                       <div className={`h-24 flex items-center justify-center text-sm text-center px-4 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Diagram belum tersedia — buka di studio untuk mulai menggambar.</div>
                     )}
                   </div>
+                  {previewSvg && !loadingSvg && (
+                    <button
+                      onClick={unduhPdfBpmn}
+                      disabled={unduhPdfBusy}
+                      title="Unduh diagram proses utama sebagai PDF F4"
+                      className="mt-2 w-full inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-bold bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-60 transition-all active:scale-95"
+                    >
+                      {unduhPdfBusy ? <><RefreshCw className="w-4 h-4 animate-spin" /> Menyiapkan PDF…</> : <><Download className="w-4 h-4" /> Unduh PDF</>}
+                    </button>
+                  )}
                 </div>
               )}
 
@@ -1537,6 +1687,8 @@ export default function BPMNDashboardPage() {
                 >
                   <Eye className="w-4 h-4 shrink-0" /> <span className="truncate">Hanya Lihat</span>
                 </button>
+                {/* Dokumen terkunci (dokumen fisik/penetapan/ditetapkan) tidak bisa disunting — sembunyikan. */}
+                {!['approved', 'penetapan', 'fisik'].includes(previewModel.status || '') && (
                 <button
                   onClick={() => router.push(`/bpmn/studio?id=${previewModel.id}`)}
                   title="Buka di studio untuk menyunting diagram"
@@ -1544,6 +1696,7 @@ export default function BPMNDashboardPage() {
                 >
                   <ExternalLink className="w-4 h-4 shrink-0" /> <span className="truncate">Edit di Studio</span>
                 </button>
+                )}
               </div>
               <div className="flex gap-2 w-full lg:w-auto lg:ml-auto">
                 <button
@@ -1600,11 +1753,18 @@ export default function BPMNDashboardPage() {
         </div>
 
         {/* STATS SUMMARY */}
+        {cakupanKartu && (
+          <div className={`flex flex-wrap items-center gap-x-2 gap-y-1 mb-2 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+            <span>Angka kartu menghitung:</span>
+            <b className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{cakupanKartu}</b>
+            <button type="button" onClick={() => setRekapDrill({ l1: null, l2: null })} className="text-emerald-600 hover:underline font-semibold">Tampilkan semua unit</button>
+          </div>
+        )}
         <div className="grid grid-cols-2 @2xl:grid-cols-3 @6xl:grid-cols-6 gap-3 sm:gap-4 mb-8">
           <div onClick={() => toggleCard('total')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm flex justify-between items-center gap-2 transition-all hover:shadow-md ${isAdminRole ? 'cursor-pointer' : ''} ${cardFilter === 'total' ? 'ring-2 ring-[#002855]' : ''} ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
             <div className="min-w-0">
               <p className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Total</p>
-              <p className={`text-2xl sm:text-3xl font-black ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{currentFilteredModels.length}</p>
+              <p className={`text-2xl sm:text-3xl font-black ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{kartuModels.length}</p>
             </div>
             <div className={`p-2.5 sm:p-3 rounded-xl shrink-0 ${isDarkMode ? 'bg-slate-800 text-slate-500' : 'bg-slate-50 text-slate-400'}`}><FileStack className="w-5 h-5 sm:w-6 sm:h-6" /></div>
           </div>
@@ -1612,10 +1772,10 @@ export default function BPMNDashboardPage() {
             <div className="min-w-0 w-full">
               <p className={`text-[10px] font-bold uppercase tracking-widest mb-1 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Draft</p>
               <div className="flex items-center gap-2.5">
-                <p className={`text-2xl sm:text-3xl font-black leading-none shrink-0 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{countUsulan + currentFilteredModels.filter(m => !m.status || m.status === 'draft').length}</p>
+                <p className={`text-2xl sm:text-3xl font-black leading-none shrink-0 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{kartuUsulan + kartuModels.filter(m => !m.status || m.status === 'draft').length}</p>
                 <div className="flex flex-col gap-1 min-w-0">
-                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-slate-700/60 text-slate-300' : 'bg-slate-100 text-slate-600'}`}><b className="font-black">{countUsulan}</b> Usulan</span>
-                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-indigo-900/40 text-indigo-300' : 'bg-indigo-50 text-indigo-600'}`}><b className="font-black">{currentFilteredModels.filter(m => !m.status || m.status === 'draft').length}</b> Dalam Proses</span>
+                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-slate-700/60 text-slate-300' : 'bg-slate-100 text-slate-600'}`}><b className="font-black">{kartuUsulan}</b> Usulan</span>
+                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-indigo-900/40 text-indigo-300' : 'bg-indigo-50 text-indigo-600'}`}><b className="font-black">{kartuModels.filter(m => !m.status || m.status === 'draft').length}</b> Dalam Proses</span>
                 </div>
               </div>
             </div>
@@ -1623,31 +1783,31 @@ export default function BPMNDashboardPage() {
           <div onClick={() => toggleCard('pending')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-blue-500 flex flex-col min-h-24 transition-all hover:shadow-md ${isAdminRole ? 'cursor-pointer' : ''} ${cardFilter === 'pending' ? 'ring-2 ring-blue-500' : ''} ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
             <p className="text-[10px] sm:text-xs font-bold text-blue-400 uppercase tracking-wide leading-tight wrap-break-word">Review Ortala MR</p>
             <div className="flex justify-between items-end gap-2 mt-auto pt-1.5">
-              <p className="text-2xl sm:text-3xl font-black text-blue-600 leading-none">{currentFilteredModels.filter(m => m.status === 'pending').length}</p>
+              <p className="text-2xl sm:text-3xl font-black text-blue-600 leading-none">{kartuModels.filter(m => m.status === 'pending').length}</p>
               <div className="p-2 sm:p-2.5 bg-blue-50 rounded-xl text-blue-400 shrink-0"><Clock className="w-5 h-5" /></div>
             </div>
           </div>
           <div onClick={() => toggleCard('rejected')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-red-500 flex flex-col min-h-24 transition-all hover:shadow-md ${isAdminRole ? 'cursor-pointer' : ''} ${cardFilter === 'rejected' ? 'ring-2 ring-red-500' : ''} ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
             <p className="text-[10px] sm:text-xs font-bold text-red-400 uppercase tracking-wide leading-tight wrap-break-word">Perlu Revisi</p>
             <div className="flex justify-between items-end gap-2 mt-auto pt-1.5">
-              <p className="text-2xl sm:text-3xl font-black text-red-600 leading-none">{currentFilteredModels.filter(m => m.status === 'rejected').length}</p>
+              <p className="text-2xl sm:text-3xl font-black text-red-600 leading-none">{kartuModels.filter(m => m.status === 'rejected').length}</p>
               <div className="p-2 sm:p-2.5 bg-red-50 rounded-xl text-red-400 shrink-0"><AlertCircle className="w-5 h-5" /></div>
             </div>
           </div>
           <div onClick={() => toggleCard('penetapan')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-violet-500 flex flex-col min-h-24 transition-all hover:shadow-md ${isAdminRole ? 'cursor-pointer' : ''} ${cardFilter === 'penetapan' ? 'ring-2 ring-violet-500' : ''} ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
             <p className="text-[10px] sm:text-xs font-bold text-violet-400 uppercase tracking-wide leading-tight wrap-break-word">Dokumen Fisik &amp; Penetapan Menteri</p>
             <div className="flex items-center gap-2.5 mt-auto pt-1.5">
-              <p className="text-2xl sm:text-3xl font-black text-violet-600 leading-none shrink-0">{currentFilteredModels.filter(m => ['fisik', 'penetapan'].includes(m.status || '')).length}</p>
+              <p className="text-2xl sm:text-3xl font-black text-violet-600 leading-none shrink-0">{kartuModels.filter(m => ['fisik', 'penetapan'].includes(m.status || '')).length}</p>
               <div className="flex flex-col gap-1 min-w-0">
-                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-orange-900/40 text-orange-300' : 'bg-orange-50 text-orange-600'}`}><b className="font-black">{currentFilteredModels.filter(m => m.status === 'fisik').length}</b> Dok. Fisik</span>
-                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-violet-900/40 text-violet-300' : 'bg-violet-50 text-violet-600'}`}><b className="font-black">{currentFilteredModels.filter(m => m.status === 'penetapan').length}</b> Penetapan</span>
+                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-orange-900/40 text-orange-300' : 'bg-orange-50 text-orange-600'}`}><b className="font-black">{kartuModels.filter(m => m.status === 'fisik').length}</b> Dok. Fisik</span>
+                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-violet-900/40 text-violet-300' : 'bg-violet-50 text-violet-600'}`}><b className="font-black">{kartuModels.filter(m => m.status === 'penetapan').length}</b> Penetapan</span>
               </div>
             </div>
           </div>
           <div onClick={() => toggleCard('approved')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-emerald-500 flex flex-col min-h-24 transition-all hover:shadow-md ${isAdminRole ? 'cursor-pointer' : ''} ${cardFilter === 'approved' ? 'ring-2 ring-emerald-500' : ''} ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
             <p className="text-[10px] sm:text-xs font-bold text-emerald-400 uppercase tracking-wide leading-tight wrap-break-word">Telah Ditetapkan</p>
             <div className="flex justify-between items-end gap-2 mt-auto pt-1.5">
-              <p className="text-2xl sm:text-3xl font-black text-emerald-600 leading-none">{currentFilteredModels.filter(m => m.status === 'approved').length}</p>
+              <p className="text-2xl sm:text-3xl font-black text-emerald-600 leading-none">{kartuModels.filter(m => m.status === 'approved').length}</p>
               <div className="p-2 sm:p-2.5 bg-emerald-50 rounded-xl text-emerald-400 shrink-0"><CheckCircle className="w-5 h-5" /></div>
             </div>
           </div>
@@ -1762,7 +1922,7 @@ export default function BPMNDashboardPage() {
                   <option value="approved">Status: Ditetapkan</option>
                 </select>
               </div>
-              <select value={sortBy} onChange={e => { setSortBy(e.target.value as typeof sortBy); setUrutKolom(null); }} title="Urutkan daftar dokumen" className={`w-full sm:w-48 px-3 py-2.5 border rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}><option value="updated">Urut: Baru Diperbarui</option><option value="created">Urut: Terbaru Dibuat</option><option value="oldest">Urut: Terlama</option><option value="title">Urut: Judul (A–Z)</option></select>
+              <select value={sortBy} onChange={e => { setSortBy(e.target.value as typeof sortBy); setUrutKolom(null); }} title="Urutkan daftar dokumen" className={`w-full sm:w-48 px-3 py-2.5 border rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}><option value="updated">Urut: Baru Diperbarui</option><option value="created">Urut: Terbaru Dibuat</option><option value="oldest">Urut: Terlama</option><option value="title">Urut: Judul (A–Z)</option><option value="nomor">Urut: Kode BPMN</option></select>
               <div className="relative w-full sm:flex-1 sm:min-w-48">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Search className={`h-4 w-4 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} /></div>
                 <input type="text" placeholder="Cari judul atau kode..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className={`w-full pl-10 pr-4 py-2.5 border rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-blue-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white placeholder:text-slate-500' : 'bg-white border-slate-300 text-slate-900'}`} />
@@ -1884,11 +2044,36 @@ export default function BPMNDashboardPage() {
             </div>
           )}
 
+          {/* Pilih banyak BPMN → unduh PDF (ZIP), tab Proses Penyusunan */}
+          {bolehFiturMassal && listTab === 'penyusunan' && (
+            <div className={`px-4 sm:px-5 py-2.5 border-b flex flex-wrap items-center gap-2 text-xs ${isDarkMode ? 'border-slate-700 bg-[#0F172A]/30 text-slate-300' : 'border-slate-100 bg-slate-50/60 text-slate-600'}`}>
+              <span className="font-semibold">{pilihPdf.length > 0 ? `${pilihPdf.length} BPMN dipilih` : 'Centang BPMN di tabel untuk mengunduh PDF-nya sekaligus (ZIP).'}</span>
+              {pilihPdf.length > 0 && !unduhPdfMassal && <button onClick={() => setPilihPdf([])} className="font-bold underline underline-offset-2 hover:text-blue-600">Batal pilih</button>}
+              <div className="flex-1" />
+              {(() => {
+                const sibuk = !!unduhPdfMassal;
+                const cls = 'px-3.5 py-2 rounded-lg font-bold flex items-center gap-1.5 shadow-sm disabled:cursor-not-allowed disabled:shadow-none ';
+                const merah = cls + 'bg-rose-600 hover:bg-rose-700 text-white disabled:bg-slate-300 disabled:text-slate-500';
+                const spin = <><RefreshCw className="w-4 h-4 animate-spin" /> Menyiapkan {unduhPdfMassal?.selesai}/{unduhPdfMassal?.total}…</>;
+                if (pilihPdf.length === 1) return (<>
+                  <button onClick={() => unduhPdfTerpilih(false)} disabled={sibuk} title="PDF F4 proses utama saja" className={merah}>{sibuk ? spin : <><Download className="w-4 h-4" /> PDF Proses Utama</>}</button>
+                  {!sibuk && <button onClick={() => unduhPdfTerpilih(true)} title="PDF F4 proses utama + semua sub-proses" className={cls + (isDarkMode ? 'bg-slate-800 border border-rose-500 text-rose-300 hover:bg-rose-900/30' : 'bg-white border border-rose-500 text-rose-700 hover:bg-rose-50')}><Download className="w-4 h-4" /> PDF + Sub-Proses</button>}
+                </>);
+                return <button onClick={() => unduhPdfTerpilih(true)} disabled={pilihPdf.length === 0 || sibuk} title="ZIP berisi PDF tiap dokumen, lengkap dengan sub-prosesnya" className={merah}>{sibuk ? spin : <><Download className="w-4 h-4" /> Unduh PDF{pilihPdf.length > 0 ? ` (${pilihPdf.length})` : ''}</>}</button>;
+              })()}
+            </div>
+          )}
+
           {/* Desktop table */}
           <div className="hidden xl:block overflow-x-auto">
             <table className="w-full text-sm text-left">
               <thead className={`text-[11px] font-bold uppercase tracking-wider border-b ${isDarkMode ? 'text-slate-400 bg-slate-800/50 border-slate-700' : 'text-slate-500 bg-slate-50/80 border-slate-200'}`}>
                 <tr>
+                  {bolehFiturMassal && listTab === 'penyusunan' && (() => {
+                    const ids = pagedModels.filter(bisaPilihPdf).map(m => m.id);
+                    const semua = ids.length > 0 && ids.every(id => pilihPdf.includes(id));
+                    return <th className="pl-4 pr-0 py-4 w-8"><input type="checkbox" aria-label="Pilih semua BPMN di halaman ini" checked={semua} disabled={ids.length === 0 || !!unduhPdfMassal} onChange={() => setPilihPdf(p => semua ? p.filter(x => !ids.includes(x)) : [...new Set([...p, ...ids])])} className="cek-esop" /></th>;
+                  })()}
                   <th className="px-6 py-4 w-1/3"><button type="button" onClick={() => klikUrut('info')} title="Urutkan menurut kolom ini (klik lagi untuk membalik, klik ketiga untuk mematikan)" className={`inline-flex items-center gap-1.5 whitespace-nowrap uppercase tracking-wider font-bold hover:text-blue-600 ${urutKolom?.kolom === 'info' ? 'text-blue-600' : ''}`}>Informasi Dokumen{ikonUrut('info')}</button></th>
                   <th className="px-6 py-4 w-1/4"><button type="button" onClick={() => klikUrut('unit')} title="Urutkan menurut kolom ini (klik lagi untuk membalik, klik ketiga untuk mematikan)" className={`inline-flex items-center gap-1.5 whitespace-nowrap uppercase tracking-wider font-bold hover:text-blue-600 ${urutKolom?.kolom === 'unit' ? 'text-blue-600' : ''}`}>Unit Kerja{ikonUrut('unit')}</button></th>
                   <th className="px-6 py-4"><button type="button" onClick={() => klikUrut('status')} title="Urutkan menurut kolom ini (klik lagi untuk membalik, klik ketiga untuk mematikan)" className={`inline-flex items-center gap-1.5 whitespace-nowrap uppercase tracking-wider font-bold hover:text-blue-600 ${urutKolom?.kolom === 'status' ? 'text-blue-600' : ''}`}>Status Pengajuan{ikonUrut('status')}</button></th>
@@ -1914,6 +2099,11 @@ export default function BPMNDashboardPage() {
                       onClick={() => isRegistri(model) ? bukaDokumenRegistri(model) : model.is_manual ? setManualDetail(model) : openPreview(model)}
                       className={`transition-colors cursor-pointer ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-blue-50/40'}`}
                     >
+                      {bolehFiturMassal && listTab === 'penyusunan' && (
+                        <td className="pl-4 pr-0 py-4 w-8" onClick={e => e.stopPropagation()}>
+                          {bisaPilihPdf(model) && <input type="checkbox" aria-label={`Pilih ${model.process_title}`} checked={pilihPdf.includes(model.id)} disabled={!!unduhPdfMassal} onChange={() => setPilihPdf(p => p.includes(model.id) ? p.filter(x => x !== model.id) : [...p, model.id])} className="cek-esop" />}
+                        </td>
+                      )}
                       <td className="px-6 py-4">
                         <button
                           onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else { router.push(`/bpmn/studio?id=${model.id}&mode=view`); } }}
@@ -2000,6 +2190,9 @@ export default function BPMNDashboardPage() {
                           {canRespond(model) && (
                             <button onClick={(e) => { e.stopPropagation(); setTanggapanModal({ isOpen: true, model, pesan: '' }); }} className="px-3 py-2.5 bg-indigo-100 hover:bg-indigo-500 hover:text-white text-indigo-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm flex items-center gap-1.5"><MessageSquare className="w-4 h-4" /> Tanggapi</button>
                           )}
+                          {adaTanggapan(model) && (
+                            <button onClick={(e) => { e.stopPropagation(); setTanggapanModal({ isOpen: true, model, pesan: '' }); }} className="p-2.5 bg-indigo-100 ring-1 ring-indigo-400 hover:bg-indigo-500 hover:text-white text-indigo-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm flex items-center gap-1.5" title="Lihat tanggapan penyusun"><MessageSquare className="w-4 h-4" /></button>
+                          )}
 
                           {currentUser.role === 'admin' && ['pending', 'draft', 'rejected'].includes(model.status || 'draft') && (
                             <div className={`flex ml-2 border-l pl-2 gap-2 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
@@ -2060,6 +2253,11 @@ export default function BPMNDashboardPage() {
                   className={`px-4 py-4 cursor-pointer transition-colors ${isDarkMode ? 'hover:bg-slate-800/60 divide-slate-800' : 'hover:bg-blue-50/40'}`}
                 >
                   <div className="flex items-start justify-between gap-2">
+                    {bolehFiturMassal && listTab === 'penyusunan' && bisaPilihPdf(model) && (
+                      <label className="-m-2.5 p-2.5 shrink-0 cursor-pointer touch-manipulation" onClick={e => e.stopPropagation()} title="Pilih untuk unduh PDF">
+                        <input type="checkbox" aria-label={`Pilih ${model.process_title}`} checked={pilihPdf.includes(model.id)} disabled={!!unduhPdfMassal} onChange={() => setPilihPdf(p => p.includes(model.id) ? p.filter(x => x !== model.id) : [...p, model.id])} className="cek-esop cek-esop-besar" />
+                      </label>
+                    )}
                     <div className="min-w-0 flex-1">
                       <button
                         onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else { router.push(`/bpmn/studio?id=${model.id}&mode=view`); } }}
@@ -2134,6 +2332,9 @@ export default function BPMNDashboardPage() {
                       {!isRegistri(model) && <ShareButton kind="bpmn" modelId={model.id} token={token} isDarkMode={isDarkMode} />}
                       {canRespond(model) && (
                         <button onClick={(e) => { e.stopPropagation(); setTanggapanModal({ isOpen: true, model, pesan: '' }); }} className="px-2.5 py-2.5 bg-indigo-100 text-indigo-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Tanggapi Revisi"><MessageSquare className="w-3.5 h-3.5" /> Tanggapi</button>
+                      )}
+                      {adaTanggapan(model) && (
+                        <button onClick={(e) => { e.stopPropagation(); setTanggapanModal({ isOpen: true, model, pesan: '' }); }} className="p-2.5 bg-indigo-100 ring-1 ring-indigo-400 text-indigo-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Lihat tanggapan penyusun"><MessageSquare className="w-3.5 h-3.5" /></button>
                       )}
                       {bolehHapus(model) && (
                         <button onClick={(e) => { e.stopPropagation(); deleteModel(model.id); }} className={`p-2.5 rounded-lg hover:text-red-600 hover:bg-red-50 transition-colors ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}><Trash2 className="w-3.5 h-3.5" /></button>

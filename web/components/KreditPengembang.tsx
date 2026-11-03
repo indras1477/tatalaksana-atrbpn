@@ -3,8 +3,8 @@
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { Coffee, ExternalLink, X, Briefcase } from 'lucide-react';
+import QrisDialog from './QrisDialog';
 
-const SAWERIA_URL = 'https://saweria.co/nandaferdiansyah';
 const PORTOFOLIO_URL = 'https://nanda-portfolio-flax.vercel.app';
 
 interface Props {
@@ -18,6 +18,7 @@ interface Props {
  */
 export default function KreditPengembang({ isDarkMode = false }: Props) {
   const [open, setOpen] = useState(false);
+  const [qris, setQris] = useState(false);
   // Modal dipasang lewat portal ke <body>: footer membungkusnya dengan <p>/<span>,
   // sehingga <div> di dalamnya akan dipecah oleh parser HTML bila dirender di tempat.
   const [mounted, setMounted] = useState(false);
@@ -88,25 +89,24 @@ export default function KreditPengembang({ isDarkMode = false }: Props) {
 
               {/* Kode QR */}
               <div className="mt-4 flex flex-col items-center gap-2">
-                <a
-                  href={SAWERIA_URL}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title="Pindai atau klik untuk mendukung pengembang"
+                <button
+                  type="button"
+                  onClick={() => setQris(true)}
+                  title="Klik untuk memperbesar kode QRIS"
                   className={`block p-3 rounded-2xl bg-white border-2 transition-all hover:scale-105 active:scale-95 ${
                     isDarkMode ? 'border-[#001F43]' : 'border-[#002855]/20'
                   }`}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src="/e-sop-atrbpn/dukung-qr.svg"
-                    alt="Kode QR dukungan pengembang melalui Saweria"
+                    src="/e-sop-atrbpn/qris-dukung-qr.png"
+                    alt="Kode QRIS dukungan pengembang"
                     className="w-32 h-32 block"
                     width={128}
                     height={128}
                   />
-                </a>
-                <p className={`text-[11px] font-semibold text-center ${muted}`}>Pindai dengan kamera ponsel/klik gambar QR di atas</p>
+                </button>
+                <p className={`text-[11px] font-semibold text-center ${muted}`}>Pindai dengan e-wallet/m-banking, atau klik gambar untuk memperbesar</p>
               </div>
             </div>
 
@@ -130,6 +130,7 @@ export default function KreditPengembang({ isDarkMode = false }: Props) {
         </div>,
         document.body
       )}
+      {qris && <QrisDialog onClose={() => setQris(false)} isDarkMode={isDarkMode} />}
     </>
   );
 }

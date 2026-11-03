@@ -18,9 +18,11 @@ interface Props {
   className?: string;
   /** Jarak antar halaman (px). */
   jarak?: number;
+  /** Perbesaran relatif terhadap lebar wadah (1 = pas lebar). Dirender ulang tajam tiap berubah. */
+  zoom?: number;
 }
 
-export default function PratinjauPdf({ url, className = '', jarak = 12 }: Props) {
+export default function PratinjauPdf({ url, className = '', jarak = 12, zoom = 1 }: Props) {
   const wadahRef = useRef<HTMLDivElement>(null);
   const [gagal, setGagal] = useState(false);
   const [memuat, setMemuat] = useState(true);
@@ -38,8 +40,9 @@ export default function PratinjauPdf({ url, className = '', jarak = 12 }: Props)
           new URL('pdfjs-dist/build/pdf.worker.min.mjs', import.meta.url).toString();
         const dok = await pdfjs.getDocument({ url }).promise;
         if (batal) return;
-        const lebar = wadah.clientWidth || 600;
-        lebarTerakhir = lebar;
+        const lebarWadah = wadah.clientWidth || 600;
+        lebarTerakhir = lebarWadah;
+        const lebar = lebarWadah * zoom;
         wadah.innerHTML = '';
         const dpr = Math.min(window.devicePixelRatio || 1, 3);
         for (let n = 1; n <= dok.numPages; n += 1) {
@@ -51,7 +54,8 @@ export default function PratinjauPdf({ url, className = '', jarak = 12 }: Props)
           const kanvas = document.createElement('canvas');
           kanvas.width = Math.floor(vp.width);
           kanvas.height = Math.floor(vp.height);
-          kanvas.style.width = '100%';
+          kanvas.style.width = zoom === 1 ? '100%' : `${Math.round(lebar)}px`;
+          kanvas.style.maxWidth = 'none';
           kanvas.style.display = 'block';
           kanvas.style.background = '#fff';
           kanvas.style.boxShadow = '0 1px 4px rgba(15,23,42,.18)';
@@ -76,14 +80,14 @@ export default function PratinjauPdf({ url, className = '', jarak = 12 }: Props)
     });
     ro.observe(wadah);
     return () => { batal = true; ro.disconnect(); };
-  }, [url, jarak]);
+  }, [url, jarak, zoom]);
 
   if (gagal) {
     // Cadangan terakhir: serahkan ke penampil bawaan peramban.
     return <iframe src={url} title="Pratinjau PDF" className={`w-full h-full border-0 bg-white ${className}`} />;
   }
   return (
-    <div className={`relative w-full h-full overflow-y-auto ${className}`}>
+    <div className={`relative w-full h-full ${zoom === 1 ? 'overflow-y-auto' : 'overflow-auto'} ${className}`}>
       {memuat && (
         <div className="absolute inset-0 flex items-center justify-center text-xs font-bold text-slate-400 bg-slate-50">
           Menyiapkan pratinjau…

@@ -286,7 +286,7 @@ function StudioSPContent() {
 
   if (ditolak) {
     return (
-      <div className="h-[calc(100dvh-4rem)] flex items-center justify-center p-6">
+      <div className="h-full min-h-0 flex items-center justify-center p-6">
         <div className="max-w-md text-center bg-white border border-slate-200 rounded-2xl shadow-sm p-8">
           <h2 className="text-lg font-bold text-[#002855]">Studio Standar Pelayanan tidak tersedia</h2>
           <p className="text-sm text-slate-500 mt-2">
@@ -302,11 +302,11 @@ function StudioSPContent() {
     );
   }
 
-  if (memuat) return <div className="h-[calc(100dvh-4rem)] flex items-center justify-center text-sm font-bold text-slate-500">Memuat Studio…</div>;
+  if (memuat) return <div className="h-full min-h-0 flex items-center justify-center text-sm font-bold text-slate-500">Memuat Studio…</div>;
 
   if (gagalMuat) {
     return (
-      <div className="h-[calc(100dvh-4rem)] flex items-center justify-center p-6">
+      <div className="h-full min-h-0 flex items-center justify-center p-6">
         <div className="max-w-md text-center bg-white border border-red-200 rounded-2xl shadow-sm p-8">
           <h2 className="text-lg font-bold text-red-600">Gagal memuat dokumen</h2>
           <p className="text-sm text-slate-500 mt-2">{gagalMuat}</p>
@@ -391,7 +391,7 @@ function StudioSPContent() {
 
 export default function StudioSPPage() {
   return (
-    <Suspense fallback={<div className="h-[calc(100dvh-4rem)] flex items-center justify-center text-sm font-bold text-slate-500">Menyiapkan Kanvas…</div>}>
+    <Suspense fallback={<div className="h-full min-h-0 flex items-center justify-center text-sm font-bold text-slate-500">Menyiapkan Kanvas…</div>}>
       <StudioSPContent />
     </Suspense>
   );

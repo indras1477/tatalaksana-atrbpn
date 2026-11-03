@@ -109,7 +109,8 @@ export default function CatatanRevisiPanel({ kind, modelId, token }: Props) {
       <button
         onClick={buka}
         title={sedangEdit ? 'Edit catatan revisi yang sedang berlaku' : 'Tulis catatan revisi sambil membaca dokumen'}
-        className="no-print fixed bottom-5 right-5 z-60 flex items-center gap-2 rounded-full bg-amber-500 px-4 py-3 font-bold text-sm text-white shadow-lg shadow-amber-500/30 hover:bg-amber-600 active:scale-95 transition-all"
+        // Sisi KANAN-bawah, bergeser ±4,5rem dari tepi agar tak menutupi kontrol zoom kanvas BPMN (pojok kanan-bawah).
+        className="no-print fixed bottom-15 right-[4.5rem] z-40 flex items-center gap-2 rounded-full bg-amber-500 px-4 py-3 font-bold text-sm text-white shadow-lg shadow-amber-500/30 hover:bg-amber-600 active:scale-95 transition-all"
       >
         <MessageSquarePlus className="w-5 h-5" />
         <span className="hidden sm:inline">{sedangEdit ? 'Edit Catatan Revisi' : 'Catatan Revisi'}</span>
@@ -118,7 +119,7 @@ export default function CatatanRevisiPanel({ kind, modelId, token }: Props) {
   }
 
   return (
-    <div className="no-print fixed bottom-5 right-5 z-60 w-[min(92vw,26rem)] rounded-2xl border border-amber-300 bg-white shadow-2xl">
+    <div className="no-print fixed bottom-15 right-4 z-45 w-[min(calc(100vw-2rem),26rem)] rounded-2xl border border-amber-300 bg-white shadow-2xl">
       <div className="flex items-center justify-between gap-2 rounded-t-2xl bg-amber-50 px-4 py-3 border-b border-amber-200">
         <div className="min-w-0">
           <p className="text-sm font-bold text-amber-900 flex items-center gap-1.5">

@@ -1,11 +1,14 @@
 'use client';
 
+import { useState } from 'react';
 import {
   Info, Coffee, ShieldCheck, Sparkles, ExternalLink, Briefcase,
   FileSignature, GitBranch, ClipboardCheck, ScrollText, Home, Share2,
   Bell, History, Layers,
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
+import ReviewPanel from '@/components/ReviewPanel';
+import QrisDialog from '@/components/QrisDialog';
 
 /* Ringkasan kemampuan utama aplikasi */
 const KEMAMPUAN = [
@@ -63,6 +66,7 @@ const ALUR = [
 
 export default function AboutPage() {
   const { isDarkMode } = useAppContext();
+  const [qrisOpen, setQrisOpen] = useState(false);
 
   const card = isDarkMode ? 'bg-[#151F32] border-slate-800' : 'bg-white border-slate-100';
   const heading = isDarkMode ? 'text-white' : 'text-[#002855]';
@@ -71,7 +75,7 @@ export default function AboutPage() {
 
   return (
     <div className="overflow-auto p-4 md:p-6 lg:p-8 h-full">
-      <div className="max-w-5xl mx-auto space-y-6 pb-12 animate-in fade-in duration-500">
+      <div className="max-w-7xl mx-auto space-y-6 pb-12 animate-in fade-in duration-500">
 
         {/* ---------- Header halaman ---------- */}
         <div className="mb-2">
@@ -82,6 +86,10 @@ export default function AboutPage() {
             Mengenal lebih dekat aplikasi yang Anda gunakan sehari-hari
           </p>
         </div>
+
+        {/* Dua kolom: konten utama di kiri, kartu Ulasan Pengguna di kanan (mengikuti sampai bawah). */}
+        <div className="lg:grid lg:grid-cols-[minmax(0,1fr)_22rem] lg:gap-6 lg:items-start space-y-6 lg:space-y-0">
+        <div className="space-y-6 min-w-0">
 
         {/* ---------- Kartu identitas aplikasi ---------- */}
         <div className={`rounded-2xl border overflow-hidden ${card}`}>
@@ -221,7 +229,7 @@ export default function AboutPage() {
                   memakai, dan layak untuk terus dirawat.
                 </p>
                 <p className={`text-sm leading-relaxed mt-2.5 font-semibold ${isDarkMode ? 'text-blue-300/90' : 'text-[#002855]/90'}`}>
-                  Pindai atau tekan kode QR di samping.
+                  Pindai atau tekan kode QRIS di samping.
                 </p>
 
                 <a
@@ -238,26 +246,25 @@ export default function AboutPage() {
 
               {/* Kode QR */}
               <div className="shrink-0 flex flex-col items-center gap-2 md:w-44">
-                <a
-                  href="https://saweria.co/nandaferdiansyah"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  title="Pindai atau klik untuk mendukung pengembang"
+                <button
+                  type="button"
+                  onClick={() => setQrisOpen(true)}
+                  title="Klik untuk memperbesar kode QRIS"
                   className={`block p-3 rounded-2xl bg-white border-2 transition-all hover:scale-105 active:scale-95 ${
                     isDarkMode ? 'border-[#001F43]' : 'border-[#002855]/20'
                   }`}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src="/e-sop-atrbpn/dukung-qr.svg"
-                    alt="Kode QR dukungan pengembang melalui Saweria"
+                    src="/e-sop-atrbpn/qris-dukung-qr.png"
+                    alt="Kode QRIS dukungan pengembang"
                     className="w-36 h-36 block"
                     width={144}
                     height={144}
                   />
-                </a>
+                </button>
                 <p className={`text-[11px] text-center font-semibold ${muted}`}>
-                  Pindai dengan kamera ponsel/klik gambar QR di atas
+                  Pindai dengan e-wallet/m-banking, atau klik gambar untuk memperbesar
                 </p>
               </div>
             </div>
@@ -277,6 +284,11 @@ export default function AboutPage() {
           </a>{' '}
           untuk Biro Organisasi, Tata Laksana, dan Manajemen Risiko ATR/BPN
         </p>
+
+        </div>
+        <ReviewPanel />
+        </div>
+        {qrisOpen && <QrisDialog onClose={() => setQrisOpen(false)} isDarkMode={isDarkMode} />}
 
       </div>
     </div>

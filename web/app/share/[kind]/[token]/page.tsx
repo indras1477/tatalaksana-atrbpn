@@ -148,7 +148,16 @@ export default function SharePage() {
     <Shell>
       {doc.has_pdf
         ? <iframe src={pdfUrl} title={doc.process_title} className="flex-1 w-full border-0 bg-white" />
-        : <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center"><FileText className="w-10 h-10 text-slate-300" /><p className="text-slate-500 text-sm">Dokumen belum siap dibagikan. Minta pemilik untuk membagikan ulang.</p></div>}
+        : <div className="flex-1 flex flex-col items-center justify-center gap-3 p-6 text-center"><FileText className="w-10 h-10 text-slate-300" /><p className="text-slate-500 text-sm">Dokumen sedang disiapkan. Halaman ini dimuat ulang otomatis — mohon tunggu sebentar.</p><MuatUlangOtomatis /></div>}
     </Shell>
   );
+}
+
+/** Dokumen sedang dirender di server → muat ulang halaman tiap 15 detik sampai siap. */
+function MuatUlangOtomatis() {
+  useEffect(() => {
+    const t = setTimeout(() => window.location.reload(), 15000);
+    return () => clearTimeout(t);
+  }, []);
+  return null;
 }

@@ -65,18 +65,25 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
   // rekan seakun (shared account) login. Bila server menjawab 401 (sesi sudah mati),
   // langsung logout supaya tidak kehilangan data pada aksi berikutnya.
   useEffect(() => {
+    // Interaksi nyata terakhir. Tab yang ditinggal terbuka tidak dianggap "dipakai",
+    // sehingga slot akun bersama bisa diambil rekan setelah 15 menit tanpa interaksi.
+    let lastInteraction = Date.now();
+    const tandai = () => { lastInteraction = Date.now(); };
+    const EVENTS = ['mousedown', 'keydown', 'touchstart', 'wheel', 'pointermove'] as const;
+    EVENTS.forEach(e => window.addEventListener(e, tandai, { passive: true, capture: true }));
     const ping = async () => {
       const token = localStorage.getItem('token');
       if (!token) return;
+      const aktif = document.visibilityState === 'visible' && Date.now() - lastInteraction < 5 * 60 * 1000;
       try {
         const res = await fetch('/e-sop-atrbpn/api/auth/verify', {
-          headers: { Authorization: `Bearer ${token}` },
+          headers: { Authorization: `Bearer ${token}`, ...(aktif ? { 'X-User-Active': '1' } : {}) },
         });
         if (res.status === 401) handleLogout();
       } catch { /* koneksi sesaat putus — abaikan, jangan logout */ }
     };
     const timer = setInterval(ping, 2 * 60 * 1000);
-    return () => clearInterval(timer);
+    return () => { clearInterval(timer); EVENTS.forEach(e => window.removeEventListener(e, tandai, { capture: true })); };
   }, [handleLogout]);
 
   const handleContinue = useCallback(() => {
@@ -97,6 +104,12 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
     setSidebarOpen(isDesktop && (stored === null ? true : stored === '1'));
     prefLoaded.current = true;
   }, []);
+
+  // Lebar sidebar di desktop dibagikan sbg variabel CSS agar elemen mengambang (mis. tombol
+  // Catatan Revisi) bergeser mengikutinya, tak lagi tertimpa/menimpa menu saat sidebar terbuka.
+  useEffect(() => {
+    document.documentElement.style.setProperty('--lebar-sidebar', sidebarOpen ? '18rem' : '4rem');
+  }, [sidebarOpen]);
 
   useEffect(() => {
     // Simpan preferensi hanya setelah nilai awal dibaca (hindari menimpa dengan default).
@@ -119,7 +132,7 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div
-      className={`h-screen overflow-hidden font-sans transition-colors duration-300 ${
+      className={`h-dvh overflow-hidden font-sans transition-colors duration-300 ${
         isDarkMode ? 'bg-[#0B1121] text-slate-200' : 'bg-[#f3f4f6] text-slate-800'
       }`}
     >
@@ -170,12 +183,14 @@ function DashboardShell({ children }: { children: React.ReactNode }) {
       >
         <AppHeader onToggleSidebar={() => setSidebarOpen(prev => !prev)} sidebarOpen={sidebarOpen} />
 
-        {/* Scrollable main area */}
-        <main className="flex-1 overflow-auto">
+        {/* Scrollable main area — min-h-0 agar anak flex (studio) bisa mengisi
+            sisa tinggi, bukan mendorong footer keluar viewport. */}
+        <main className="flex-1 min-h-0 overflow-auto">
           {children}
         </main>
 
-        {/* Footer / Credit */}
+        {/* Footer / Credit — tampil di SEMUA halaman, termasuk studio. Studio mengisi sisa tinggi
+            lewat flex (main = flex-1 min-h-0), jadi footer tak membuat kanvas meluber. */}
         <footer
           className={`px-4 py-2.5 border-t text-xs text-center shrink-0 ${
             isDarkMode

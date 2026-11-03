@@ -3,7 +3,8 @@ import React, { useState, useEffect, useMemo } from 'react';
 import {
   Plus, Edit, Trash2, X, Building2,
   ShieldCheck, UserCheck, KeyRound, Eye, EyeOff, Download,
-  Activity, Monitor, Clock, Wifi, WifiOff, Filter, ChevronLeft, ChevronRight, Search
+  Activity, Monitor, Clock, Wifi, WifiOff, Filter, ChevronLeft, ChevronRight, Search,
+  RotateCcw, AlertTriangle
 } from 'lucide-react';
 
 import { useRouter } from 'next/navigation';
@@ -29,6 +30,12 @@ interface ActiveSession {
 interface LoginEvent {
   created_at: string; username: string; nama_lengkap: string;
   role: string; ip_address: string;
+}
+
+interface TrashUser {
+  id: number; username: string; nama_lengkap: string; email: string;
+  role: string; unit_l1?: string; unit_l2?: string; deleted_at: string;
+  penghapus_nama?: string; penghapus_user?: string;
 }
 
 function parseUA(ua: string | null) {
@@ -69,6 +76,10 @@ export default function UsersPage() {
   const [editingUser,  setEditingUser]  = useState<User | null>(null);
   const [showPassword, setShowPassword] = useState(false);
   const [revealFor,    setRevealFor]    = useState<number | null>(null);
+  const [showTrash,    setShowTrash]    = useState(false);
+  const [trashItems,   setTrashItems]   = useState<TrashUser[]>([]);
+  const [trashLoading, setTrashLoading] = useState(false);
+  const [trashBusy,    setTrashBusy]    = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<'users' | 'activity'>('users');
   // Filter unit kerja + paginasi Daftar Pengguna (pola sama dgn tabel Peraturan)
   const [filterL1, setFilterL1] = useState('');
@@ -154,13 +165,82 @@ export default function UsersPage() {
     finally { setLoading(false); }
   };
 
+  const fetchTrash = async () => {
+    setTrashLoading(true);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_URL}/trash`, { headers: { Authorization: `Bearer ${token}` } });
+      if (res.ok) {
+        const data = await res.json();
+        setTrashItems(data.items || []);
+      } else {
+        setTrashItems([]);
+      }
+    } catch { setTrashItems([]); }
+    finally { setTrashLoading(false); }
+  };
+
+  const openTrash = () => {
+    setShowTrash(true);
+    fetchTrash();
+  };
+
   const handleDelete = async (id: number) => {
-    if (!confirm('Hapus user ini?')) return;
+    if (!confirm('Hapus akun ini?\n\nAkun akan dipindah ke Kotak Sampah dan masih dapat dikembalikan.')) return;
     try {
       const token = localStorage.getItem('token');
       const res = await fetch(`${API_URL}/${id}`, { method: 'DELETE', headers: { Authorization: `Bearer ${token}` } });
-      if (res.ok) fetchUsers();
-    } catch (err) { console.error(err); }
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        const label = data.nama_lengkap || data.username || 'Akun';
+        alert(`Akun "${label}" berhasil dihapus.\n\nAkun dapat dikembalikan lewat tombol Kotak Sampah.`);
+        fetchUsers();
+      } else {
+        alert(`Gagal menghapus user (Status: ${res.status}). ${data.error || ''}`);
+      }
+    } catch { alert("Terjadi kesalahan jaringan."); }
+  };
+
+  const handleRestore = async (u: TrashUser) => {
+    if (!confirm(`Kembalikan akun "${u.nama_lengkap || u.username}"?\n\nAkun akan muncul kembali di daftar pengguna dan bisa login.`)) return;
+    setTrashBusy(u.id);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_URL}/${u.id}/restore`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        alert(`Akun "${data.nama_lengkap || data.username || u.username}" berhasil dikembalikan.`);
+        setTrashItems(prev => prev.filter(x => x.id !== u.id));
+        fetchUsers();
+      } else {
+        alert(`Gagal mengembalikan akun. ${data.error || ''}`);
+      }
+    } catch { alert("Terjadi kesalahan jaringan."); }
+    finally { setTrashBusy(null); }
+  };
+
+  const handlePurge = async (u: TrashUser) => {
+    if (!confirm(`HAPUS PERMANEN akun "${u.nama_lengkap || u.username}"?\n\nTindakan ini TIDAK DAPAT dibatalkan.`)) return;
+    if (!confirm('Sekali lagi: yakin menghapus permanen?')) return;
+    setTrashBusy(u.id);
+    try {
+      const token = localStorage.getItem('token');
+      const res = await fetch(`${API_URL}/${u.id}/permanent`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const data = await res.json().catch(() => ({}));
+      if (res.ok) {
+        alert(`Akun "${data.username || u.username}" telah dihapus permanen.`);
+        setTrashItems(prev => prev.filter(x => x.id !== u.id));
+      } else {
+        alert(`Gagal menghapus permanen. ${data.error || ''}`);
+      }
+    } catch { alert("Terjadi kesalahan jaringan."); }
+    finally { setTrashBusy(null); }
   };
 
   const openModal = (user?: User) => {
@@ -252,6 +332,9 @@ export default function UsersPage() {
         <div className="flex flex-wrap items-center gap-2 self-start 2xl:self-auto 2xl:justify-end">
           {activeTab === 'users' && (
             <>
+              <button onClick={openTrash} className={`flex items-center gap-2 whitespace-nowrap shrink-0 px-4 py-2.5 font-bold rounded-xl transition shadow-sm border ${isDarkMode ? 'bg-[#0F172A] border-slate-700 text-slate-300 hover:bg-slate-800' : 'bg-white border-slate-200 text-slate-700 hover:bg-slate-50'}`}>
+                <Trash2 className="w-4 h-4 text-red-500" /> Kotak Sampah
+              </button>
               <button onClick={handleDownloadExcel} className="flex items-center gap-2 whitespace-nowrap shrink-0 px-4 py-2.5 bg-emerald-600 text-white font-bold rounded-xl hover:bg-emerald-700 transition shadow-sm">
                 <Download className="w-4 h-4" /> Unduh Excel
               </button>
@@ -581,6 +664,73 @@ export default function UsersPage() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Kotak Sampah Pengguna */}
+      {showTrash && (
+        <div className="fixed inset-0 bg-[#002855]/60 backdrop-blur-sm flex items-center justify-center z-50 p-4">
+          <div className={`rounded-3xl w-full max-w-2xl shadow-2xl max-h-[90vh] flex flex-col ${isDarkMode ? 'bg-[#151F32] border border-slate-700' : 'bg-white'}`}>
+            <div className={`flex justify-between items-center px-6 py-5 border-b shrink-0 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+              <div>
+                <h2 className={`text-lg font-black flex items-center gap-2 ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>
+                  <Trash2 className="w-5 h-5 text-red-500" /> Kotak Sampah Pengguna
+                </h2>
+                <p className={`text-xs mt-1 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  Akun yang dihapus masih bisa dikembalikan. Hapus permanen tidak dapat dibatalkan.
+                </p>
+              </div>
+              <button onClick={() => setShowTrash(false)} className={`p-2 rounded-full transition ${isDarkMode ? 'hover:bg-slate-800' : 'hover:bg-slate-100'}`}>
+                <X className="w-5 h-5 text-slate-400" />
+              </button>
+            </div>
+            <div className="overflow-y-auto px-6 py-4 flex-1">
+              {trashLoading ? (
+                <div className={`py-12 text-center text-sm italic ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Memuat...</div>
+              ) : trashItems.length === 0 ? (
+                <div className={`py-12 text-center text-sm italic ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                  Kotak sampah kosong — tidak ada akun yang dihapus.
+                </div>
+              ) : (
+                <ul className="space-y-3">
+                  {trashItems.map(u => (
+                    <li key={u.id} className={`rounded-2xl border p-4 flex flex-col sm:flex-row sm:items-center gap-3 justify-between ${isDarkMode ? 'border-slate-700 bg-[#0F172A]' : 'border-slate-200 bg-slate-50'}`}>
+                      <div className="min-w-0">
+                        <p className={`font-bold text-sm truncate ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{u.nama_lengkap || u.username}</p>
+                        <p className="text-xs font-mono text-slate-500">@{u.username}</p>
+                        <div className="flex flex-wrap items-center gap-2 mt-1.5">
+                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-black uppercase border ${ROLE_BADGE[u.role] || ROLE_BADGE.user}`}>
+                            {ROLE_LABEL[u.role] || u.role}
+                          </span>
+                          <span className={`text-[10px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
+                            Dihapus {fmtDt(u.deleted_at)}
+                            {(u.penghapus_nama || u.penghapus_user) ? ` oleh ${u.penghapus_nama || u.penghapus_user}` : ''}
+                          </span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          disabled={trashBusy === u.id}
+                          onClick={() => handleRestore(u)}
+                          className="flex items-center gap-1.5 px-3 py-2 bg-emerald-600 text-white text-xs font-bold rounded-xl hover:bg-emerald-700 transition disabled:opacity-50"
+                        >
+                          <RotateCcw className="w-3.5 h-3.5" /> Kembalikan
+                        </button>
+                        <button
+                          disabled={trashBusy === u.id}
+                          onClick={() => handlePurge(u)}
+                          className="flex items-center gap-1.5 px-3 py-2 bg-red-600 text-white text-xs font-bold rounded-xl hover:bg-red-700 transition disabled:opacity-50"
+                          title="Hapus permanen"
+                        >
+                          <AlertTriangle className="w-3.5 h-3.5" /> Permanen
+                        </button>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </div>
           </div>
         </div>
       )}

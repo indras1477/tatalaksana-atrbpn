@@ -3,9 +3,10 @@
 import { usePathname, useRouter } from 'next/navigation';
 import {
   Home, FileSignature, GitBranch, Users, LogOut,
-  HelpCircle, X, FilePlus, ScrollText, Landmark, Network, ClipboardCheck, Info,
+  HelpCircle, X, FilePlus, ScrollText, Landmark, Network, ClipboardCheck, Info, MessageCircle,
 } from 'lucide-react';
 import { useAppContext } from '@/lib/app-context';
+import { useLencanaChat } from '@/lib/chat';
 
 interface Props {
   isOpen: boolean;
@@ -34,6 +35,7 @@ export default function AppSidebar({ isOpen, onClose }: Props) {
   const { currentUser, handleLogout } = useAppContext();
 
   const isViewer = currentUser?.role === 'viewer';
+  const lencanaChat = useLencanaChat(currentUser?.role);
 
   const navigate = (href: string) => {
     router.push(href);
@@ -65,7 +67,7 @@ export default function AppSidebar({ isOpen, onClose }: Props) {
 
       <aside
         className={`
-          fixed top-0 left-0 h-screen z-30 flex flex-col shadow-2xl
+          fixed top-0 left-0 h-dvh z-30 flex flex-col shadow-2xl
           bg-linear-to-b from-[#001F43] to-[#000F24] text-white
           transition-all duration-300 ease-in-out overflow-hidden
           ${isOpen
@@ -100,7 +102,10 @@ export default function AppSidebar({ isOpen, onClose }: Props) {
         </div>
 
         {/* Navigation */}
-        <nav className={`flex-1 py-5 overflow-y-auto ${isOpen ? 'px-3' : 'px-2'}`}>
+        {/* min-h-0: tanpa ini anak flex tidak boleh mengecil di bawah tinggi isinya,
+            sehingga overflow-y-auto tak pernah aktif dan tombol Keluar di bawah
+            terpotong (terutama di HP). pb-safe: ruang untuk home indicator iOS. */}
+        <nav className={`flex-1 min-h-0 py-5 overflow-y-auto overscroll-contain pb-[max(1.25rem,env(safe-area-inset-bottom))] ${isOpen ? 'px-3' : 'px-2'}`}>
           {isOpen && (
             <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 px-3">
               Menu Utama
@@ -196,6 +201,28 @@ export default function AppSidebar({ isOpen, onClose }: Props) {
               <p className="text-[10px] font-bold text-slate-500 uppercase tracking-wider mb-2 px-3">
                 Sistem
               </p>
+            )}
+
+            {/* HelpDesk (chat dengan tim admin) — disembunyikan untuk viewer */}
+            {!isViewer && (
+              <button
+                onClick={() => navigate('/chat')}
+                title={!isOpen ? 'HelpDesk' : undefined}
+                className={`
+                  w-full flex items-center py-3 mb-1 rounded-2xl transition-all text-sm
+                  ${isOpen ? 'gap-3 px-4' : 'justify-center px-3'}
+                  ${pathname.startsWith('/chat')
+                    ? 'bg-linear-to-r from-[#A29061] to-[#8c7a4b] text-white font-bold shadow-lg shadow-[#A29061]/25'
+                    : 'text-slate-400 hover:bg-white/5 hover:text-white font-medium'}
+                `}
+              >
+                <span className="relative shrink-0">
+                  <MessageCircle className="w-5 h-5" />
+                  {lencanaChat > 0 && !isOpen && <span className="absolute -top-1.5 -right-1.5 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">{lencanaChat}</span>}
+                </span>
+                {isOpen && <span className="flex-1 text-left">HelpDesk</span>}
+                {isOpen && lencanaChat > 0 && <span className="min-w-5 h-5 px-1.5 rounded-full bg-red-500 text-white text-[11px] font-bold flex items-center justify-center">{lencanaChat}</span>}
+              </button>
             )}
 
             {/* Panduan disembunyikan untuk viewer */}

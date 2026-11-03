@@ -2,16 +2,18 @@
 
 import React, { useState, useEffect, useLayoutEffect, useRef, forwardRef, useImperativeHandle, useMemo, createContext, useContext } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { unduhExcelSop, menitDariWaktu, MENIT_PER_HARI_KERJA } from '@/lib/sopExcel';
 import {
   Plus, Trash2, UserMinus, Save,
   Circle, Square, Diamond, Shield,
   FileSpreadsheet, Send, ArrowLeft, Info, MousePointer2, X, ChevronLeft, ChevronRight,
   Edit2, FileDown, Loader2, ChevronDown, Undo2, Redo2, Bold, Italic, Minus, Type,
-  FileText, Link2, ExternalLink, Search, AlertTriangle, Scissors,
+  FileText, Link2, ExternalLink, Search, AlertTriangle, Scissors, Maximize,
 } from 'lucide-react';
 import { HIERARKI_UNIT } from '@/lib/constants';
 import { KLASIFIKASI_SOP, denganNilaiSaatIni } from '@/lib/klasifikasi';
 import ShareButton from '@/components/ShareButton';
+import { useAppContext } from '@/lib/app-context';
 import CatatanRevisiPanel from '@/components/CatatanRevisiPanel';
 
 // Sumber tunggal (Titlecase) dari master unit; konsisten dengan modal konfigurasi SOP.
@@ -136,6 +138,12 @@ export interface SOPBuilderProps {
   toolbarExtra?: React.ReactNode;
   /** Tampilkan bagian Keterkaitan Dokumen (SOP / Proses Bisnis) di panel Properti Dokumen. */
   bolehKeterkaitan?: boolean;
+  /** Admin/superadmin boleh mengubah Tanggal Pembuatan pada cover (pengguna lain: terisi otomatis, hanya-baca). */
+  bolehUbahTglPembuatan?: boolean;
+  /** Tombol Pratinjau Layar Penuh (mode presentasi per halaman F4). */
+  bolehPresentasi?: boolean;
+  /** Penyusun (semua peran yang dapat menyunting) boleh memilih jenis pengesahan pimpinan di cover: TTD basah (spasi kosong) atau TTE (teks "Ditandatangani secara elektronik"). */
+  bolehUbahPengesahan?: boolean;
   /** Cari dokumen SOP / Proses Bisnis yang dapat dikaitkan (pencarian di server). */
   cariDokumenTerkait?: (kind: 'sop' | 'bpmn', q: string) => Promise<TautanDok[]>;
   /** Rapikan halaman alur sekali saat kanvas dimuat (dokumen baru hasil impor PDF). */
@@ -740,7 +748,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   initialData, initialTitle, initialKey, initialL1, initialL2, initialJenis, initialKlasifikasi,
   isViewOnly = false, allowLocalDraft = true, onSaveTrigger, onSubmitTrigger, onBackTrigger, onDownloadPdf,
   signedCoverUrl = null, signedCoverMime = '', hasSignedCover = false, signedCoverPages = 1, onUnduhDokumenTte, shareModelId = null, toolbarExtra = null,
-  bolehKeterkaitan = false, cariDokumenTerkait, rapikanSaatMuat = false,
+  bolehKeterkaitan = false, bolehUbahTglPembuatan = false, bolehPresentasi = false, bolehUbahPengesahan = false, cariDokumenTerkait, rapikanSaatMuat = false,
 }, ref) => {
   const searchParams = useSearchParams();
 
@@ -784,10 +792,44 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     if (changed) setShapeHeights(next);
   });
 
+  // Penyesuaian tinggi baris tabel alur yang TIDAK bergantung pada tinggi persen CSS.
+  // Sebagian peramban/laptop tidak memuaikan baris saat isi (mis. Keterangan panjang)
+  // melebihi tinggi baris — teks menimpa baris di bawahnya — dan tidak mengisi penuh sel
+  // bentuk (tinggi:100% tak terselesaikan), sehingga garis panah antarbaris terputus.
+  // Tiap render: kembalikan tinggi dasar, ukur isi sebenarnya (scrollHeight tetap benar
+  // walau terpotong), naikkan tinggi baris bila perlu, lalu paskan sel bentuk ke tinggi sel.
+  // Pada peramban yang sudah benar hasilnya sama persis, jadi tidak mengubah tampilan/PDF.
+  useLayoutEffect(() => {
+    const paskan = () => {
+      document.querySelectorAll<HTMLTableRowElement>('.page-container tbody > tr').forEach(tr => {
+        if (!tr.offsetHeight) return;
+        tr.style.height = tr.dataset.baseH || '';
+        tr.querySelectorAll<HTMLElement>('.sop-cell').forEach(c => { c.style.height = ''; });
+        let perlu = 0;
+        tr.querySelectorAll<HTMLElement>(':scope > td').forEach(td => {
+          const isi = td.querySelector<HTMLElement>('[contenteditable]');
+          if (!isi) return;
+          const cs = getComputedStyle(td);
+          perlu = Math.max(perlu, isi.scrollHeight + (parseFloat(cs.paddingTop) || 0) + (parseFloat(cs.paddingBottom) || 0) + 2);
+        });
+        if (perlu > tr.offsetHeight + 1) tr.style.height = `${Math.ceil(perlu)}px`;
+        tr.querySelectorAll<HTMLElement>(':scope > td').forEach(td => {
+          const c = td.querySelector<HTMLElement>('.sop-cell');
+          if (c && c.offsetHeight < td.clientHeight - 1) c.style.height = `${td.clientHeight}px`;
+        });
+      });
+    };
+    paskan();
+    window.addEventListener('resize', paskan);
+    return () => window.removeEventListener('resize', paskan);
+  });
+
   const [jabatanPengesah, setJabatanPengesah] = useState<string>(parsedData?.jabatanPengesah || searchParams.get('jabatan') || '');
   const [namaPengesah, setNamaPengesah] = useState<string>(parsedData?.namaPengesah || searchParams.get('nama') || '');
   const [nipPengesah, setNipPengesah] = useState<string>(parsedData?.nipPengesah || searchParams.get('nip') || '');
   const [tglPembuatan, setTglPembuatan] = useState<string>(parsedData?.tglPembuatan || '');
+  // Jenis pengesahan pimpinan pada cover: false = TTD basah (spasi kosong utk tanda tangan), true = TTE.
+  const [pengesahanTte, setPengesahanTte] = useState<boolean>(!!parsedData?.pengesahanTTE);
   const [tglRevisi, setTglRevisi] = useState<string>(parsedData?.tglRevisi || '');
   const [tglEfektif, setTglEfektif] = useState<string>(parsedData?.tglEfektif || '');
   const [dasarHukum, setDasarHukum] = useState<string>(parsedData?.dasarHukum || '1. ');
@@ -838,12 +880,37 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   
   const [activeTool, setActiveTool] = useState<SOPFlowSymbol | null>(null);
   const [connectingFrom, setConnectingFrom] = useState<{ row: number, col: number } | null>(null);
-  const [isPaletteOpen, setIsPaletteOpen] = useState<boolean>(true);
+  const [isPaletteOpen, setIsPaletteOpen] = useState<boolean>(false);
   const [openShapeMenu, setOpenShapeMenu] = useState<{ row: number, col: number } | null>(null);
 
   // Posisi vertikal palet "Bentuk Ekstra" menyesuaikan tinggi toolbar (yang membungkus di
   // layar kecil) agar tidak pernah menabrak tombol toolbar di atasnya.
   const toolbarRef = useRef<HTMLDivElement>(null);
+
+  // ── PRATINJAU LAYAR PENUH (presentasi) ──────────────────────────────────────
+  // Fullscreen API pada kontainer kanvas: toolbar, tab, panel, header & sidebar
+  // aplikasi tak tampil; halaman F4 diskalakan pas layar & hanya dibaca (tak bisa
+  // disunting). ← / → pindah halaman (Cover, Alur 1, 2, …); Esc keluar.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const { isDarkMode: modeGelap } = useAppContext();
+  const [presentasi, setPresentasi] = useState(false);
+  const [skalaPresentasi, setSkalaPresentasi] = useState(1);
+  const masukPresentasi = async () => {
+    try { await rootRef.current?.requestFullscreen?.(); } catch { /* ditolak browser — abaikan */ }
+  };
+  useEffect(() => {
+    const onFs = () => setPresentasi(!!rootRef.current && document.fullscreenElement === rootRef.current);
+    document.addEventListener('fullscreenchange', onFs);
+    return () => document.removeEventListener('fullscreenchange', onFs);
+  }, []);
+  useEffect(() => {
+    if (!presentasi) return;
+    // Lebar F4 landscape 330mm ≈ 1247px, tinggi 215mm ≈ 813px (96 dpi).
+    const hitung = () => setSkalaPresentasi(Math.max(0.2, Math.min((window.innerWidth - 24) / 1247, (window.innerHeight - 24) / 813)));
+    hitung();
+    window.addEventListener('resize', hitung);
+    return () => window.removeEventListener('resize', hitung);
+  }, [presentasi]);
 
   // Tutup popup Unduh saat klik di luar area tombolnya.
   useEffect(() => {
@@ -864,6 +931,14 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     window.addEventListener('scroll', measure, true);
     return () => { ro.disconnect(); window.removeEventListener('resize', measure); window.removeEventListener('scroll', measure, true); };
   }, []);
+  // Palet "Bentuk Ekstra" hanya berguna di tab Alur. Buka otomatis di layar lebar
+  // (≥1440px, ada ruang di kanan kertas F4 330mm); di layar sempit tetap tertutup
+  // supaya tidak menindih kolom Keterangan.
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    if (activeTab === 'cover') { setIsPaletteOpen(false); return; }
+    setIsPaletteOpen(window.innerWidth >= 1440);
+  }, [activeTab]);
 
   const effectiveIsViewOnly = isViewOnly || isPrinting;
 
@@ -943,27 +1018,8 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   // Pedoman: 1 HARI KERJA = 5,5 jam = 330 menit. Semua satuan dikonversi ke menit
   // (jam ×60, hari ×330, minggu ×5 hari kerja, bulan ×22 hari kerja; angka polos =
   // menit), lalu ditampilkan "X Menit / Y Hari Kerja" (Y = X ÷ 330).
-  const MENIT_PER_HARI_KERJA = 330;
   const totalWaktuSOP = useMemo(() => {
-    let menit = 0;
-    const re = /(\d+(?:[.,]\d+)?)\s*(menit|mnt|jam|jm|hari|hr|minggu|mgg|bulan|bln)/g;
-    steps.forEach(s => {
-      const str = (s.waktu || '').toLowerCase();
-      if (!str.trim()) return;
-      let m: RegExpExecArray | null; let matched = false;
-      re.lastIndex = 0;
-      while ((m = re.exec(str))) {
-        matched = true;
-        const n = parseFloat(m[1].replace(',', '.'));
-        const u = m[2];
-        if (u === 'menit' || u === 'mnt') menit += n;
-        else if (u === 'jam' || u === 'jm') menit += n * 60;
-        else if (u === 'hari' || u === 'hr') menit += n * MENIT_PER_HARI_KERJA;
-        else if (u === 'minggu' || u === 'mgg') menit += n * 5 * MENIT_PER_HARI_KERJA;
-        else menit += n * 22 * MENIT_PER_HARI_KERJA; // bulan
-      }
-      if (!matched) { const n = parseFloat(str.replace(',', '.')); if (!isNaN(n)) menit += n; }
-    });
+    const menit = steps.reduce((t, s) => t + (menitDariWaktu(s.waktu) || 0), 0);
     if (!menit) return null;
     const fmt = (n: number) => (Math.round(n * 100) / 100).toLocaleString('id-ID');
     // Hari kerja DIBULATKAN KE ATAS: sisa jam/menit dihitung sebagai hari berikutnya
@@ -1044,6 +1100,14 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     };
   }, [openShapeMenu]);
 
+  // Menu bentuk yang terbuka di dekat tepi bawah area gulir digulirkan ke area terlihat
+  // (dulu terpotong sehingga tombol/ukuran teks di bawahnya tak terjangkau).
+  useEffect(() => {
+    if (!openShapeMenu) return;
+    const t = setTimeout(() => document.querySelector('.shape-menu-popup')?.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' }), 80);
+    return () => clearTimeout(t);
+  }, [openShapeMenu]);
+
   useEffect(() => {
     // Draft lokal hanya untuk DOKUMEN BARU. Dokumen lama yang gagal dimuat / belum punya
     // sop_data (usulan) TIDAK boleh diisi draft lokal milik dokumen lain — pernah menyebabkan
@@ -1064,6 +1128,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
           if (pd.namaPengesah) setNamaPengesah(pd.namaPengesah);
           if (pd.nipPengesah) setNipPengesah(pd.nipPengesah);
           if (pd.tglPembuatan) setTglPembuatan(pd.tglPembuatan);
+          if (pd.pengesahanTTE) setPengesahanTte(true);
           if (pd.tglRevisi) setTglRevisi(pd.tglRevisi);
           if (pd.tglEfektif) setTglEfektif(pd.tglEfektif);
           if (pd.dasarHukum) setDasarHukum(pd.dasarHukum);
@@ -1125,7 +1190,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     return () => { document.head.removeChild(style); };
   }, []);
 
-  const getSOPData = (overrides?: Record<string, unknown>) => JSON.stringify({ judul, nomor, unitKerja, subUnitKerja, jenisSOP, klasifikasiSOP, pelaksanaHeaders, jabatanPengesah, namaPengesah, nipPengesah, tglPembuatan, tglRevisi, tglEfektif, dasarHukum, kualifikasi, keterkaitan, peralatan, peringatan, pencatatan, steps, coverBreaks, coverCont, keterkaitanDok, barisAlur1, ...(overrides || {}) });
+  const getSOPData = (overrides?: Record<string, unknown>) => JSON.stringify({ judul, nomor, unitKerja, subUnitKerja, jenisSOP, klasifikasiSOP, pelaksanaHeaders, jabatanPengesah, namaPengesah, nipPengesah, tglPembuatan, tglRevisi, tglEfektif, dasarHukum, kualifikasi, keterkaitan, peralatan, peringatan, pencatatan, steps, coverBreaks, coverCont, keterkaitanDok, barisAlur1, pengesahanTTE: pengesahanTte, ...(overrides || {}) });
 
   const handleSaveFlow = (silent = false) => {
     const data = getSOPData();
@@ -1172,35 +1237,33 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     }
   };
 
+  // Unduh Excel (.xlsx): sheet "Ringkasan" (identitas cover, total waktu & tahapan, rekap per
+  // pelaksana — berumus) + sheet "Alur SOP". Lihat lib/sopExcel.ts.
   const handleExportExcel = () => {
-    const getExcelSymbol = (symbolType: SOPFlowSymbol) => {
-      switch (symbolType) {
-        case 'decision': return '◇'; 
-        case 'start': case 'end': return 'O'; 
-        case 'connector': return '⭘'; 
-        default: return 'V'; 
-      }
-    };
-    const topHeaders = pelaksanaHeaders[0] || Array(colCount).fill('');
-    // Konversi penanda format (**tebal**, _miring_) → tag HTML agar tampil di Excel.
-    const xl = (s: string) => inlineFmtHtml(s).replace(/\n/g, '<br>');
-    const html = `
-      <html xmlns:o="urn:schemas-microsoft-com:office:office" xmlns:x="urn:schemas-microsoft-com:office:excel" xmlns="http://www.w3.org/TR/REC-html40">
-      <head><meta charset="utf-8"><style>table { border-collapse: collapse; font-family: Arial, sans-serif; font-size: 11pt; table-layout: fixed; } th, td { border: 1px solid black; padding: 6px; vertical-align: top; white-space: normal; word-wrap: break-word; } .col-no { width: 40px; } .col-text { width: 362px; } .col-pelaksana { width: 80px; text-align: center; } .col-waktu { width: 100px; text-align: center; } th { background-color: #e2e8f0; font-weight: bold; text-align: center; vertical-align: middle; } td { mso-number-format: "\\@"; } br { mso-data-placement: same-cell; }</style></head>
-      <body><table><colgroup><col class="col-no"><col class="col-text">${Array(colCount).fill(0).map(() => `<col class="col-pelaksana">`).join('')}<col class="col-text"><col class="col-waktu"><col class="col-text"><col class="col-text"></colgroup>
-      <thead><tr><th rowspan="2">No</th><th rowspan="2">Kegiatan</th><th colspan="${colCount}">Pelaksana</th><th colspan="3">Mutu Baku</th><th rowspan="2">Keterangan</th></tr>
-      <tr>${topHeaders.map(h => `<th>${h || '-'}</th>`).join('')}<th>Kelengkapan</th><th>WAKTU<br>(MENIT)</th><th>Output</th></tr></thead>
-      <tbody>${chunkedSteps.map((chunk, chunkIdx) => {
-        const currentH = pelaksanaHeaders[chunkIdx] || Array(colCount).fill('');
-        let startIndex = 0; for(let i=0; i<chunkIdx; i++) startIndex += chunkedSteps[i].length;
-        const chunkRows = chunk.map((step, localIdx) => {
-          const absIdx = startIndex + localIdx;
-          return `<tr><td style="text-align: center; vertical-align: middle;">${displayNumbers[absIdx] || ""}</td><td>${xl(step.kegiatan)}</td>${currentH.map((_, i) => `<td style="text-align: center; vertical-align: middle; font-size: 14pt;">${step.pelaksanaCol === i ? getExcelSymbol(step.symbol) + (step.shapeText ? `<br><span style="font-size: 9pt;">${xl(step.shapeText)}</span>` : '') : ''}</td>`).join('')}<td>${xl(step.syarat)}</td><td style="text-align: center; vertical-align: middle;">${xl(step.waktu)}</td><td>${xl(step.output)}</td><td>${xl(step.ket)}</td></tr>`;
-        }).join('');
-        return (chunkIdx === 0 ? '' : `<tr><th colspan="2" style="background-color: #f8fafc; font-size: 9pt;">[Alur ${chunkIdx + 1}]</th>${currentH.map(h => `<th style="background-color: #f8fafc; font-size: 9pt;">${h || '-'}</th>`).join('')}<th colspan="4" style="background-color: #f8fafc;"></th></tr>`) + chunkRows;
-      }).join('')}</tbody></table></body></html>`;
-    const blob = new Blob([html], { type: 'application/vnd.ms-excel' });
-    const url = URL.createObjectURL(blob); const link = document.createElement("a"); link.href = url; link.download = `SOP_${judul || 'Draft'}.xls`; document.body.appendChild(link); link.click(); document.body.removeChild(link); setTimeout(() => URL.revokeObjectURL(url), 4000);
+    const simbolExcel = (s: SOPFlowSymbol) => (s === 'decision' ? '◇' : s === 'start' || s === 'end' ? 'O' : s === 'connector' ? '⭘' : 'V');
+    let abs = 0;
+    const halaman = chunkedSteps.map((chunk, ci) => ({
+      headers: pelaksanaHeaders[ci] || pelaksanaHeaders[0] || Array(colCount).fill(''),
+      baris: chunk.map(st => ({
+        no: displayNumbers[abs++] || '', kegiatan: st.kegiatan, pelaksanaCol: st.pelaksanaCol, simbol: simbolExcel(st.symbol),
+        teksBentuk: st.shapeText, syarat: st.syarat, waktu: st.waktu, output: st.output, ket: st.ket,
+      })),
+    }));
+    const isiCover = (id: number, sisi: 'left' | 'right', dasar: string) =>
+      [dasar, ...(coverCont[id] || []).map(c => c[sisi])].map(t => (t || '').trim()).filter(t => t && t !== '1.').join('\n');
+    unduhExcelSop({
+      judul, nomor, unitKerja, subUnitKerja, jenisSOP, klasifikasiSOP, tglPembuatan, tglRevisi, tglEfektif, pengesahanTte,
+      jabatanPengesah, namaPengesah, nipPengesah,
+      cover: [
+        { judul: 'Dasar Hukum', isi: isiCover(1, 'left', dasarHukum) },
+        { judul: 'Kualifikasi Pelaksana', isi: isiCover(1, 'right', kualifikasi) },
+        { judul: 'Keterkaitan', isi: isiCover(2, 'left', keterkaitan) },
+        { judul: 'Peralatan/Perlengkapan', isi: isiCover(2, 'right', peralatan) },
+        { judul: 'Peringatan', isi: isiCover(3, 'left', peringatan) },
+        { judul: 'Pencatatan dan Pendataan', isi: isiCover(3, 'right', pencatatan) },
+      ],
+      halaman,
+    }).catch(e => { console.error(e); alert('Gagal membuat berkas Excel.'); });
   };
 
   const handleGoBack = () => {
@@ -1304,7 +1367,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     histTimerRef.current = setTimeout(commitSnapshot, HIST_DEBOUNCE_MS);
     return () => { if (histTimerRef.current) clearTimeout(histTimerRef.current); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [judul, nomor, unitKerja, subUnitKerja, jenisSOP, klasifikasiSOP, pelaksanaHeaders, jabatanPengesah, namaPengesah, nipPengesah, tglPembuatan, tglRevisi, tglEfektif, dasarHukum, kualifikasi, keterkaitan, peralatan, peringatan, pencatatan, steps, coverBreaks, coverCont, keterkaitanDok]);
+  }, [judul, nomor, unitKerja, subUnitKerja, jenisSOP, klasifikasiSOP, pelaksanaHeaders, jabatanPengesah, namaPengesah, nipPengesah, tglPembuatan, tglRevisi, tglEfektif, dasarHukum, kualifikasi, keterkaitan, peralatan, peringatan, pencatatan, steps, coverBreaks, coverCont, keterkaitanDok, pengesahanTte]);
 
   const applySnapshot = (json: string) => {
     let d: Record<string, unknown>;
@@ -1316,6 +1379,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
     setJudul(s('judul')); setNomor(s('nomor')); setUnitKerja(s('unitKerja')); setSubUnitKerja(s('subUnitKerja'));
     setJenisSOP(s('jenisSOP')); setKlasifikasiSOP(s('klasifikasiSOP'));
     setJabatanPengesah(s('jabatanPengesah')); setNamaPengesah(s('namaPengesah')); setNipPengesah(s('nipPengesah'));
+    setPengesahanTte(!!d.pengesahanTTE);
     setTglPembuatan(s('tglPembuatan')); setTglRevisi(s('tglRevisi')); setTglEfektif(s('tglEfektif'));
     setDasarHukum(s('dasarHukum')); setKualifikasi(s('kualifikasi')); setKeterkaitan(s('keterkaitan'));
     setPeralatan(s('peralatan')); setPeringatan(s('peringatan')); setPencatatan(s('pencatatan'));
@@ -2112,7 +2176,10 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         )}
 
         <div
-          className="shape-menu-trigger relative z-30 pointer-events-auto cursor-pointer max-w-[calc(100%-6px)]"
+          // Pembungkus bentuk = lapisan tumpuk sendiri (z-30): menu di dalamnya (z-50) hanya naik di dalam
+          // lapisan itu, sehingga bentuk di sel/baris SESUDAHNYA (juga z-30) menimpa menu. Saat menu
+          // terbuka, angkat seluruh pembungkus di atas semua bentuk lain & garis (z-40).
+          className={`shape-menu-trigger relative ${openShapeMenu?.row === absIdx && openShapeMenu?.col === colIdx ? 'z-[70]' : 'z-30'} pointer-events-auto cursor-pointer max-w-[calc(100%-6px)]`}
           onClick={(e) => {
             e.stopPropagation();
             if (activeTool || connectingFrom !== null) { handleCellAction(absIdx, colIdx); return; }
@@ -2239,9 +2306,23 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
   });
   if (currentCoverChunk.length > 0) coverChunks.push(currentCoverChunk);
 
+  useEffect(() => {
+    if (!presentasi) return;
+    const tabs: ('cover' | number)[] = ['cover', ...chunkedSteps.map((_, i) => i)];
+    const onKey = (e: KeyboardEvent) => {
+      const d = (e.key === 'ArrowRight' || e.key === 'PageDown') ? 1 : (e.key === 'ArrowLeft' || e.key === 'PageUp') ? -1 : 0;
+      if (!d) return;
+      e.preventDefault();
+      const idx = Math.max(0, tabs.findIndex(t => t === activeTab));
+      setActiveTab(tabs[Math.min(tabs.length - 1, Math.max(0, idx + d))]);
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [presentasi, activeTab, chunkedSteps]);
+
   return (
     <ViewOnlyContext.Provider value={effectiveIsViewOnly}>
-    <div className="h-full overflow-auto bg-slate-200 pb-32 p-2 md:p-6 print:h-auto print:overflow-visible print:bg-white print:p-0 flex flex-col items-center font-bookman">
+    <div ref={rootRef} style={presentasi ? ({ '--skala-presentasi': skalaPresentasi } as React.CSSProperties) : undefined} className={`h-full min-h-0 overflow-auto ${modeGelap ? 'bg-[#0B1121]' : 'bg-slate-200'} pb-32 p-2 md:p-6 print:h-auto print:overflow-visible print:bg-white print:p-0 flex flex-col items-center font-bookman ${presentasi ? 'sop-presentasi' : ''}`}>
 
       {/* MODE TARIK GARIS */}
       {connectingFrom !== null && (
@@ -2261,9 +2342,9 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         </div>
       )}
 
-      {/* PALET SHAPE KANAN (BISA DI-HIDE) */}
-      {!effectiveIsViewOnly && connectingFrom === null && (
-        <div style={{ top: paletteTopPx, bottom: 16 }} className={`fixed transition-[right] duration-300 z-40 flex no-print font-sans ${isPaletteOpen ? 'right-2 sm:right-6' : '-right-24'}`}>
+      {/* PALET SHAPE KANAN — hanya tab Alur (di Cover tidak ada sel untuk ditempeli). */}
+      {!effectiveIsViewOnly && connectingFrom === null && activeTab !== 'cover' && (
+        <div style={{ top: paletteTopPx, bottom: 16 }} className={`fixed transition-[right] duration-300 z-40 flex no-print font-sans ${isPaletteOpen ? 'right-2 sm:right-6' : '-right-16 sm:-right-20'}`}>
           <div className="relative h-full flex items-center">
              {/* Tombol minimize berada DI LUAR kotak ber-scroll agar tidak ikut terpotong overflow. */}
              <button onClick={() => setIsPaletteOpen(!isPaletteOpen)} className="absolute -left-8 top-1/2 -translate-y-1/2 z-10 bg-white hover:bg-slate-50 border border-slate-200 border-r-0 rounded-l-xl p-1 shadow-md text-slate-400 hover:text-emerald-600 transition-colors">
@@ -2409,7 +2490,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
             </div>
             <div className="p-6 flex flex-col gap-3">
               <button onClick={() => { handleSaveFlow(false); setIsSaveModalOpen(false); }} className="w-full flex items-center justify-center gap-2 bg-emerald-100 hover:bg-emerald-200 text-emerald-800 p-3 rounded-xl font-bold transition-colors">
-                <Save size={18} /> Simpan sebagai Draft Lokal
+                <Save size={18} /> Simpan Draft
               </button>
               <button onClick={() => { setIsSaveModalOpen(false); setShowSubmitConfirm(true); }} className="w-full flex items-center justify-center gap-2 bg-purple-600 hover:bg-purple-700 text-white p-3 rounded-xl font-bold shadow-md transition-colors">
                 <Send size={18} /> Simpan &amp; Kirim ke Biro Ortala MR
@@ -2565,10 +2646,24 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
         </div>
       )}
 
+      {presentasi && (() => {
+        const tabs: ('cover' | number)[] = ['cover', ...chunkedSteps.map((_, i) => i)];
+        const idx = Math.max(0, tabs.findIndex(t => t === activeTab));
+        const pindah = (d: number) => setActiveTab(tabs[Math.min(tabs.length - 1, Math.max(0, idx + d))]);
+        return (
+          <div className="presentasi-kontrol fixed bottom-3 left-1/2 -translate-x-1/2 z-200 flex items-center gap-1 rounded-full bg-black/70 text-white px-2 py-1.5 font-sans text-xs font-bold backdrop-blur print:hidden opacity-30 hover:opacity-100 focus:opacity-100 outline-none transition-opacity">
+            <button onClick={() => pindah(-1)} disabled={idx === 0} className="p-1.5 rounded-full hover:bg-white/20 disabled:opacity-30" title="Halaman sebelumnya (←)"><ChevronLeft size={16} /></button>
+            <span className="px-2 tabular-nums min-w-24 text-center">{tabs[idx] === 'cover' ? 'Cover' : `Alur ${(tabs[idx] as number) + 1}`} · {idx + 1}/{tabs.length}</span>
+            <button onClick={() => pindah(1)} disabled={idx === tabs.length - 1} className="p-1.5 rounded-full hover:bg-white/20 disabled:opacity-30" title="Halaman berikutnya (→)"><ChevronRight size={16} /></button>
+            <button onClick={() => document.exitFullscreen?.()} className="ml-1 p-1.5 rounded-full hover:bg-white/20" title="Keluar (Esc)"><X size={16} /></button>
+          </div>
+        );
+      })()}
+
       {/* TOOLBAR ATAS */}
-      <div ref={toolbarRef} className="w-full max-w-[330mm] mb-4 bg-white p-3 rounded-2xl shadow-sm border flex flex-col justify-between items-center gap-4 no-print sticky top-0 z-45 font-sans">
+      <div ref={toolbarRef} className={`w-full max-w-[330mm] mb-4 bg-white p-3 rounded-2xl shadow-sm border flex flex-col justify-between items-center gap-4 no-print sticky top-0 z-45 font-sans ${modeGelap ? 'sop-toolbar-gelap' : ''}`}>
         <div className="flex flex-wrap items-center justify-between w-full gap-2 border-b pb-2">
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             <button onClick={handleGoBack} className="px-3 py-1.5 bg-slate-100 text-slate-700 hover:bg-slate-200 rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95 border border-slate-200"><ArrowLeft size={16} /> Kembali</button>
             {bolehKeterkaitan && (
               <button onClick={() => setPanelProperti(v => !v)} title="Properti dokumen: keterkaitan dgn SOP lain & Proses Bisnis terkait"
@@ -2602,8 +2697,11 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
               </>
             )}
           </div>
-          <div className="flex gap-2">
+          <div className="flex flex-wrap gap-2">
             {toolbarExtra}
+            {bolehPresentasi && (
+              <button onClick={masukPresentasi} title="Pratinjau layar penuh per halaman F4 (Esc untuk keluar)" className="px-3 py-1.5 bg-slate-800 hover:bg-slate-900 text-white rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95"><Maximize size={16} /> Layar Penuh</button>
+            )}
             {shareModelId != null && authToken && (
               <ShareButton kind="sop" modelId={shareModelId} token={authToken} variant="solid" />
             )}
@@ -2623,7 +2721,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                   </button>
                   <button onClick={() => { setShowUnduhMenu(false); handleExportExcel(); }} className="w-full flex items-center gap-2.5 px-3 py-2.5 text-sm font-bold text-slate-700 hover:bg-green-50 hover:text-green-700 transition-colors border-t border-slate-100">
                     <span className="p-1.5 rounded-lg bg-green-100 text-green-700"><FileSpreadsheet size={16} /></span>
-                    <span className="text-left leading-tight">Format Excel<br /><span className="text-[10px] font-normal text-slate-400">Tabel alur untuk diolah lagi</span></span>
+                    <span className="text-left leading-tight">Format Excel<br /><span className="text-[10px] font-normal text-slate-400">Ringkasan & rekap pelaksana (berumus) + tabel alur</span></span>
                   </button>
                 </div>
               )}
@@ -2763,15 +2861,27 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                     <td colSpan={6} className="border-2 border-black p-0 align-top">
                       <div className="relative flex flex-col h-full font-bold text-[12px]">
                         <div className="flex border-b-2 border-black p-1.5 items-center"><span className="w-32 shrink-0">Nomor SOP</span><span className="mx-1">:</span><input value={nomor} onChange={e => setNomor(e.target.value)} disabled={isViewOnly} className="flex-1 outline-none disabled:bg-transparent bg-transparent" /></div>
-                        <div className="flex border-b-2 border-black p-1.5 items-center"><span className="w-32 shrink-0">Tanggal Pembuatan</span><span className="mx-1">:</span><input value={tglPembuatan} readOnly title="Terisi otomatis saat SOP pertama kali dikirim ke Biro Ortala MR" placeholder={effectiveIsViewOnly ? '' : '(otomatis saat dikirim ke Ortala MR)'} className="flex-1 outline-none bg-transparent cursor-default placeholder:text-slate-300 placeholder:font-normal placeholder:italic" /></div>
+                        <div className="flex border-b-2 border-black p-1.5 items-center"><span className="w-32 shrink-0">Tanggal Pembuatan</span><span className="mx-1">:</span><input value={tglPembuatan} onChange={e => setTglPembuatan(e.target.value)} readOnly={!(bolehUbahTglPembuatan && !effectiveIsViewOnly)} title={bolehUbahTglPembuatan && !effectiveIsViewOnly ? 'Admin dapat mengubah tanggal pembuatan (mis. 21 Desember 2023)' : 'Terisi otomatis saat SOP pertama kali dikirim ke Biro Ortala MR (hanya admin yang dapat mengubah)'} placeholder={effectiveIsViewOnly ? '' : bolehUbahTglPembuatan ? 'Isi tanggal pembuatan (mis. 21 Desember 2023)' : '(otomatis saat dikirim ke Ortala MR)'} className={`flex-1 outline-none bg-transparent placeholder:text-slate-300 placeholder:font-normal placeholder:italic ${bolehUbahTglPembuatan && !effectiveIsViewOnly ? 'cursor-text hover:bg-amber-50/60 focus:bg-amber-50 rounded px-1 -mx-1' : 'cursor-default'}`} /></div>
                         <div className="flex border-b-2 border-black p-1.5 items-center"><span className="w-32 shrink-0">Tanggal Revisi</span><span className="mx-1">:</span><input value={tglRevisi} onChange={e => setTglRevisi(e.target.value)} disabled={isViewOnly} className="flex-1 outline-none disabled:bg-transparent bg-transparent" /></div>
                         <div className="flex border-b-2 border-black p-1.5 items-center"><span className="w-32 shrink-0">Tanggal Efektif</span><span className="mx-1">:</span><input value={tglEfektif} onChange={e => setTglEfektif(e.target.value)} disabled={isViewOnly} className="flex-1 outline-none disabled:bg-transparent bg-transparent" /></div>
-                        <div className="flex p-1.5 items-start border-b-2 border-black min-h-16">
+                        <div className="relative flex p-1.5 items-start border-b-2 border-black min-h-16">
                           <span className="w-32 mt-1 shrink-0">Disahkan Oleh</span><span className="mx-1 mt-1 shrink-0">:</span>
                           <div className="flex-1 flex flex-col justify-between pt-1 pb-1 h-full">
                             {/* Dikunci — ubah lewat tombol "Edit Info" (diisi sejak awal pembuatan SOP). */}
                             <div className="w-11/12" title={effectiveIsViewOnly ? undefined : 'Ubah melalui tombol Edit Info'}><p className="font-bold leading-tight text-[12px] whitespace-pre-wrap wrap-break-word">{jabatanPengesah || <span className="text-slate-300 font-normal italic">{effectiveIsViewOnly ? '' : 'Jabatan… (isi via Edit Info)'}</span>}</p></div>
-                            <div className="mt-8 w-10/12">
+                            {/* Spasi tanda tangan: TTD basah = kosong; TTE = teks keterangan rata kiri (dipilih admin), ukuran sama dgn baris NIP, tidak tebal. */}
+                            {pengesahanTte ? (
+                              <div className="w-11/12 text-left mt-1.5 mb-1 text-[12px] leading-tight font-normal text-slate-400 print:text-slate-500">Ditandatangani secara<br />elektronik</div>
+                            ) : (
+                              <div className="mt-8" />
+                            )}
+                            {bolehUbahPengesahan && !effectiveIsViewOnly && (
+                              <div className="no-print font-sans absolute bottom-1 right-1 z-20 flex items-center gap-1 bg-white/95 border border-slate-300 rounded-full p-0.5 shadow-sm" title="Jenis pengesahan pimpinan (hanya admin)">
+                                <button type="button" onClick={() => setPengesahanTte(false)} className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold transition-colors ${!pengesahanTte ? 'bg-slate-700 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>TTD Basah</button>
+                                <button type="button" onClick={() => setPengesahanTte(true)} className={`px-2.5 py-0.5 rounded-full text-[10px] font-bold transition-colors ${pengesahanTte ? 'bg-emerald-600 text-white' : 'text-slate-500 hover:bg-slate-100'}`}>TTE</button>
+                              </div>
+                            )}
+                            <div className="w-10/12">
                               <p className="w-full font-bold underline text-[13px] wrap-break-word">{namaPengesah || <span className="text-slate-300 font-normal italic no-underline">{effectiveIsViewOnly ? '' : 'Nama Lengkap (Edit Info)'}</span>}</p>
                               <div className="flex items-center gap-1"><span>NIP</span><span className="flex-1 font-bold wrap-break-word">{nipPengesah}</span></div>
                             </div>
@@ -2793,7 +2903,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                           </div>
                         </div>
                         {!effectiveIsViewOnly && !coverBreaks[0] && (
-                          <div className="absolute bottom-0 right-0 translate-x-1/2 translate-y-1/2 z-30 no-print font-sans pointer-events-auto">
+                          <div className="absolute bottom-0 right-0 translate-x-1/2 translate-y-1/2 z-30 no-print font-sans pointer-events-auto max-2xl:translate-x-0 max-2xl:right-2">
                             <button onClick={() => setCoverBreaks({ ...coverBreaks, 0: true })} title="Pisahkan kepala surat sendirian di halaman pertama" className="px-3 py-1 bg-white hover:bg-slate-100 text-slate-600 text-[10px] font-bold rounded-full border border-slate-300 shadow-md transition-all active:scale-95 whitespace-nowrap">✂️ Pisah ke Halaman Baru</button>
                           </div>
                         )}
@@ -2818,7 +2928,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                        </div>
                        <div data-cover-isi="kiri" className={`p-2 text-[12px] ${row.minH}`}><EditableCell value={row.leftVal} onChange={row.leftSetter} justify={true} /></div>
                        {!effectiveIsViewOnly && !coverBreaks[row.id] && nextRow && !nextRow.forceBreakBefore && (
-                         <div className="absolute bottom-0 right-0 translate-x-1/2 translate-y-1/2 z-30 no-print font-sans pointer-events-auto">
+                         <div className="absolute bottom-0 right-0 translate-x-1/2 translate-y-1/2 z-30 no-print font-sans pointer-events-auto max-2xl:translate-x-0 max-2xl:right-2">
                            <button onClick={() => setCoverBreaks({...coverBreaks, [row.id]: true})} className="px-3 py-1 bg-white hover:bg-slate-100 text-slate-600 text-[10px] font-bold rounded-full border border-slate-300 shadow-md transition-all active:scale-95 whitespace-nowrap">✂️ Pisah ke Halaman Baru</button>
                          </div>
                        )}
@@ -2876,12 +2986,16 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
             
             <div className={`overflow-visible flex flex-col min-h-0 relative ${shouldStretch ? 'flex-1' : 'mb-auto'}`}>
               <table className={`w-full border-collapse border-2 border-black table-fixed relative font-bookman bg-white z-10 ${shouldStretch ? 'h-full flex-1' : ''}`}>
-                <colgroup>
-                  <col style={{ width: '4%' }} /> <col style={{ width: getKegiatanWidth() }} /> 
-                  {Array(colCount).fill(0).map((_, i) => <col key={`col-pelaksana-${i}`} />)}
-                  <col style={{ width: getKelengkapanOutputWidth() }} /> <col style={{ width: getWaktuWidth() }} /> <col style={{ width: getKelengkapanOutputWidth() }} /> <col style={{ width: getKeteranganWidth() }} /> 
-                  {!effectiveIsViewOnly && <col style={{ width: '4%' }} className="no-print" />}
-                </colgroup>
+                <colgroup>{[
+                  <col key="no" style={{ width: '4%' }} />,
+                  <col key="keg" style={{ width: getKegiatanWidth() }} />,
+                  ...Array.from({ length: colCount }, (_, i) => <col key={`col-pelaksana-${i}`} />),
+                  <col key="syarat" style={{ width: getKelengkapanOutputWidth() }} />,
+                  <col key="waktu" style={{ width: getWaktuWidth() }} />,
+                  <col key="output" style={{ width: getKelengkapanOutputWidth() }} />,
+                  <col key="ket" style={{ width: getKeteranganWidth() }} />,
+                  ...(!effectiveIsViewOnly ? [<col key="aksi" style={{ width: '4%' }} className="no-print" />] : []),
+                ]}</colgroup>
                 <thead className={getExecutorStyles()}>
                   <tr className="bg-slate-100 font-black uppercase text-center h-8">
                     <th rowSpan={2} className="border-b-2 border-r-2 border-black p-1.5">No</th>
@@ -2913,7 +3027,7 @@ const SOPBuilder = forwardRef<SOPBuilderRef, SOPBuilderProps>(({
                     const diLuarKertas = !!tandaLuap?.lewat.includes(step.id);
                     const saranBatas = tandaLuap?.saranId === step.id;
                     return (
-                      <tr key={step.id} className="overflow-visible relative group/row" style={{ ...(diLuarKertas ? { outline: '2px dashed #ef4444', outlineOffset: '-3px' } : {}), height: rapikanHalaman ? undefined /* ukur tinggi isi sebenarnya */ : shouldStretch ? `${100 / Math.max(chunk.length, 1)}%` : '22.8mm' /* 1/7 tinggi isi tabel — sama dgn baris halaman penuh agar konsisten */ }}>
+                      <tr key={step.id} className="overflow-visible relative group/row" data-base-h={rapikanHalaman ? '' : shouldStretch ? `${100 / Math.max(chunk.length, 1)}%` : '22.8mm'} style={{ ...(diLuarKertas ? { outline: '2px dashed #ef4444', outlineOffset: '-3px' } : {}), height: rapikanHalaman ? undefined /* ukur tinggi isi sebenarnya */ : shouldStretch ? `${100 / Math.max(chunk.length, 1)}%` : '22.8mm' /* 1/7 tinggi isi tabel — sama dgn baris halaman penuh agar konsisten */ }}>
                         <td className="border-r-2 border-black p-2 text-center font-normal relative h-px" title="Ketik 'auto' untuk mengembalikan ke urutan otomatis">
                           <EditableCell value={displayNumbers[absIdx]} onChange={(val) => updateStep(absIdx, { nomorOverride: val.trim().toLowerCase() === 'auto' ? undefined : val })} center={true} className="text-[13px] h-full" />
                           {/* Aksi cepat baris: sisip di atas/bawah (tombol + di garis batas) & hapus. */}

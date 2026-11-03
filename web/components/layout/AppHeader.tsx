@@ -1,11 +1,13 @@
 'use client';
 
 import { useState, useMemo, useRef, useEffect } from 'react';
-import { Menu, Sun, Moon, X, KeyRound, Eye, EyeOff, Building2, Save, LogOut, User } from 'lucide-react';
-import { usePathname } from 'next/navigation';
+import { Menu, Sun, Moon, X, KeyRound, Eye, EyeOff, Building2, Save, LogOut, User, Star, MessageCircle } from 'lucide-react';
+import { usePathname, useRouter } from 'next/navigation';
+import { useLencanaChat } from '@/lib/chat';
 import { useAppContext } from '@/lib/app-context';
 import { HIERARKI_UNIT } from '@/lib/constants';
 import NotificationBell from './NotificationBell';
+import ReviewModal from '../ReviewModal';
 
 const PAGE_TITLES: Record<string, { title: string; subtitle: string }> = {
   '/': { title: 'Dashboard Monitoring', subtitle: 'Rekapitulasi dokumen ketatalaksanaan seluruh unit kerja' },
@@ -17,6 +19,7 @@ const PAGE_TITLES: Record<string, { title: string; subtitle: string }> = {
   '/sop/studio': { title: 'Studio Editor SOP', subtitle: 'Penyusunan dokumen Standard Operating Procedure' },
   '/juknis': { title: 'Juknis / Juklak / SE', subtitle: 'Daftar petunjuk teknis, petunjuk pelaksanaan, dan surat edaran' },
   '/panduan': { title: 'Panduan Penggunaan', subtitle: 'Tata cara dan pedoman penggunaan aplikasi SIMPEL' },
+  '/chat': { title: 'HelpDesk', subtitle: 'Tanya jawab pengguna dengan tim admin SIMPEL' },
   '/peraturan': { title: 'Daftar Peraturan', subtitle: 'Peraturan Menteri ATR/BPN dan regulasi terkait' },
 };
 
@@ -39,10 +42,13 @@ interface Props {
 
 export default function AppHeader({ onToggleSidebar, sidebarOpen }: Props) {
   const pathname = usePathname();
+  const router = useRouter();
   const { currentUser, isDarkMode, setIsDarkMode, updateCurrentUser, handleLogout } = useAppContext();
+  const lencanaChat = useLencanaChat(currentUser?.role);
   const page = PAGE_TITLES[pathname] ?? { title: 'SIMPEL ATR/BPN', subtitle: '' };
 
   const [showProfile, setShowProfile] = useState(false);
+  const [showReview, setShowReview] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -156,6 +162,27 @@ export default function AppHeader({ onToggleSidebar, sidebarOpen }: Props) {
           </p>
         </div>
 
+        <button
+          onClick={() => setShowReview(true)}
+          title="Beri ulasan untuk SIMPEL"
+          aria-label="Beri ulasan"
+          className={`p-2 rounded-lg transition-colors shrink-0 ${isDarkMode ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-500 hover:bg-slate-100'}`}
+        >
+          <Star className="w-5 h-5" />
+        </button>
+
+        {currentUser?.role && currentUser.role !== 'viewer' && (
+          <button
+            onClick={() => router.push('/chat')}
+            title={lencanaChat > 0 ? `${lencanaChat} pesan HelpDesk perlu perhatian` : 'HelpDesk'}
+            aria-label="HelpDesk"
+            className={`relative p-2 rounded-lg transition-colors shrink-0 ${isDarkMode ? 'text-slate-400 hover:bg-slate-800' : 'text-slate-500 hover:bg-slate-100'}`}
+          >
+            <MessageCircle className="w-5 h-5" />
+            {lencanaChat > 0 && <span className="absolute top-0.5 right-0.5 min-w-4 h-4 px-1 rounded-full bg-red-500 text-white text-[10px] font-bold flex items-center justify-center">{lencanaChat > 99 ? '99+' : lencanaChat}</span>}
+          </button>
+        )}
+
         <NotificationBell isDarkMode={isDarkMode} role={currentUser?.role} />
 
         <button
@@ -184,6 +211,8 @@ export default function AppHeader({ onToggleSidebar, sidebarOpen }: Props) {
           </div>
         </button>
       </header>
+
+      {showReview && <ReviewModal onClose={() => setShowReview(false)} />}
 
       {/* Profile modal */}
       {showProfile && (

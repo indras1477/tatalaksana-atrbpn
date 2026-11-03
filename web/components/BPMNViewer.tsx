@@ -12,7 +12,7 @@ import 'bpmn-js/dist/assets/bpmn-font/css/bpmn-embedded.css';
 
 // Same repair function as in BPMNModeler.tsx — moves orphaned process elements
 // into their SubProcess flowElements so importXML succeeds without errors.
-function repairBpmnXml(xml: string): string {
+export function repairBpmnXml(xml: string): string {
   const cleaned = xml.replace(/<!--\s*sopext:subprocess-pools[\s\S]*?-->/g, '');
 
   if (typeof DOMParser === 'undefined') {

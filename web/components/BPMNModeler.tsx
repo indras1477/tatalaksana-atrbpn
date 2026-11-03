@@ -1823,9 +1823,9 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
   };
 
   return (
-    <div className="relative flex h-full w-full min-h-150 flex-col overflow-hidden rounded-xl border bg-white">
-      <div className="z-20 flex items-center justify-between border-b bg-slate-50 p-3 shadow-sm">
-        <div className="flex items-center gap-4 min-w-0 flex-1">
+    <div className="relative flex h-full w-full min-h-0 flex-col overflow-hidden rounded-xl border bg-white">
+      <div className="z-20 flex flex-wrap items-center justify-between gap-2 border-b bg-slate-50 p-3 shadow-sm">
+        <div className="flex items-center gap-2 sm:gap-4 min-w-0 flex-1 basis-full sm:basis-0">
           {!isViewOnly && (
             <div className="flex overflow-hidden rounded-lg border bg-white shadow-sm shrink-0">
               <button onClick={() => { const cs = modelerRef.current?.get('commandStack') as BpmnCommandStack | undefined; cs?.undo(); }} disabled={!canUndo} title="Undo (Ctrl+Z)" className="border-r p-2 hover:bg-slate-50 disabled:opacity-30"><Undo2 size={16} /></button>
@@ -1870,7 +1870,7 @@ export default function BPMNModelerComponent({ xml, projectName, onSave, isViewO
         )}
       </div>
 
-      <div className="relative min-h-125 flex-1 bg-white">
+      <div className="relative min-h-0 flex-1 bg-white">
         <div ref={containerRef} className="absolute inset-0" />
 
         {/* Diagram gagal dimuat: beri tahu dengan jelas, JANGAN biarkan kanvas kosong

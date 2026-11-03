@@ -273,6 +273,9 @@ const initDatabase = async () => {
       /* Aktivitas terakhir sesi — sesi idle > batas idle-timeout dibersihkan otomatis
          agar tidak memblokir slot login akun shared (maks 4 perangkat). */
       ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_activity TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
+      /* Interaksi NYATA pengguna (mouse/ketik/sentuh), bukan sekadar tab terbuka yang
+         terus polling. Dipakai menentukan slot akun bersama yang boleh digusur. */
+      ALTER TABLE sessions ADD COLUMN IF NOT EXISTS last_interaction TIMESTAMP DEFAULT CURRENT_TIMESTAMP;
 
       /* Tautan sub-process → peta turunan (untuk DB yang sudah ada). */
       ALTER TABLE process_map_models ADD COLUMN IF NOT EXISTS parent_element_id VARCHAR(100);
@@ -310,6 +313,7 @@ const initDatabase = async () => {
          tak perlu auth. */
       ALTER TABLE bpmn_models ADD COLUMN IF NOT EXISTS share_token VARCHAR(48);
       ALTER TABLE sop_models ADD COLUMN IF NOT EXISTS share_token VARCHAR(48);
+      ALTER TABLE sop_models ADD COLUMN IF NOT EXISTS share_pdf_key TEXT;
       ALTER TABLE sop_models ADD COLUMN IF NOT EXISTS share_pdf TEXT;
       -- Cache PDF hasil render puppeteer (±9 detik) + kunci versinya. Selama dokumen
       -- tidak berubah, permintaan PDF/pratinjau dilayani dari cache = instan.
@@ -356,6 +360,58 @@ const initDatabase = async () => {
         created_at TIMESTAMP DEFAULT NOW()
       );
       ALTER TABLE users ADD COLUMN IF NOT EXISTS notif_seen_at TIMESTAMP;
+      /* Ulasan pengguna (bintang + testimoni). Satu akun dipakai beberapa orang, jadi kunci
+         pencegah ganda = (akun, nama lengkap); tidak ada fitur memperbarui. */
+      CREATE TABLE IF NOT EXISTS reviews (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER,
+        nama VARCHAR(100) NOT NULL,
+        unit VARCHAR(200),
+        rating SMALLINT NOT NULL,
+        r_mudah SMALLINT NOT NULL,
+        r_cepat SMALLINT NOT NULL,
+        r_tampilan SMALLINT NOT NULL,
+        komentar TEXT,
+        created_at TIMESTAMP DEFAULT NOW(),
+        updated_at TIMESTAMP DEFAULT NOW()
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS reviews_user_nama_uq ON reviews (user_id, (LOWER(nama)));
+      /* Chat HelpDesk (kotak masuk bersama): tiap percakapan milik satu akun User (Terbatas);
+         satu akun boleh punya banyak percakapan (dipakai beberapa bagian). Admin & superadmin
+         mana pun dapat membalas. Penanda baca = watermark id pesan per percakapan. */
+      CREATE TABLE IF NOT EXISTS chat_conversations (
+        id SERIAL PRIMARY KEY,
+        user_id INTEGER NOT NULL,
+        judul VARCHAR(120),
+        created_by INTEGER,
+        created_at TIMESTAMP DEFAULT NOW(),
+        staff_read_upto INTEGER NOT NULL DEFAULT 0,
+        staff_read_by VARCHAR(255),
+        staff_read_at TIMESTAMP,
+        user_read_upto INTEGER NOT NULL DEFAULT 0,
+        user_read_at TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS chat_conversations_user_idx ON chat_conversations (user_id);
+      CREATE TABLE IF NOT EXISTS chat_messages (
+        id SERIAL PRIMARY KEY,
+        conversation_id INTEGER NOT NULL,
+        sender_id INTEGER NOT NULL,
+        sender_name VARCHAR(255),
+        sender_role VARCHAR(20) NOT NULL,
+        isi TEXT NOT NULL DEFAULT '',
+        balas_id INTEGER,
+        file_name VARCHAR(255),
+        file_mime VARCHAR(100),
+        file_size INTEGER,
+        created_at TIMESTAMP DEFAULT NOW(),
+        edited_at TIMESTAMP,
+        deleted_at TIMESTAMP
+      );
+      CREATE INDEX IF NOT EXISTS chat_messages_conv_idx ON chat_messages (conversation_id, id);
+      CREATE TABLE IF NOT EXISTS chat_files (
+        message_id INTEGER PRIMARY KEY,
+        data BYTEA NOT NULL
+      );
       /* Notifikasi dibatasi sampai Sub-Unit (L2): biro lain di bawah unit utama yang sama
          tidak boleh saling melihat notifikasi. NULL = berlaku untuk seluruh L1. */
       ALTER TABLE notifications ADD COLUMN IF NOT EXISTS unit_l2 TEXT;
@@ -607,6 +663,10 @@ const initDatabase = async () => {
     `);
     await client.query(`CREATE UNIQUE INDEX IF NOT EXISTS dokumen_source_uniq ON dokumen(source_type, source_id) WHERE source_type IS NOT NULL;`);
 
+    // MIGRASI: soft-delete akun pengguna — hapus hanya menandai deleted_at agar bisa dipulihkan.
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP`);
+    await client.query(`ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_by INTEGER`);
+
     // MIGRASI: informasi penetapan SOP & BPMN (diisi admin saat menekan "Ditetapkan").
     await client.query(`
       DO $$
@@ -688,6 +748,14 @@ const authenticate = async (req, res, next) => {
       "UPDATE sessions SET last_activity = NOW() WHERE token = $1 AND last_activity < NOW() - INTERVAL '1 minute'",
       [token]
     ).catch(() => {});
+    // Klien mengirim X-User-Active: 1 hanya bila pengguna benar-benar berinteraksi
+    // dalam beberapa menit terakhir (lihat keepalive di layout.tsx).
+    if (req.headers['x-user-active'] === '1') {
+      pool.query(
+        "UPDATE sessions SET last_interaction = NOW() WHERE token = $1 AND last_interaction < NOW() - INTERVAL '1 minute'",
+        [token]
+      ).catch(() => {});
+    }
     req.user = decoded;
     next();
   } catch (err) {
@@ -782,12 +850,30 @@ app.get('/api/users', authenticate, requireRole('admin', 'superadmin'), async (r
     const selectPlain = req.user.role === 'superadmin' ? ', u.plain_password' : '';
     const result = await pool.query(`
       SELECT u.id, u.username, u.nama_lengkap, u.email, u.active, u.unit_l1, u.unit_l2, u.last_login, r.name as role${selectPlain},
-             (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id AND s.expires_at > NOW() AND s.last_activity > NOW() - INTERVAL '2 hours 15 minutes') AS active_sessions
+             (SELECT COUNT(*) FROM sessions s WHERE s.user_id = u.id AND s.expires_at > NOW() AND COALESCE(s.last_interaction, s.last_activity) > NOW() - INTERVAL '15 minutes') AS active_sessions
       FROM users u
       JOIN roles r ON u.role_id = r.id
+      WHERE u.deleted_at IS NULL
       ORDER BY u.id ASC
     `);
     res.json(result.rows);
+  } catch (err) { res.status(500).json({ error: err.message }); }
+});
+
+// Akun yang di-soft-delete — bisa dipulihkan dari Kotak Sampah Pengguna.
+app.get('/api/users/trash', authenticate, requireRole('admin', 'superadmin'), async (req, res) => {
+  try {
+    const result = await pool.query(`
+      SELECT u.id, u.username, u.nama_lengkap, u.email, u.unit_l1, u.unit_l2, u.deleted_at,
+             r.name as role,
+             d.nama_lengkap AS penghapus_nama, d.username AS penghapus_user
+      FROM users u
+      JOIN roles r ON u.role_id = r.id
+      LEFT JOIN users d ON d.id = u.deleted_by
+      WHERE u.deleted_at IS NOT NULL
+      ORDER BY u.deleted_at DESC
+    `);
+    res.json({ items: result.rows });
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
@@ -822,13 +908,13 @@ app.put('/api/users/:id', authenticate, requireRole('admin', 'superadmin'), asyn
       const hashedPassword = await bcrypt.hash(password, 10);
       result = await pool.query(
         `UPDATE users SET username=$1, password=$2, plain_password=$3, nama_lengkap=$4, email=$5, role_id=$6, unit_l1=$7, unit_l2=$8, active=$9
-         WHERE id=$10 RETURNING id`,
+         WHERE id=$10 AND deleted_at IS NULL RETURNING id`,
         [username, hashedPassword, password, nama_lengkap, email, roleId, unit_l1, unit_l2, active, id]
       );
     } else {
       result = await pool.query(
         `UPDATE users SET username=$1, nama_lengkap=$2, email=$3, role_id=$4, unit_l1=$5, unit_l2=$6, active=$7
-         WHERE id=$8 RETURNING id`,
+         WHERE id=$8 AND deleted_at IS NULL RETURNING id`,
         [username, nama_lengkap, email, roleId, unit_l1, unit_l2, active, id]
       );
     }
@@ -869,16 +955,80 @@ app.put('/api/users/me', authenticate, async (req, res) => {
   } catch (err) { res.status(500).json({ error: err.message }); }
 });
 
+// Soft-delete: tandai deleted_at, putus sesi aktif. Akun masih bisa dipulihkan.
 app.delete('/api/users/:id', authenticate, requireRole('admin', 'superadmin'), async (req, res) => {
   const { id } = req.params;
+  if (String(req.user.id) === String(id)) {
+    return res.status(400).json({ error: 'Tidak dapat menghapus akun yang sedang dipakai login' });
+  }
+  try {
+    await pool.query("DELETE FROM sessions WHERE user_id = $1", [id]);
+    const del = await pool.query(
+      `UPDATE users SET deleted_at = NOW(), deleted_by = $2, active = false
+       WHERE id = $1 AND deleted_at IS NULL
+       RETURNING id, username, nama_lengkap`,
+      [id, req.user.id]
+    );
+    if (del.rowCount === 0) return res.status(404).json({ error: 'User tidak ditemukan atau sudah dihapus' });
+    const u = del.rows[0];
+    await logAudit(req.user.id, req.user.username, 'DELETE_USER', 'users', id, `User ${u.username} soft-deleted`, req.ip);
+    res.json({ success: true, username: u.username, nama_lengkap: u.nama_lengkap });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/users/:id/restore', authenticate, requireRole('admin', 'superadmin'), async (req, res) => {
+  const { id } = req.params;
+  try {
+    const restored = await pool.query(
+      `UPDATE users SET deleted_at = NULL, deleted_by = NULL, active = true
+       WHERE id = $1 AND deleted_at IS NOT NULL
+       RETURNING id, username, nama_lengkap`,
+      [id]
+    );
+    if (restored.rowCount === 0) return res.status(404).json({ error: 'Akun tidak ada di kotak sampah' });
+    const u = restored.rows[0];
+    await logAudit(req.user.id, req.user.username, 'RESTORE_USER', 'users', id, `User ${u.username} restored`, req.ip);
+    res.json({ success: true, username: u.username, nama_lengkap: u.nama_lengkap });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Hapus permanen dari kotak sampah (tidak bisa dipulihkan).
+app.delete('/api/users/:id/permanent', authenticate, requireRole('admin', 'superadmin'), async (req, res) => {
+  const { id } = req.params;
+  if (String(req.user.id) === String(id)) {
+    return res.status(400).json({ error: 'Tidak dapat menghapus akun yang sedang dipakai login' });
+  }
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
+    const check = await client.query(
+      `SELECT username FROM users WHERE id = $1 AND deleted_at IS NOT NULL`, [id]
+    );
+    if (check.rowCount === 0) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Akun tidak ada di kotak sampah' });
+    }
     await client.query("DELETE FROM sessions WHERE user_id = $1", [id]);
-    await client.query("DELETE FROM users WHERE id = $1", [id]);
+    await client.query("DELETE FROM editing_sessions WHERE user_id = $1", [id]);
+    // Dokumen buatan user tetap ada; kolom pembuat (FK tanpa ON DELETE) dikosongkan.
+    const fks = await client.query(`
+      SELECT c.conrelid::regclass::text AS tbl, a.attname AS col
+      FROM pg_constraint c
+      JOIN pg_attribute a ON a.attrelid = c.conrelid AND a.attnum = ANY(c.conkey)
+      WHERE c.contype = 'f' AND c.confrelid = 'users'::regclass
+        AND c.confdeltype IN ('a', 'r') AND NOT a.attnotnull
+    `);
+    for (const { tbl, col } of fks.rows) {
+      await client.query(`UPDATE ${tbl} SET "${col}" = NULL WHERE "${col}" = $1`, [id]);
+    }
+    const del = await client.query("DELETE FROM users WHERE id = $1 RETURNING username", [id]);
     await client.query('COMMIT');
-    await logAudit(req.user.id, req.user.username, 'DELETE_USER', 'users', id, null, req.ip);
-    res.json({ success: true });
+    await logAudit(req.user.id, req.user.username, 'PURGE_USER', 'users', id, `User ${del.rows[0].username} permanently deleted`, req.ip);
+    res.json({ success: true, username: del.rows[0].username });
   } catch (err) {
     await client.query('ROLLBACK');
     res.status(500).json({ error: err.message });
@@ -938,7 +1088,7 @@ app.get('/api/editing-sessions/:type', authenticate, async (req, res) => {
 app.get('/api/sessions/active', authenticate, requireRole('superadmin'), async (req, res) => {
   try {
     const result = await pool.query(`
-      SELECT s.created_at AS login_time, s.expires_at, s.last_activity, s.ip_address, s.user_agent,
+      SELECT s.created_at AS login_time, s.expires_at, s.last_activity, s.last_interaction, s.ip_address, s.user_agent,
              u.id AS user_id, u.username, u.nama_lengkap, r.name AS role
       FROM sessions s
       JOIN users u ON s.user_id = u.id
@@ -982,7 +1132,7 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
       `SELECT u.id, u.username, u.password, u.nama_lengkap, u.unit_l1, u.unit_l2, r.name as role
        FROM users u
        LEFT JOIN roles r ON u.role_id = r.id
-       WHERE u.username = $1 AND u.active = true`,
+       WHERE u.username = $1 AND u.active = true AND u.deleted_at IS NULL`,
       [String(username).trim()]
     );
 
@@ -1036,13 +1186,15 @@ app.post('/api/auth/login', loginLimiter, async (req, res) => {
         );
         count = parseInt(count);
         if (count >= MAX_USER_SESSIONS) {
-          // Slot penuh — gusur sesi yang tampak mati (idle > 10 menit, kemungkinan
-          // browser ditutup tanpa logout) mulai dari yang paling lama tidak aktif.
+          // Slot penuh — gusur sesi yang tidak dipakai: tanpa interaksi nyata > 15 menit
+          // (tab ditinggal terbuka / browser ditutup tanpa Keluar), yang paling lama dulu.
+          // Dulu memakai last_activity, padahal tab yang sekadar terbuka tetap polling
+          // sehingga tak pernah tergusur ("8 perangkat aktif padahal sudah keluar semua").
           const evicted = await loginClient.query(
             `DELETE FROM sessions WHERE id IN (
                SELECT id FROM sessions
-               WHERE user_id = $1 AND last_activity < NOW() - INTERVAL '10 minutes'
-               ORDER BY last_activity ASC LIMIT $2
+               WHERE user_id = $1 AND COALESCE(last_interaction, last_activity) < NOW() - INTERVAL '15 minutes'
+               ORDER BY COALESCE(last_interaction, last_activity) ASC LIMIT $2
              ) RETURNING id`,
             [user.id, count - MAX_USER_SESSIONS + 1]
           );
@@ -2869,7 +3021,7 @@ async function getDocHistory(kind, req, res) {
     const r = await pool.query(
       `SELECT h.id, h.action, h.detail, h.created_at, h.user_role, h.unit, u.nama_lengkap, u.username
        FROM doc_history h LEFT JOIN users u ON h.user_id = u.id
-       WHERE h.model_type = $1 AND h.model_id = $2 ORDER BY h.id ASC`, [kind, id]);
+       WHERE h.model_type = $1 AND h.model_id = $2 ORDER BY h.created_at ASC, h.id ASC`, [kind, id]);
     let rows = r.rows;
     if (!rows.some(x => x.action === 'create' || x.action === 'usulan')) {
       const m = await pool.query(
@@ -3206,6 +3358,328 @@ app.get('/api/notifications', authenticate, async (req, res) => {
   } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
 });
 
+// ============ ULASAN PENGGUNA ============
+// Semua peran (termasuk viewer) boleh mengisi; tampil langsung; admin/superadmin boleh menghapus.
+const _bintang = (v) => { const n = Number(v); return Number.isInteger(n) && n >= 1 && n <= 5 ? n : null; };
+app.get('/api/reviews', authenticate, async (req, res) => {
+  try {
+    const agg = await pool.query(
+      `SELECT COUNT(*)::int AS jumlah, ROUND(AVG(rating)::numeric, 1) AS rata, ROUND(AVG(r_mudah)::numeric, 1) AS rata_mudah,
+              ROUND(AVG(r_cepat)::numeric, 1) AS rata_cepat, ROUND(AVG(r_tampilan)::numeric, 1) AS rata_tampilan,
+              COUNT(*) FILTER (WHERE rating = 1)::int AS b1, COUNT(*) FILTER (WHERE rating = 2)::int AS b2,
+              COUNT(*) FILTER (WHERE rating = 3)::int AS b3, COUNT(*) FILTER (WHERE rating = 4)::int AS b4,
+              COUNT(*) FILTER (WHERE rating = 5)::int AS b5
+       FROM reviews`);
+    const a = agg.rows[0];
+    const items = await pool.query(
+      `SELECT id, nama, unit, rating, komentar, created_at, updated_at, (user_id = $1) AS mine
+       FROM reviews WHERE komentar IS NOT NULL AND TRIM(komentar) <> ''
+       ORDER BY updated_at DESC LIMIT 60`, [req.user.id]);
+    res.json({
+      ringkasan: {
+        jumlah: a.jumlah, rata: a.rata === null ? null : Number(a.rata),
+        mudah: a.rata_mudah === null ? null : Number(a.rata_mudah),
+        cepat: a.rata_cepat === null ? null : Number(a.rata_cepat),
+        tampilan: a.rata_tampilan === null ? null : Number(a.rata_tampilan),
+        sebaran: [a.b1, a.b2, a.b3, a.b4, a.b5],
+      },
+      items: items.rows,
+    });
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+app.post('/api/reviews', authenticate, async (req, res) => {
+  try {
+    const nama = String(req.body.nama || '').trim().replace(/\s+/g, ' ');
+    // User/Viewer: unit kerja mengikuti akun (tidak bisa diubah dari klien); Admin/Superadmin mengisi sendiri.
+    let unit = String(req.body.unit || '').trim().replace(/\s+/g, ' ');
+    if (['user', 'viewer'].includes(req.user.role)) {
+      const l2 = req.user.unit_l2 && String(req.user.unit_l2).toUpperCase() !== 'SELURUH UNIT' ? req.user.unit_l2 : '';
+      const l1 = req.user.unit_l1 && String(req.user.unit_l1).toUpperCase() !== 'PUSAT' ? req.user.unit_l1 : '';
+      const dariAkun = [l2, l1].filter(Boolean).join(', ');
+      if (dariAkun) unit = dariAkun;
+    }
+    const komentar = String(req.body.komentar || '').trim();
+    const rating = _bintang(req.body.rating), mudah = _bintang(req.body.mudah),
+          cepat = _bintang(req.body.cepat), tampilan = _bintang(req.body.tampilan);
+    if (nama.length < 3 || nama.length > 100) return res.status(400).json({ error: 'Nama lengkap wajib diisi (3–100 huruf).' });
+    if (unit.length < 2 || unit.length > 200) return res.status(400).json({ error: 'Unit kerja asal wajib diisi.' });
+    if (!rating || !mudah || !cepat || !tampilan) return res.status(400).json({ error: 'Semua penilaian bintang wajib diisi.' });
+    if (komentar.length > 1000) return res.status(400).json({ error: 'Testimoni maksimal 1000 huruf.' });
+    // Satu akun dapat dipakai beberapa orang, jadi tiap pengiriman = ulasan baru (tidak memperbarui).
+    // Nama yang sama pada akun yang sama dianggap pengiriman ganda.
+    const r = await pool.query(
+      `INSERT INTO reviews (user_id, nama, unit, rating, r_mudah, r_cepat, r_tampilan, komentar)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING id`,
+      [req.user.id, nama, unit, rating, mudah, cepat, tampilan, komentar || null]);
+    res.json({ ok: true, id: r.rows[0].id });
+  } catch (err) {
+    if (err.code === '23505') return res.status(409).json({ error: 'Ulasan dengan nama ini sudah pernah dikirim dari akun ini. Terima kasih!' });
+    console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
+app.delete('/api/reviews/:id', authenticate, requireRole('admin', 'superadmin'), async (req, res) => {
+  try {
+    const r = await pool.query('DELETE FROM reviews WHERE id = $1', [req.params.id]);
+    if (!r.rowCount) return res.status(404).json({ error: 'Ulasan tidak ditemukan' });
+    res.json({ ok: true });
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+// ============ CHAT — kotak masuk bersama ============
+// Percakapan melekat ke akun User (Terbatas); satu akun boleh punya BANYAK percakapan karena
+// dipakai beberapa bagian/orang. Admin & superadmin MANA PUN dapat membalas, supaya
+// pesan yang belum terbalas bisa diambil alih admin lain. Viewer tidak memakai chat.
+const CHAT_STAFF = ['admin', 'superadmin'];
+const CHAT_MAKS_ISI = 2000;
+const CHAT_MAKS_BERKAS = 3 * 1024 * 1024;
+const CHAT_BATAS_EDIT_MENIT = 30;
+const CHAT_BERKAS = {
+  png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', pdf: 'application/pdf',
+  docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+};
+// Tanda tangan byte awal — jangan percaya ekstensi/mime kiriman klien.
+const chatIsiSesuai = (ext, b) => {
+  if (ext === 'png') return b.length > 8 && b.slice(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+  if (ext === 'jpg' || ext === 'jpeg') return b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff;
+  if (ext === 'pdf') return b.slice(0, 5).toString('latin1') === '%PDF-';
+  return b.length > 4 && b[0] === 0x50 && b[1] === 0x4b; // docx/xlsx = zip
+};
+const chatLabelUnit = (u) => [u.unit_l2 && String(u.unit_l2).toUpperCase() !== 'SELURUH UNIT' ? u.unit_l2 : '', u.unit_l1 && String(u.unit_l1).toUpperCase() !== 'PUSAT' ? u.unit_l1 : ''].filter(Boolean).join(', ');
+
+// Memuat percakapan :id + memeriksa hak: User → hanya percakapan akunnya; staf → semua.
+// Mengembalikan baris percakapan (dengan data akun), atau null (respons error sudah dikirim).
+async function chatKonv(req, res) {
+  const role = req.user.role;
+  if (role !== 'user' && !CHAT_STAFF.includes(role)) { res.status(403).json({ error: 'HelpDesk tidak tersedia untuk peran Anda' }); return null; }
+  const id = parseInt(req.params.id, 10);
+  if (!Number.isInteger(id)) { res.status(400).json({ error: 'ID percakapan tidak valid' }); return null; }
+  const r = await pool.query(
+    `SELECT c.*, u.username, u.nama_lengkap, u.unit_l1, u.unit_l2 FROM chat_conversations c JOIN users u ON u.id = c.user_id WHERE c.id = $1`, [id]);
+  const c = r.rows[0];
+  if (!c || (role === 'user' && c.user_id !== req.user.id)) { res.status(404).json({ error: 'Percakapan tidak ditemukan' }); return null; }
+  return c;
+}
+const chatNamaPengirim = async (req) => {
+  const r = await pool.query('SELECT nama_lengkap, username FROM users WHERE id = $1', [req.user.id]);
+  return r.rows[0]?.nama_lengkap || r.rows[0]?.username || req.user.username;
+};
+const chatKolomBaca = (role) => role === 'user' ? { upto: 'user_read_upto', at: 'user_read_at' } : { upto: 'staff_read_upto', at: 'staff_read_at' };
+
+// Ringkasan untuk lencana. Staf: jumlah percakapan MENUNGGU BALASAN (pesan terakhir dari User) —
+// bertahan sampai ada yang membalas, walau sudah dibaca admin lain. User: pesan staf belum dibaca.
+app.get('/api/chat/ringkasan', authenticate, async (req, res) => {
+  try {
+    const role = req.user.role;
+    if (CHAT_STAFF.includes(role)) {
+      const r = await pool.query(
+        `SELECT COUNT(*)::int AS n FROM (
+           SELECT DISTINCT ON (conversation_id) conversation_id, sender_role, deleted_at
+           FROM chat_messages ORDER BY conversation_id, id DESC) t
+         WHERE sender_role = 'user' AND deleted_at IS NULL`);
+      return res.json({ badge: r.rows[0].n });
+    }
+    if (role !== 'user') return res.json({ badge: 0 });
+    const r = await pool.query(
+      `SELECT COUNT(*)::int AS n FROM chat_messages m JOIN chat_conversations c ON c.id = m.conversation_id
+       WHERE c.user_id = $1 AND m.sender_role <> 'user' AND m.deleted_at IS NULL AND m.id > c.user_read_upto`, [req.user.id]);
+    res.json({ badge: r.rows[0].n });
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+let _lastChatPrune = 0;
+// Daftar percakapan: User → miliknya; staf → semua. Percakapan kosong yang baru dibuat tetap tampil
+// 1 hari (supaya pembuatnya bisa mengisi), lalu dibuang.
+app.get('/api/chat/daftar', authenticate, async (req, res) => {
+  try {
+    const role = req.user.role;
+    if (role !== 'user' && !CHAT_STAFF.includes(role)) return res.status(403).json({ error: 'Forbidden' });
+    if (Date.now() - _lastChatPrune > 60 * 60 * 1000) {
+      _lastChatPrune = Date.now();
+      pool.query(`DELETE FROM chat_conversations c WHERE c.created_at < NOW() - INTERVAL '1 day' AND NOT EXISTS (SELECT 1 FROM chat_messages m WHERE m.conversation_id = c.id)`).catch(() => {});
+    }
+    const staf = CHAT_STAFF.includes(role);
+    const r = await pool.query(
+      `SELECT c.id, c.judul, c.created_at, c.user_id, c.staff_read_upto, c.user_read_upto, u.nama_lengkap, u.username, u.unit_l1, u.unit_l2,
+              lm.isi, lm.file_name, lm.deleted_at, lm.sender_role, lm.sender_name, lm.created_at AS waktu_pesan,
+              (SELECT COUNT(*)::int FROM chat_messages x WHERE x.conversation_id = c.id AND x.deleted_at IS NULL
+                 AND x.sender_role ${staf ? "= 'user'" : "<> 'user'"} AND x.id > ${staf ? 'c.staff_read_upto' : 'c.user_read_upto'}) AS belum_dibaca
+       FROM chat_conversations c
+       JOIN users u ON u.id = c.user_id
+       LEFT JOIN LATERAL (SELECT * FROM chat_messages WHERE conversation_id = c.id ORDER BY id DESC LIMIT 1) lm ON true
+       ${staf ? '' : 'WHERE c.user_id = $1'}
+       ORDER BY COALESCE(lm.created_at, c.created_at) DESC LIMIT 300`, staf ? [] : [req.user.id]);
+    res.json(r.rows.map(x => ({
+      id: x.id, judul: x.judul || '', nama: x.nama_lengkap || x.username, unit: chatLabelUnit(x),
+      pesanTerakhir: !x.sender_role ? 'Belum ada pesan' : x.deleted_at ? 'Pesan telah dihapus' : (x.isi || (x.file_name ? `📎 ${x.file_name}` : '')),
+      dariUser: x.sender_role === 'user', pengirim: x.sender_name, waktu: x.waktu_pesan || x.created_at,
+      menungguBalasan: x.sender_role === 'user' && !x.deleted_at, belumDibaca: x.belum_dibaca,
+    })));
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+// Akun User aktif untuk memulai chat (staf): dikelompokkan per unit kerja di klien.
+app.get('/api/chat/kontak', authenticate, requireRole('admin', 'superadmin'), async (req, res) => {
+  try {
+    const r = await pool.query(
+      `SELECT u.id, u.username, u.nama_lengkap, u.unit_l1, u.unit_l2 FROM users u JOIN roles r ON r.id = u.role_id
+       WHERE r.name = 'user' AND u.active = true ORDER BY u.unit_l1 NULLS LAST, u.unit_l2 NULLS LAST, u.nama_lengkap LIMIT 500`);
+    res.json(r.rows.map(x => ({ id: x.id, nama: x.nama_lengkap || x.username, unit: chatLabelUnit(x) || '(Tanpa unit)', unitL1: x.unit_l1 || '' })));
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+// Buat percakapan baru. User → atas nama akunnya; staf → untuk akun User yang dipilih (body.userId).
+app.post('/api/chat/percakapan', authenticate, async (req, res) => {
+  try {
+    const role = req.user.role;
+    if (role !== 'user' && !CHAT_STAFF.includes(role)) return res.status(403).json({ error: 'HelpDesk tidak tersedia untuk peran Anda' });
+    const userId = role === 'user' ? req.user.id : parseInt(req.body.userId, 10);
+    if (!Number.isInteger(userId)) return res.status(400).json({ error: 'Pilih akun tujuan' });
+    const u = await pool.query(`SELECT u.id FROM users u JOIN roles r ON r.id = u.role_id WHERE u.id = $1 AND r.name = 'user' AND u.active = true`, [userId]);
+    if (!u.rows[0]) return res.status(404).json({ error: 'Akun User tidak ditemukan' });
+    const judul = String(req.body.judul || '').trim().replace(/\s+/g, ' ').slice(0, 120) || null;
+    const ins = await pool.query('INSERT INTO chat_conversations (user_id, judul, created_by) VALUES ($1,$2,$3) RETURNING id', [userId, judul, req.user.id]);
+    res.json({ id: ins.rows[0].id });
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+// Riwayat satu percakapan (300 pesan terakhir) + penanda baca. Di-polling klien.
+app.get('/api/chat/percakapan/:id', authenticate, async (req, res) => {
+  try {
+    const c = await chatKonv(req, res); if (!c) return;
+    const m = await pool.query(
+      `SELECT m.id, m.sender_id, m.sender_name, m.sender_role, m.isi, m.balas_id, m.file_name, m.file_mime, m.file_size,
+              m.created_at, m.edited_at, m.deleted_at,
+              b.sender_name AS b_nama, b.isi AS b_isi, b.file_name AS b_file, b.deleted_at AS b_dihapus
+       FROM chat_messages m LEFT JOIN chat_messages b ON b.id = m.balas_id
+       WHERE m.conversation_id = $1 ORDER BY m.id DESC LIMIT 300`, [c.id]);
+    res.json({
+      lawan: { id: c.id, nama: c.nama_lengkap || c.username, unit: chatLabelUnit(c), judul: c.judul || '' },
+      baca: { staffSampai: c.staff_read_upto, staffOleh: c.staff_read_by || null, userSampai: c.user_read_upto },
+      pesan: m.rows.reverse().map(x => ({
+        id: x.id, dariUser: x.sender_role === 'user', saya: CHAT_STAFF.includes(req.user.role) ? x.sender_id === req.user.id : x.sender_role === 'user',
+        pengirim: x.sender_name, peran: x.sender_role, waktu: x.created_at, diedit: x.edited_at, dihapus: !!x.deleted_at,
+        isi: x.deleted_at ? '' : x.isi,
+        berkas: x.deleted_at || !x.file_name ? null : { nama: x.file_name, mime: x.file_mime, ukuran: x.file_size },
+        balas: x.balas_id ? {
+          id: x.balas_id, pengirim: x.b_nama, dihapus: !!x.b_dihapus,
+          isi: x.b_dihapus ? '' : String(x.b_isi || '').slice(0, 140), berkas: x.b_dihapus ? null : x.b_file,
+        } : null,
+      })),
+    });
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+// Kirim pesan (teks dan/atau satu berkas base64).
+app.post('/api/chat/percakapan/:id/pesan', authenticate, async (req, res) => {
+  try {
+    const c = await chatKonv(req, res); if (!c) return;
+    const isi = String(req.body.isi || '').replace(/\r\n/g, '\n').trim();
+    if (isi.length > CHAT_MAKS_ISI) return res.status(400).json({ error: `Pesan maksimal ${CHAT_MAKS_ISI} karakter` });
+    let berkas = null;
+    if (req.body.berkas) {
+      const nama = String(req.body.berkas.nama || '').replace(/[\\/\u0000-\u001f]/g, '_').slice(0, 200);
+      const ext = nama.split('.').pop().toLowerCase();
+      if (!CHAT_BERKAS[ext]) return res.status(400).json({ error: 'Jenis berkas tidak didukung (PNG, JPG, PDF, DOCX, XLSX)' });
+      const buf = Buffer.from(String(req.body.berkas.data || ''), 'base64');
+      if (!buf.length) return res.status(400).json({ error: 'Berkas kosong' });
+      if (buf.length > CHAT_MAKS_BERKAS) return res.status(400).json({ error: 'Ukuran berkas maksimal 3 MB' });
+      if (!chatIsiSesuai(ext, buf)) return res.status(400).json({ error: 'Isi berkas tidak sesuai ekstensinya' });
+      berkas = { nama, mime: CHAT_BERKAS[ext], buf };
+    }
+    if (!isi && !berkas) return res.status(400).json({ error: 'Pesan kosong' });
+    let balasId = null;
+    if (req.body.balasId) {
+      const b = await pool.query('SELECT id FROM chat_messages WHERE id = $1 AND conversation_id = $2', [parseInt(req.body.balasId, 10) || 0, c.id]);
+      balasId = b.rows[0]?.id || null;
+    }
+    const nama = await chatNamaPengirim(req);
+    const ins = await pool.query(
+      `INSERT INTO chat_messages (conversation_id, sender_id, sender_name, sender_role, isi, balas_id, file_name, file_mime, file_size)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING id`,
+      [c.id, req.user.id, nama, req.user.role, isi, balasId, berkas?.nama || null, berkas?.mime || null, berkas?.buf.length || null]);
+    if (berkas) await pool.query('INSERT INTO chat_files (message_id, data) VALUES ($1,$2)', [ins.rows[0].id, berkas.buf]);
+    // Mengirim = pengirim sudah membaca percakapan sampai pesannya sendiri.
+    const k = chatKolomBaca(req.user.role);
+    await pool.query(
+      `UPDATE chat_conversations SET ${k.upto} = GREATEST(${k.upto}, $2), ${k.at} = NOW()${k.upto === 'staff_read_upto' ? ', staff_read_by = $3' : ''} WHERE id = $1`,
+      k.upto === 'staff_read_upto' ? [c.id, ins.rows[0].id, nama] : [c.id, ins.rows[0].id]);
+    res.json({ id: ins.rows[0].id });
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+// Tandai percakapan terbaca oleh sisi pemanggil (User, atau staf mana pun).
+app.post('/api/chat/percakapan/:id/baca', authenticate, async (req, res) => {
+  try {
+    const c = await chatKonv(req, res); if (!c) return;
+    const maks = (await pool.query('SELECT COALESCE(MAX(id),0)::int AS m FROM chat_messages WHERE conversation_id = $1', [c.id])).rows[0].m;
+    const k = chatKolomBaca(req.user.role);
+    if (req.user.role === 'user') {
+      await pool.query(`UPDATE chat_conversations SET ${k.upto} = GREATEST(${k.upto}, $2), ${k.at} = NOW() WHERE id = $1`, [c.id, maks]);
+    } else {
+      await pool.query(`UPDATE chat_conversations SET ${k.upto} = GREATEST(${k.upto}, $2), ${k.at} = NOW(), staff_read_by = $3 WHERE id = $1`, [c.id, maks, await chatNamaPengirim(req)]);
+    }
+    res.json({ ok: true });
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+// Hak atas satu pesan: User → pesan dari akunnya sendiri; staf → pesannya sendiri (superadmin: semua, untuk hapus).
+async function chatPesanMilik(req, res, bolehSuperadmin) {
+  const role = req.user.role;
+  if (role !== 'user' && !CHAT_STAFF.includes(role)) { res.status(403).json({ error: 'HelpDesk tidak tersedia untuk peran Anda' }); return null; }
+  const r = await pool.query(
+    `SELECT m.*, c.user_id AS konv_user FROM chat_messages m JOIN chat_conversations c ON c.id = m.conversation_id WHERE m.id = $1`, [parseInt(req.params.id, 10) || 0]);
+  const m = r.rows[0];
+  if (!m) { res.status(404).json({ error: 'Pesan tidak ditemukan' }); return null; }
+  const milik = role === 'user' ? (m.konv_user === req.user.id && m.sender_role === 'user') : m.sender_id === req.user.id;
+  if (!milik && !(bolehSuperadmin && role === 'superadmin')) { res.status(403).json({ error: 'Hanya pesan sendiri yang dapat diubah' }); return null; }
+  if (m.deleted_at) { res.status(409).json({ error: 'Pesan sudah dihapus' }); return null; }
+  return m;
+}
+
+app.patch('/api/chat/pesan/:id', authenticate, async (req, res) => {
+  try {
+    const m = await chatPesanMilik(req, res, false); if (!m) return;
+    const isi = String(req.body.isi || '').replace(/\r\n/g, '\n').trim();
+    if (!isi || isi.length > CHAT_MAKS_ISI) return res.status(400).json({ error: `Isi pesan 1–${CHAT_MAKS_ISI} karakter` });
+    if (Date.now() - new Date(m.created_at).getTime() > CHAT_BATAS_EDIT_MENIT * 60000)
+      return res.status(409).json({ error: `Pesan hanya dapat diedit ${CHAT_BATAS_EDIT_MENIT} menit sejak dikirim` });
+    await pool.query('UPDATE chat_messages SET isi = $1, edited_at = NOW() WHERE id = $2', [isi, m.id]);
+    res.json({ ok: true });
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+// Hapus lunak: isi & lampiran dibuang, penanda "pesan dihapus" tetap ada agar percakapan utuh.
+app.delete('/api/chat/pesan/:id', authenticate, async (req, res) => {
+  try {
+    const m = await chatPesanMilik(req, res, true); if (!m) return;
+    await pool.query('UPDATE chat_messages SET isi = \'\', file_name = NULL, file_mime = NULL, file_size = NULL, deleted_at = NOW() WHERE id = $1', [m.id]);
+    await pool.query('DELETE FROM chat_files WHERE message_id = $1', [m.id]);
+    res.json({ ok: true });
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
+app.get('/api/chat/berkas/:id', authenticate, async (req, res) => {
+  try {
+    const role = req.user.role;
+    if (role !== 'user' && !CHAT_STAFF.includes(role)) return res.status(403).json({ error: 'Forbidden' });
+    const r = await pool.query(
+      `SELECT c.user_id, m.file_name, m.file_mime, f.data FROM chat_messages m
+       JOIN chat_files f ON f.message_id = m.id JOIN chat_conversations c ON c.id = m.conversation_id
+       WHERE m.id = $1 AND m.deleted_at IS NULL`, [parseInt(req.params.id, 10) || 0]);
+    const x = r.rows[0];
+    if (!x || (role === 'user' && x.user_id !== req.user.id)) return res.status(404).json({ error: 'Berkas tidak ditemukan' });
+    const gambar = x.file_mime.startsWith('image/') || x.file_mime === 'application/pdf';
+    res.setHeader('Content-Type', x.file_mime);
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('Content-Security-Policy', "default-src 'none'");
+    res.setHeader('Content-Disposition', `${gambar && req.query.unduh !== '1' ? 'inline' : 'attachment'}; filename*=UTF-8''${encodeURIComponent(x.file_name)}`);
+    res.send(x.data);
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
+});
+
 app.post('/api/notifications/seen', authenticate, async (req, res) => {
   try {
     await pool.query('UPDATE users SET notif_seen_at = NOW() WHERE id = $1', [req.user.id]);
@@ -3237,6 +3711,7 @@ async function appendDiskusi(kind, req, res) {
     const entri = `— ${label} · ${tglIndo(new Date())}: ${pesan}`;
     const tanggapan = m.tanggapan ? `${m.tanggapan}\n\n${entri}` : entri;
     await pool.query(`UPDATE ${table} SET tanggapan = $1, updated_at = NOW() WHERE id = $2`, [tanggapan, id]);
+    await logDocHistory(kind, Number(id), req, 'tanggapan', pesan);
     pushNotif({ kind, row: m, event: 'tanggapan', req, pesan: `${req.user.username || (isAdmin ? 'Ortala MR' : 'Penyusun')} menanggapi diskusi revisi ${JENIS_NOTIF[kind]} “${m.process_title || '(tanpa judul)'}”.` });
     const full = await pool.query(
       `SELECT m.*, u1.nama as unit_l1, u2.nama as unit_l2 FROM ${table} m
@@ -3971,7 +4446,8 @@ app.get('/api/sop/models/:id/pdf', authenticate, pdfLimiter, async (req, res) =>
 
 app.post('/api/sop/models', authenticate, async (req, res) => {
   try {
-    const { process_title, process_key, unit_l1, unit_l2, sop_data, status, jenis_proses, klasifikasi_proses } = req.body;
+    const { process_title, process_key, unit_l1, unit_l2, status, jenis_proses, klasifikasi_proses } = req.body;
+    const sop_data = req.body.sop_data;
 
     const { l1Id: final_l1, l2Id: final_l2 } = await resolveUnitIds(unit_l1, unit_l2, true);
 
@@ -4004,7 +4480,7 @@ app.put('/api/sop/models/:id', authenticate, async (req, res) => {
 
     // KUNCI KONTEN SETELAH TERBIT: SOP yang sudah 'terbit' (cover bertanda tangan sudah diunggah)
     // tidak boleh diubah/disimpan lagi oleh siapa pun. Revisi = buat salinan/versi baru.
-    const curRow = await assertWriteAccess(req, res, 'sop', req.params.id);
+    const curRow = await assertWriteAccess(req, res, 'sop', req.params.id, ACCESS_COLS_RINGAN + ', m.sop_data');
     if (!curRow) return;
     const cur = { rows: [curRow] };
     if (['verifikasi', 'fisik', 'penetapan', 'terbit'].includes(curRow.status)) {
@@ -4014,6 +4490,23 @@ app.put('/api/sop/models/:id', authenticate, async (req, res) => {
     const { l1Id: final_l1, l2Id: final_l2 } = await resolveUnitIds(unit_l1, unit_l2, true);
 
     const finalKey = process_key && process_key.trim() ? process_key.trim() : null;
+
+    // TANGGAL PEMBUATAN pada cover: terisi otomatis saat pertama kali dikirim ke Ortala MR, dan
+    // HANYA admin/superadmin yang boleh mengubahnya. Pengguna lain: nilai yang sudah ada
+    // dipertahankan dari database (klien tak bisa menimpanya); mengisi dari kosong tetap boleh
+    // (itulah pengisian otomatis oleh klien saat kirim pertama).
+    // (Jenis pengesahan pengesahanTTE = TTD basah/TTE boleh diubah SEMUA penyusun — tak dijaga di sini.)
+    let sopDataAkhir = sop_data || null;
+    if (sopDataAkhir && !['admin', 'superadmin'].includes(req.user.role)) {
+      try {
+        const dataLama = JSON.parse(curRow.sop_data || '{}');
+        const lama = dataLama.tglPembuatan;
+        const baru = JSON.parse(sopDataAkhir);
+        let berubah = false;
+        if (baru && typeof lama === 'string' && lama.trim() && baru.tglPembuatan !== lama) { baru.tglPembuatan = lama; berubah = true; }
+        if (berubah) sopDataAkhir = JSON.stringify(baru);
+      } catch { /* sop_data bukan JSON valid — biarkan apa adanya */ }
+    }
 
     // Jika status tidak dikirim (mis. saat simpan-untuk-ekspor PDF), pertahankan status lama
     // agar dokumen yang sudah 'pending' tidak turun jadi 'draft'.
@@ -4035,7 +4528,7 @@ app.put('/api/sop/models/:id', authenticate, async (req, res) => {
            catatan = CASE WHEN COALESCE($6, status) IN ('draft', 'pending') THEN NULL ELSE catatan END,
            catatan_at = CASE WHEN COALESCE($6, status) IN ('draft', 'pending') THEN NULL ELSE catatan_at END
        WHERE id = $10 RETURNING *`,
-      [process_title, finalKey, final_l1, final_l2, sop_data || null, statusParam,
+      [process_title, finalKey, final_l1, final_l2, sopDataAkhir, statusParam,
        jenis_proses || null, klasifikasi_proses || null, versionBump, req.params.id]
     );
 
@@ -4106,12 +4599,47 @@ app.patch('/api/sop/models/status/:id', authenticate, requireRole('admin', 'supe
   }
 });
 
+// Simpan nomor SOP ke DUA tempat sekaligus: kolom process_key (dipakai daftar, pencarian,
+// ekspor) dan sop_data.nomor (dipakai cover di studio/PDF). Nomor kosong = hapus.
+async function simpanNomorSop(id, nomor) {
+  const bersih = String(nomor || '').replace(/\s+/g, ' ').trim().toUpperCase().slice(0, 80);
+  const cur = await pool.query('SELECT sop_data FROM sop_models WHERE id = $1', [id]);
+  if (cur.rowCount === 0) return null;
+  let data = {};
+  try { data = JSON.parse(cur.rows[0].sop_data || '{}') || {}; } catch (e) { data = {}; }
+  data.nomor = bersih;
+  const r = await pool.query(
+    `UPDATE sop_models SET process_key = $1, sop_data = $2, updated_at = NOW() WHERE id = $3 RETURNING id, process_key`,
+    [bersih || null, JSON.stringify(data), id]
+  );
+  return r.rows[0];
+}
+
+// ISI / KOREKSI NOMOR SOP (admin & superadmin) — dipakai setelah cover bertanda tangan
+// diunggah: nomor yang ditulis di luar aplikasi dibaca dari cover lalu dikonfirmasi admin.
+app.patch('/api/sop/models/:id/nomor', authenticate, requireRole('admin', 'superadmin'), async (req, res) => {
+  const { id } = req.params;
+  const { nomor, sumber } = req.body;
+  try {
+    const row = await simpanNomorSop(id, nomor);
+    if (!row) return res.status(404).json({ error: 'SOP tidak ditemukan' });
+    logDocHistory('sop', id, req, 'nomor', row.process_key
+      ? `Nomor SOP diisi: ${row.process_key}${sumber ? ` (${sumber})` : ''}`
+      : 'Nomor SOP dikosongkan');
+    res.json({ ok: true, id: Number(id), process_key: row.process_key });
+  } catch (err) {
+    console.error('PATCH nomor SOP:', err);
+    res.status(500).json({ error: 'Internal Server Error' });
+  }
+});
+
 // UNGGAH COVER SOP BERTANDA TANGAN → status menjadi 'verifikasi'.
 // Boleh: admin, penyusun (created_by), ATAU user pada unit kerja (Level 1) yang sama.
 // Hanya saat status 'approved' atau 'verifikasi' (unggah ulang). Batas 2 MB, PDF/JPG/PNG.
+// `nomor` (opsional) = nomor SOP yang terbaca dari cover / diisi pengunggah.
 app.post('/api/sop/models/:id/cover', authenticate, async (req, res) => {
   const { id } = req.params;
-  const { cover, filename, halaman, gambar_cover } = req.body;
+  const { cover, filename, halaman, gambar_cover, nomor } = req.body;
   if (!cover) return res.status(400).json({ error: 'File cover wajib diunggah' });
   try {
     const chk = await pool.query('SELECT id, created_by, status, sop_data, l1_id, process_title FROM sop_models WHERE id = $1', [id]);
@@ -4178,11 +4706,17 @@ app.post('/api/sop/models/:id/cover', authenticate, async (req, res) => {
     // Cover masuk → status 'verifikasi' (menunggu admin memeriksa TTD & nomor SOP). Belum terbit,
     // belum masuk registry Dashboard — itu terjadi saat admin menyetujui (status → 'terbit').
     await pool.query("UPDATE sop_models SET status = 'verifikasi', updated_at = NOW() WHERE id = $1", [id]);
+    // Nomor SOP dari cover (bila pengunggah mengisikannya) — hanya menimpa bila diisi.
+    let nomorTersimpan = null;
+    if (typeof nomor === 'string' && nomor.trim()) {
+      const r = await simpanNomorSop(id, nomor);
+      nomorTersimpan = r ? r.process_key : null;
+    }
     pushNotif({ kind: 'sop', row, event: 'verifikasi', req });
-    logDocHistory('sop', id, req, 'verifikasi', asliData
+    logDocHistory('sop', id, req, 'verifikasi', (asliData
       ? `Mengunggah dokumen bertanda tangan elektronik (TTE) utuh — halaman cover: ${JSON.parse(halamanCover).join(', ')}`
-      : 'Mengunggah cover bertanda tangan pimpinan');
-    res.json({ ok: true, id: Number(id), status: 'verifikasi' });
+      : 'Mengunggah cover bertanda tangan pimpinan') + (nomorTersimpan ? ` — Nomor SOP: ${nomorTersimpan}` : ''));
+    res.json({ ok: true, id: Number(id), status: 'verifikasi', process_key: nomorTersimpan });
   } catch (err) {
     console.error('Upload cover SOP:', err);
     res.status(500).json({ error: 'Internal Server Error' });
@@ -4494,6 +5028,17 @@ app.delete('/api/juknis/:id', authenticate, async (req, res) => {
 // ==========================================================
 // Buat/ambil token bagikan. Untuk SOP STUDIO (bukan manual), render PDF sekali
 // pakai kredensial pembagi lalu simpan (share_pdf) supaya publik tak perlu auth.
+// Render PDF SOP studio (sudah termasuk cover bertanda tangan) → simpan sebagai salinan
+// tautan publik, bersama kunci versinya (updated_at|version|waktu unggah cover) agar bisa
+// dikenali basi: salinan lama (mis. dibagikan SEBELUM cover diunggah) dirender ulang.
+async function renderSharePdf(id, authToken) {
+  const key = await pdfCacheKey(id);
+  const r = await fetch(`http://127.0.0.1:${PORT}/api/sop/models/${id}/pdf`, { headers: { Authorization: `Bearer ${authToken}` } });
+  if (!r.ok) { const e = new Error(`HTTP ${r.status}`); e.status = r.status; throw e; }
+  const buf = Buffer.from(await r.arrayBuffer());
+  await pool.query('UPDATE sop_models SET share_pdf = $1, share_pdf_key = $2 WHERE id = $3', [buf.toString('base64'), key, id]);
+}
+const _sharePdfAntre = new Set();
 async function createShare(kind, req, res) {
   try {
     const table = WRITE_TABLES[kind];
@@ -4525,13 +5070,7 @@ async function createShare(kind, req, res) {
     if (kind === 'sop' && !cur.rows[0].is_manual) {
       try {
         const authToken = (req.headers.authorization || '').split(' ')[1];
-        const r = await fetch(`http://127.0.0.1:${PORT}/api/sop/models/${id}/pdf`, { headers: { Authorization: `Bearer ${authToken}` } });
-        if (r.ok) {
-          const buf = Buffer.from(await r.arrayBuffer());
-          await pool.query('UPDATE sop_models SET share_pdf = $1 WHERE id = $2', [buf.toString('base64'), id]);
-        } else {
-          console.error('Share SOP PDF gagal:', r.status);
-        }
+        await renderSharePdf(id, authToken);
       } catch (e) { console.error('Share SOP PDF error:', e.message); }
     }
     res.json({ token, path: `/share/${kind}/${token}` });
@@ -4540,6 +5079,54 @@ async function createShare(kind, req, res) {
 app.post('/api/bpmn/models/:id/share', authenticate, requireRole('admin', 'superadmin', 'user'), (req, res) => createShare('bpmn', req, res));
 app.post('/api/sop/models/:id/share', authenticate, requireRole('admin', 'superadmin', 'user'), (req, res) => createShare('sop', req, res));
 app.post('/api/sp/models/:id/share', authenticate, requireRole('admin', 'superadmin', 'user'), (req, res) => createShare('sp', req, res));
+
+// Tautan view-only MASSAL untuk ekspor Excel daftar SOP — hanya dokumen final
+// (fisik/penetapan/terbit); draft & revisi TIDAK dibuatkan tautan publik. Token dibuat
+// seketika; PDF cache (untuk SOP studio) dirender di latar belakang satu per satu.
+app.post('/api/sop/share-bulk', authenticate, requireRole('admin', 'superadmin', 'user'), async (req, res) => {
+  try {
+    const ids = [...new Set((Array.isArray(req.body.ids) ? req.body.ids : []).map(Number).filter(Number.isInteger))].slice(0, 500);
+    if (!ids.length) return res.json({ links: {} });
+    const q = await pool.query(
+      `SELECT m.id, m.share_token, m.share_pdf IS NOT NULL AS ada_pdf, m.share_pdf_key, m.is_manual,
+              m.created_by, m.l1_id, u1.nama AS _l1, u2.nama AS _l2
+         FROM sop_models m LEFT JOIN unit_kerja_l1 u1 ON m.l1_id = u1.id LEFT JOIN unit_kerja_l2 u2 ON m.l2_id = u2.id
+        WHERE m.id = ANY($1::int[]) AND m.deleted_at IS NULL AND m.status IN ('fisik','penetapan','terbit')`, [ids]);
+    const links = {}, perluPdf = [];
+    // User terbatas: hanya dokumen unit kerjanya sendiri (aturan sama dgn assertModelAccess).
+    const norm = (v) => String(v || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const boleh = (r) => req.user.role !== 'user' || r.created_by === req.user.id || r.l1_id === null ||
+      (norm(r._l1) === norm(req.user.unit_l1) && (!req.user.unit_l2 || norm(req.user.unit_l2) === 'seluruh unit' || !r._l2 || norm(r._l2) === norm(req.user.unit_l2)));
+    for (const r of q.rows.filter(boleh)) {
+      let token = r.share_token;
+      if (!token) {
+        token = crypto.randomBytes(18).toString('base64url');
+        await pool.query('UPDATE sop_models SET share_token = $1 WHERE id = $2 AND share_token IS NULL', [token, r.id]);
+        const cur = await pool.query('SELECT share_token FROM sop_models WHERE id = $1', [r.id]);
+        token = cur.rows[0].share_token;
+      }
+      links[r.id] = `/share/sop/${token}`;
+      // Salinan PDF belum ada ATAU basi (versi dokumen/cover berubah sejak dibagikan).
+      if (!r.is_manual && (!r.ada_pdf || r.share_pdf_key !== await pdfCacheKey(r.id))) perluPdf.push(r.id);
+    }
+    const antre = perluPdf.filter(id => !_sharePdfAntre.has(id));
+    antre.forEach(id => _sharePdfAntre.add(id));
+    res.json({ links, menyiapkan: perluPdf.length });
+    const authToken = (req.headers.authorization || '').split(' ')[1];
+    const kerja = async () => {
+      while (antre.length) {
+        const id = antre.shift();
+        try { await renderSharePdf(id, authToken); }
+        catch (e) {
+          console.error('share-bulk PDF', id, e.message);
+          if (e.status === 401) { antre.forEach(x => _sharePdfAntre.delete(x)); antre.length = 0; }
+        }
+        _sharePdfAntre.delete(id);
+      }
+    };
+    kerja(); kerja(); // 2 pekerja paralel (semaphore PDF membatasi beban Chrome)
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
+});
 
 // PUBLIK (tanpa auth) — hanya baca, hanya dokumen yang punya share_token.
 app.get('/api/public/bpmn/:token', async (req, res) => {
@@ -4554,17 +5141,94 @@ app.get('/api/public/bpmn/:token', async (req, res) => {
     res.json({ ...row, has_file: !!row.manual_file_name });
   } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
 });
+// Tautan view-only MASSAL BPMN (ekspor Excel daftar) — hanya dokumen final
+// (fisik/penetapan/approved). Viewer publik membaca diagram langsung dari database,
+// jadi cukup membuat token (tanpa render PDF). User terbatas: hanya unit kerjanya.
+app.post('/api/bpmn/share-bulk', authenticate, requireRole('admin', 'superadmin', 'user'), async (req, res) => {
+  try {
+    const ids = [...new Set((Array.isArray(req.body.ids) ? req.body.ids : []).map(Number).filter(Number.isInteger))].slice(0, 500);
+    if (!ids.length) return res.json({ links: {} });
+    const q = await pool.query(
+      `SELECT m.id, m.share_token, m.created_by, m.l1_id, u1.nama AS _l1, u2.nama AS _l2
+         FROM bpmn_models m LEFT JOIN unit_kerja_l1 u1 ON m.l1_id = u1.id LEFT JOIN unit_kerja_l2 u2 ON m.l2_id = u2.id
+        WHERE m.id = ANY($1::int[]) AND m.deleted_at IS NULL AND m.status IN ('fisik','penetapan','approved')`, [ids]);
+    const norm = (v) => String(v || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const boleh = (r) => req.user.role !== 'user' || r.created_by === req.user.id || r.l1_id === null ||
+      (norm(r._l1) === norm(req.user.unit_l1) && (!req.user.unit_l2 || norm(req.user.unit_l2) === 'seluruh unit' || !r._l2 || norm(r._l2) === norm(req.user.unit_l2)));
+    const links = {};
+    for (const r of q.rows.filter(boleh)) {
+      let token = r.share_token;
+      if (!token) {
+        await pool.query('UPDATE bpmn_models SET share_token = $1 WHERE id = $2 AND share_token IS NULL', [crypto.randomBytes(18).toString('base64url'), r.id]);
+        token = (await pool.query('SELECT share_token FROM bpmn_models WHERE id = $1', [r.id])).rows[0].share_token;
+      }
+      links[r.id] = `/share/bpmn/${token}`;
+    }
+    res.json({ links });
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
+});
+
+// Tautan view-only MASSAL SP (ekspor Excel) — hanya dokumen yang sudah ditetapkan
+// (penetapan/terbit). SP studio: PDF salinan dirender di server (tanpa sesi pengguna).
+const _spShareAntre = new Set();
+app.post('/api/sp/share-bulk', authenticate, requireRole('admin', 'superadmin', 'user'), async (req, res) => {
+  try {
+    const ids = [...new Set((Array.isArray(req.body.ids) ? req.body.ids : []).map(Number).filter(Number.isInteger))].slice(0, 500);
+    if (!ids.length) return res.json({ links: {} });
+    const q = await pool.query(
+      `SELECT m.id, m.share_token, m.share_pdf IS NOT NULL AS ada_pdf, m.is_manual, m.sp_data IS NOT NULL AS ada_studio,
+              m.created_by, m.l1_id, u1.nama AS _l1, u2.nama AS _l2
+         FROM sp_models m LEFT JOIN unit_kerja_l1 u1 ON m.l1_id = u1.id LEFT JOIN unit_kerja_l2 u2 ON m.l2_id = u2.id
+        WHERE m.id = ANY($1::int[]) AND m.deleted_at IS NULL AND m.status IN ('penetapan','terbit')`, [ids]);
+    const norm = (v) => String(v || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const boleh = (r) => req.user.role !== 'user' || r.created_by === req.user.id || r.l1_id === null ||
+      (norm(r._l1) === norm(req.user.unit_l1) && (!req.user.unit_l2 || norm(req.user.unit_l2) === 'seluruh unit' || !r._l2 || norm(r._l2) === norm(req.user.unit_l2)));
+    const links = {}, perluPdf = [];
+    for (const r of q.rows.filter(boleh)) {
+      let token = r.share_token;
+      if (!token) {
+        await pool.query('UPDATE sp_models SET share_token = $1 WHERE id = $2 AND share_token IS NULL', [crypto.randomBytes(18).toString('base64url'), r.id]);
+        token = (await pool.query('SELECT share_token FROM sp_models WHERE id = $1', [r.id])).rows[0].share_token;
+      }
+      links[r.id] = `/share/sp/${token}`;
+      if (!r.is_manual && r.ada_studio && !r.ada_pdf && !_spShareAntre.has(r.id)) { perluPdf.push(r.id); _spShareAntre.add(r.id); }
+    }
+    res.json({ links, menyiapkan: perluPdf.length });
+    (async () => {
+      for (const id of perluPdf) {
+        try {
+          const d = await pool.query('SELECT sp_data FROM sp_models WHERE id = $1', [id]);
+          if (d.rows[0]?.sp_data) await pool.query('UPDATE sp_models SET share_pdf = $1 WHERE id = $2', [(await renderSpPdf(d.rows[0].sp_data)).toString('base64'), id]);
+        } catch (e) { console.error('sp share-bulk PDF', id, e.message); }
+        _spShareAntre.delete(id);
+      }
+    })();
+  } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: err.message || 'Internal Server Error' }); }
+});
+
+// Salinan PDF tautan SOP dianggap SIAP bila ada DAN tidak basi terhadap cover bertanda
+// tangan: dokumen yang punya cover harus punya salinan yang dirender SESUDAH cover
+// terakhir diunggah (kunci memuat waktu unggah cover). Salinan lama (dibagikan sebelum cover
+// diunggah) tidak disajikan — daripada menampilkan SOP tanpa cover TTE/TTD.
+async function sharePdfSiap(row) {
+  if (!row.ada_pdf) return false;
+  const c = await pool.query('SELECT MAX(uploaded_at) cov FROM sop_covers WHERE sop_id = $1', [row.id]);
+  if (!c.rows[0].cov) return true;
+  const covMs = String(new Date(c.rows[0].cov).getTime());
+  return !!row.share_pdf_key && String(row.share_pdf_key).split('|')[2] === covMs;
+}
 app.get('/api/public/sop/:token', async (req, res) => {
   try {
     const r = await pool.query(
-      `SELECT s.id, s.process_title, s.status, s.is_manual, s.manual_link, s.manual_file_name,
-              s.jenis_proses, s.klasifikasi_proses, (s.share_pdf IS NOT NULL) AS has_pdf,
+      `SELECT s.id, s.process_title, s.status, s.is_manual, s.manual_link, s.manual_file_name, s.share_pdf_key,
+              s.jenis_proses, s.klasifikasi_proses, (s.share_pdf IS NOT NULL) AS ada_pdf,
               u1.nama AS unit_l1, u2.nama AS unit_l2
        FROM sop_models s LEFT JOIN unit_kerja_l1 u1 ON s.l1_id=u1.id LEFT JOIN unit_kerja_l2 u2 ON s.l2_id=u2.id
        WHERE s.share_token = $1 AND s.deleted_at IS NULL`, [req.params.token]);
     if (r.rows.length === 0) return res.status(404).json({ error: 'Tautan tidak ditemukan atau sudah dicabut' });
     const row = r.rows[0];
-    res.json({ ...row, has_file: !!row.manual_file_name });
+    const { share_pdf_key, ada_pdf, ...pub } = row;
+    res.json({ ...pub, has_pdf: await sharePdfSiap(row), has_file: !!row.manual_file_name });
   } catch (err) { console.error('[ROUTE ERROR]', req.method, req.path, err.message); res.status(500).json({ error: 'Internal Server Error' }); }
 });
 // Berkas manual (PDF unggahan) untuk dokumen manual yang dibagikan.
@@ -4615,8 +5279,8 @@ app.get('/api/public/sp/:token/pdf', async (req, res) => {
 // PDF SOP studio yang sudah di-cache saat dibagikan.
 app.get('/api/public/sop/:token/pdf', async (req, res) => {
   try {
-    const r = await pool.query('SELECT share_pdf, process_title FROM sop_models WHERE share_token = $1 AND deleted_at IS NULL', [req.params.token]);
-    if (r.rows.length === 0 || !r.rows[0].share_pdf) return res.status(404).json({ error: 'PDF tidak tersedia' });
+    const r = await pool.query('SELECT id, share_pdf, share_pdf_key, share_pdf IS NOT NULL AS ada_pdf, process_title FROM sop_models WHERE share_token = $1 AND deleted_at IS NULL', [req.params.token]);
+    if (r.rows.length === 0 || !r.rows[0].share_pdf || !(await sharePdfSiap(r.rows[0]))) return res.status(404).json({ error: 'PDF tidak tersedia' });
     const buf = Buffer.from(r.rows[0].share_pdf, 'base64');
     res.setHeader('Content-Type', 'application/pdf');
     res.setHeader('Content-Disposition', `inline; filename="SOP.pdf"`);

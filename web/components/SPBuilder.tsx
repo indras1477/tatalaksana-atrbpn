@@ -25,7 +25,7 @@ import {
   ArrowLeft, Save, Send, FileDown, FileUp, Plus, Trash2, ChevronUp, ChevronDown,
   Bold, Italic, Underline, List, ListOrdered, IndentIncrease, IndentDecrease,
   Loader2, Sparkles, FileText, Layers, ZoomIn, ZoomOut, Info, X, Undo2, Redo2, BookOpen, TableCellsMerge, Check,
-  Link2, ExternalLink, Search,
+  Link2, ExternalLink, Search, Maximize,
 } from 'lucide-react';
 import PratinjauPdf from '@/components/PratinjauPdf';
 import {
@@ -321,6 +321,36 @@ const SPBuilder = forwardRef<SPBuilderRef, Props>(function SPBuilder({
   }, []);
   const inputBerkas = useRef<HTMLInputElement>(null);
   const kertasRef = useRef<HTMLDivElement>(null);
+
+  // ── PRATINJAU LAYAR PENUH ───────────────────────────────────────────────────
+  // Fullscreen API pada wadah studio: bilah alat & panel tersembunyi, lembar F4
+  // diskalakan pas layar (CSS zoom), hanya dibaca. ↑/↓/←/→ pindah lembar; Esc keluar.
+  const rootRef = useRef<HTMLDivElement>(null);
+  const [presentasi, setPresentasi] = useState(false);
+  const [zoomPresentasi, setZoomPresentasi] = useState(1);
+  useEffect(() => {
+    const onFs = () => setPresentasi(!!rootRef.current && document.fullscreenElement === rootRef.current);
+    document.addEventListener('fullscreenchange', onFs);
+    return () => document.removeEventListener('fullscreenchange', onFs);
+  }, []);
+  useEffect(() => {
+    if (!presentasi) return;
+    const hitung = () => setZoomPresentasi(Math.max(0.2, Math.min((window.innerWidth - 24) / ((SP_PAGE.w / 25.4) * 96), (window.innerHeight - 24) / ((SP_PAGE.h / 25.4) * 96))));
+    hitung();
+    window.addEventListener('resize', hitung);
+    const onKey = (e: KeyboardEvent) => {
+      const d = (e.key === 'ArrowRight' || e.key === 'ArrowDown' || e.key === 'PageDown') ? 1 : (e.key === 'ArrowLeft' || e.key === 'ArrowUp' || e.key === 'PageUp') ? -1 : 0;
+      if (!d || !rootRef.current) return;
+      e.preventDefault();
+      const lembar = Array.from(rootRef.current.querySelectorAll<HTMLElement>('.sp-paper'));
+      const tengah = rootRef.current.scrollTop + rootRef.current.clientHeight / 2;
+      let i = lembar.findIndex(el => el.offsetTop + el.offsetHeight * zoomPresentasi >= tengah);
+      if (i < 0) i = lembar.length - 1;
+      lembar[Math.min(lembar.length - 1, Math.max(0, i + d))]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    };
+    window.addEventListener('keydown', onKey);
+    return () => { window.removeEventListener('resize', hitung); window.removeEventListener('keydown', onKey); };
+  }, [presentasi, zoomPresentasi]);
 
   useEffect(() => { docRef.current = doc; }, [doc]);
 
@@ -1007,7 +1037,7 @@ const SPBuilder = forwardRef<SPBuilderRef, Props>(function SPBuilder({
   const kunciTautan = (t: TautanDok) => `${t.sumber || 'studio'}:${t.kind}:${t.id}`;
 
   return (
-    <div className="h-[calc(100dvh-4rem)] overflow-auto bg-slate-200 flex flex-col items-center p-3 sm:p-5 gap-4">
+    <div ref={rootRef} className={`h-full min-h-0 overflow-auto flex flex-col items-center p-3 sm:p-5 gap-4 ${presentasi ? 'sp-presentasi bg-slate-900' : 'bg-slate-200'}`}>
       <style>{`
         /* Kanvas naskah — nilai di sini WAJIB sama dengan api/spDocument.js. */
         .sp-paper {
@@ -1087,6 +1117,11 @@ const SPBuilder = forwardRef<SPBuilderRef, Props>(function SPBuilder({
           background: #fff; border: 1px solid #e2e8f0; border-radius: 10px;
           box-shadow: 0 4px 10px rgba(15,23,42,.12); white-space: nowrap;
         }
+        @media (max-width: 900px) {
+          .sp-strip {
+            left: auto; right: 4px; top: auto; bottom: calc(100% + 4px);
+          }
+        }
         /* Ikon gabung kecil di pojok sel Nomor / Komponen baris terpilih. */
         .sp-gabung-sel {
           position: absolute; top: 2px; right: 2px; z-index: 20;
@@ -1095,8 +1130,8 @@ const SPBuilder = forwardRef<SPBuilderRef, Props>(function SPBuilder({
           background: #0d9488; color: #fff; box-shadow: 0 2px 6px rgba(13,148,136,.4);
         }
         .sp-gabung-sel:hover { background: #0f766e; }
-        .sp-aksi-sec { opacity: 0; transition: opacity .12s; }
-        tr:hover .sp-aksi-sec, .sp-aksi-sec:focus-within { opacity: 1; }
+        .sp-aksi-sec { opacity: 0; pointer-events: none; transition: opacity .12s; }
+        tr:hover .sp-aksi-sec, .sp-aksi-sec:focus-within { opacity: 1; pointer-events: auto; }
         @media print { .no-print { display: none !important; } .sp-guides { display: none !important; } }
       `}</style>
 
@@ -1166,6 +1201,8 @@ const SPBuilder = forwardRef<SPBuilderRef, Props>(function SPBuilder({
           )}
           <input ref={inputBerkas} type="file" accept=".docx" className="hidden" onChange={pilihBerkas} />
 
+          <button onClick={() => { try { rootRef.current?.requestFullscreen?.(); } catch { /* ditolak browser */ } }} title="Pratinjau layar penuh per lembar F4 (Esc untuk keluar)"
+            className="px-3 py-2 rounded-xl bg-slate-800 hover:bg-slate-900 text-white text-sm font-bold flex items-center gap-1.5 transition-colors"><Maximize className="w-4 h-4" /> Layar Penuh</button>
           {toolbarExtra && <div className="ml-auto flex items-center gap-2">{toolbarExtra}</div>}
         </div>
 
@@ -1251,7 +1288,7 @@ const SPBuilder = forwardRef<SPBuilderRef, Props>(function SPBuilder({
              lembar berikutnya dengan kepala tabel diulang (Repeat Header Row) —
              pola yang sama dengan kanvas Cover SOP. ────────────────────────── */}
       <div className={`w-full flex justify-center ${pratinjauUrl ? 'hidden' : ''}`} onMouseDown={lepasPilihanBila}>
-        <div ref={kertasRef} style={{ transform: `scale(${zoom})`, transformOrigin: 'top center' }}
+        <div ref={kertasRef} style={presentasi ? { zoom: zoomPresentasi } : { transform: `scale(${zoom})`, transformOrigin: 'top center' }}
           className="flex flex-col items-center gap-6">
           {halamanTampil.map((idxHalaman, hal) => (
             <div key={hal} className="sp-paper shadow-2xl border border-slate-300">

@@ -7,11 +7,15 @@ import {
   ArrowLeft, Plus, Edit, CheckCircle,
   Clock, XCircle, Search, X, FileEdit, FileStack, AlertCircle, Filter,
   Trash2, Calendar, GitCommit, FileSignature, Lock, HelpCircle, ChevronRight, History as HistoryIcon, RotateCcw,
-  Save, ExternalLink, Building2, Copy, Upload, Stamp, Eye, ClipboardCheck, Landmark, FileUp, FileText, MessageSquare, RefreshCw, Maximize2, FileSpreadsheet, Inbox, FileInput,
-  ArrowUp, ArrowDown, ArrowUpDown,
+  Save, ExternalLink, Building2, Copy, Upload, Stamp, Eye, ClipboardCheck, Landmark, FileUp, FileText, MessageSquare, RefreshCw, Loader2, Maximize2, FileSpreadsheet, Inbox, FileInput,
+  ArrowUp, ArrowDown, ArrowUpDown, ScanLine, ZoomIn, ZoomOut,
+  Download,
 } from 'lucide-react';
 import { SOPSymbolsSection, FiturSection } from '@/components/PanduanSymbols';
 import { bacaPdfCover, gambarHalamanCover, type InfoPdfCover } from '@/lib/coverPdf';
+import PeriksaCoverModal from '@/components/PeriksaCoverModal';
+import PratinjauPdf from '@/components/PratinjauPdf';
+import { bacaNomorSopDariCover, type HasilBacaNomor } from '@/lib/bacaNomorSop';
 import ManualDocModal from '@/components/ManualDocModal';
 import ManualDocDetailModal from '@/components/ManualDocDetailModal';
 import ImporSopPdfModal from '@/components/ImporSopPdfModal';
@@ -66,6 +70,7 @@ interface SOPModel {
   unit_l1?: string; unit_l2?: string;
   jenis_proses?: string | null; klasifikasi_proses?: string | null;
   has_cover?: boolean;
+  cover_asli?: boolean;
   penetapan_dasar?: string | null; penetapan_tanggal?: string | null;
   is_manual?: boolean | null; manual_nomor?: string | null; manual_link?: string | null;
   manual_file_name?: string | null; manual_tanggal?: string | null;
@@ -124,7 +129,7 @@ export default function SOPDashboardPage() {
   const [urutKolom, setUrutKolom] = useState<{ kolom: 'info' | 'unit' | 'status'; arah: 'asc' | 'desc' } | null>(null);
   const [filterStatus, setFilterStatus] = useState('Semua');
   // Urutan daftar: terbaru diperbarui (default) / terbaru dibuat / terlama / judul.
-  const [sortBy, setSortBy] = useState<'updated' | 'created' | 'oldest' | 'title'>(() => (readSavedView()?.sortBy as 'updated' | 'created' | 'oldest' | 'title') ?? 'updated');
+  const [sortBy, setSortBy] = useState<'updated' | 'created' | 'oldest' | 'title' | 'nomor'>(() => (readSavedView()?.sortBy as 'updated' | 'created' | 'oldest' | 'title' | 'nomor') ?? 'updated');
 
   const [showConfigModal, setShowConfigModal] = useState(false);
   const [config, setConfig] = useState({
@@ -151,6 +156,10 @@ export default function SOPDashboardPage() {
   const [manualDetail, setManualDetail] = useState<SOPModel | null>(null);
 
   // Tab daftar: 'pengajuan' (draft/pending/rejected/approved-menunggu cover) vs 'terbit' (Daftar SOP)
+  // Pilih beberapa SOP lalu unduh PDF-nya sekaligus (ZIP) — khusus superadmin dulu.
+  const bolehFiturMassal = !!currentUser && currentUser.role !== 'viewer';
+  const [pilihPdf, setPilihPdf] = useState<number[]>([]);
+  const [unduhPdf, setUnduhPdf] = useState<{ selesai: number; total: number; gagal: number } | null>(null);
   const [listTab, setListTab] = useState<'usulan' | 'penyusunan' | 'terbit'>(() => (readSavedView()?.listTab as 'usulan' | 'penyusunan' | 'terbit') ?? 'penyusunan');
   // Filter cepat klik kartu ringkasan (admin/superadmin).
   const [cardFilter, setCardFilter] = useState<null | 'total' | 'draft' | 'pending' | 'pengesahan' | 'penetapan' | 'terbit' | 'rejected'>(null);
@@ -169,6 +178,12 @@ export default function SOPDashboardPage() {
   const [coverPdf, setCoverPdf] = useState<{ buf: ArrayBuffer; info: InfoPdfCover; pilih: number[] } | null>(null);
   const [membacaCover, setMembacaCover] = useState(false);
   const [uploadingCover, setUploadingCover] = useState(false);
+  // Nomor SOP yang terbaca otomatis dari cover yang dipilih (bisa disunting sebelum unggah).
+  const [coverNomor, setCoverNomor] = useState<{ nilai: string; status: 'idle' | 'membaca' | 'selesai'; tahap: string; hasil: HasilBacaNomor | null }>({ nilai: '', status: 'idle', tahap: '', hasil: null });
+  // Modal "Nomor SOP dari cover" (admin): mode 'verifikasi' = simpan nomor lalu setujui cover;
+  // mode 'isi' = hanya simpan/koreksi nomor (SOP yang sudah berproses tapi nomornya kosong).
+  const [nomorModal, setNomorModal] = useState<{ isOpen: boolean; model: SOPModel | null; mode: 'verifikasi' | 'isi'; nilai: string; status: 'membaca' | 'selesai' | 'gagal'; tahap: string; hasil: HasilBacaNomor | null; coverUrl: string | null; coverMime: string }>({ isOpen: false, model: null, mode: 'isi', nilai: '', status: 'membaca', tahap: '', hasil: null, coverUrl: null, coverMime: '' });
+  const [menyimpanNomor, setMenyimpanNomor] = useState(false);
   const MAX_COVER_BYTES = 2 * 1024 * 1024;
   const MAX_DOK_TTE_BYTES = 5 * 1024 * 1024; // PDF utuh (cover dipilih dari halamannya)
   // Modal isian penetapan (dasar hukum & tanggal) saat menekan "Ditetapkan"
@@ -196,6 +211,7 @@ export default function SOPDashboardPage() {
   // → dimuat ON-DEMAND lewat tombol, bukan otomatis, agar tidak membebani server.
   const [previewPdfUrl, setPreviewPdfUrl] = useState<string | null>(null);
   const [loadingPreviewPdf, setLoadingPreviewPdf] = useState(false);
+  const [unduhPdfBusy, setUnduhPdfBusy] = useState(false);
   const [pdfFull, setPdfFull] = useState(false); // pratinjau PDF layar penuh
   // Ponsel & tablet TIDAK dapat menampilkan PDF di dalam bingkai halaman
   // (Chrome Android/Safari iOS) — untuk perangkat itu dipakai gambar pratinjau.
@@ -447,6 +463,22 @@ export default function SOPDashboardPage() {
     });
   }, [modelsPlusTetap, searchQuery, filterUnit, filterJenis, filterStatus]);
 
+  // Pisahkan berdasarkan tab.
+
+  // KARTU INTERAKTIF (admin/superadmin): angka kartu status mengikuti cakupan drill rekap —
+  // "Semua Unit Kerja" = keseluruhan; klik Unit Kerja Level 1 = hanya unit itu; klik Sub-Unit
+  // (Level 2) = hanya sub-unit itu. User (terbatas) tidak terpengaruh (datanya sudah unit sendiri).
+  const kartuInteraktif = currentUser?.role === 'admin';
+  const dalamCakupan = (m: SOPModel) => !kartuInteraktif || (
+    (rekapDrill.l1 === null || getDisplayUnitL1(m) === rekapDrill.l1) &&
+    (rekapDrill.l2 === null || (getDisplayUnitL2(m) || '(Tanpa Sub-Unit)') === rekapDrill.l2));
+  const kartuModels = useMemo(() => currentFilteredModels.filter(dalamCakupan),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentFilteredModels, rekapDrill, kartuInteraktif]);
+  const kartuUsulan = useMemo(() => kartuModels.filter(m => m.status === 'usulan').length, [kartuModels]);
+  const cakupanKartu = kartuInteraktif && rekapDrill.l1 !== null
+    ? (rekapDrill.l2 !== null ? `${rekapDrill.l1} › ${rekapDrill.l2}` : rekapDrill.l1) : null;
+
   // Pisahkan berdasarkan tab. SOP baru pindah ke Daftar SOP saat berstatus 'terbit'
   // (cover bertanda tangan sudah diunggah); 'approved' tetap di Pengajuan (menunggu cover TTD).
   // Kelompokkan per tab: usulan (rencana) / penyusunan (draft s/d penetapan) / terbit
@@ -542,6 +574,49 @@ export default function SOPDashboardPage() {
   //  'saya' (user terbatas) — seluruh dokumen unit kerjanya sendiri pada tab aktif.
   // Dokumen hanya menyimpan Unit Level 1 & 2 (tak ada kolom Level 3 organisasi), jadi
   // "Level 3" di sini = daftar SOP (Level 3) di bawah sebuah Sub-Unit.
+  const bisaPilihPdf = (m: SOPModel) => !m.is_manual && !(m as { _registri?: boolean })._registri && m.status !== 'usulan';
+  const unduhPdfTerpilih = async () => {
+    const daftar = pilihPdf.map(id => visibleModels.find(m => m.id === id)).filter((m): m is SOPModel => !!m);
+    if (!daftar.length || unduhPdf) return;
+    setUnduhPdf({ selesai: 0, total: daftar.length, gagal: 0 });
+    try {
+      const berkas: Record<string, Uint8Array> = {};
+      const dipakai = new Set<string>();
+      let gagal = 0;
+      for (let i = 0; i < daftar.length; i++) {
+        const m = daftar[i];
+        try {
+          const r = await fetch(`${API_BASE}/sop/models/${m.id}/pdf`, { headers: { Authorization: `Bearer ${token}` } });
+          if (!r.ok) throw new Error(String(r.status));
+          const dasar = `${nomorDok(m) ? nomorDok(m) + ' - ' : ''}${m.process_title}`.replace(/[\\/]/g, '_').replace(/[:*?"<>|\x00-\x1f]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 120) || `SOP ${m.id}`;
+          let nama = `${dasar}.pdf`, n = 2;
+          while (dipakai.has(nama)) nama = `${dasar} (${n++}).pdf`;
+          dipakai.add(nama);
+          berkas[nama] = new Uint8Array(await r.arrayBuffer());
+        } catch { gagal++; }
+        setUnduhPdf({ selesai: i + 1, total: daftar.length, gagal });
+      }
+      if (!Object.keys(berkas).length) { alert('Tidak ada PDF yang berhasil dibuat.'); return; }
+      // 1 dokumen → berkas PDF langsung (tanpa ZIP); ≥2 → ZIP.
+      const nama = Object.keys(berkas);
+      let blob: Blob, namaBerkas: string;
+      if (nama.length === 1 && daftar.length === 1) { blob = new Blob([berkas[nama[0]] as BlobPart], { type: 'application/pdf' }); namaBerkas = nama[0]; }
+      else {
+        const { zipSync } = await import('fflate');
+        blob = new Blob([zipSync(berkas, { level: 0 }) as BlobPart], { type: 'application/zip' });
+        namaBerkas = `SOP_${new Date().toISOString().slice(0, 10)}_${nama.length}-dokumen.zip`;
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url; a.download = namaBerkas;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      if (gagal) alert(`${gagal} dokumen gagal dibuat PDF-nya dan tidak masuk ZIP.`);
+      setPilihPdf([]);
+    } catch (e) { alert('Gagal mengunduh PDF: ' + (e instanceof Error ? e.message : String(e))); }
+    finally { setUnduhPdf(null); }
+  };
+
   const exportRekap = async (scope: 'l1' | 'l2' | 'saya') => {
     let docs: SOPModel[];
     let judulUnit: string;   // dipakai di judul sheet & nama berkas
@@ -573,8 +648,15 @@ export default function SOPDashboardPage() {
       const ExcelJS = (mod as unknown as { default?: typeof mod }).default ?? mod;
       const subUnit = (m: SOPModel) => getDisplayUnitL2(m) || '(Tanpa Sub-Unit)';
       const label = (m: SOPModel) => m.status === 'usulan' ? 'USULAN' : statusLabel(m.status, m.is_manual);
-      const urut = [...docs].sort((a, b) =>
-        subUnit(a).localeCompare(subUnit(b), 'id') || a.process_title.localeCompare(b.process_title, 'id'));
+      // Daftar: SOP yang SUDAH bernomor di atas, diurutkan menurut Nomor SOP (angka dibaca
+      // sebagai angka: 2 sebelum 10); yang belum bernomor menyusul menurut Sub-Unit lalu judul.
+      const teks = (x: string, y: string) => x.localeCompare(y, 'id', { numeric: true, sensitivity: 'base' });
+      const urut = [...docs].sort((a, b) => {
+        const na = nomorDok(a), nb = nomorDok(b);
+        if (!!na !== !!nb) return na ? -1 : 1;
+        if (na) return teks(na, nb) || teks(subUnit(a), subUnit(b)) || teks(a.process_title, b.process_title);
+        return teks(subUnit(a), subUnit(b)) || teks(a.process_title, b.process_title);
+      });
 
       const perSub = new Map<string, number>();
       urut.forEach(m => perSub.set(subUnit(m), (perSub.get(subUnit(m)) || 0) + 1));
@@ -598,12 +680,27 @@ export default function SOPDashboardPage() {
         mp.set(lbl, (mp.get(lbl) || 0) + 1);
         perSubStatus.set(su, mp);
       });
-      // Jumlah kolom lembar: minimal 4 (tabel daftar); rekap sub-unit = No | Sub-Unit | Jumlah | 1 kolom per status.
-      const nKol = Math.max(4, 3 + statusNames.length);
+      // Jumlah kolom lembar: minimal 6 (tabel daftar: No | Judul | Nomor SOP | Tanggal Pembuatan | Unit | Status);
+      // rekap sub-unit = No | Sub-Unit | Jumlah | 1 kolom per status.
+      // Tautan view-only (khusus superadmin dulu): hanya dokumen final — Dokumen Fisik,
+      // Menunggu Penetapan, Terbit. Tautan dibuat/diambil server (POST /sop/share-bulk).
+      let tautan: Record<string, string> = {};
+      let sedangDisiapkan = 0;
+      const adaKolTautan = bolehFiturMassal;
+      if (adaKolTautan) {
+        try {
+          const ids = urut.filter(m => ['fisik', 'penetapan', 'terbit'].includes(m.status || '') && typeof m.id === 'number').map(m => m.id);
+          if (ids.length) {
+            const r = await fetch(`${API_BASE}/sop/share-bulk`, { method: 'POST', headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` }, body: JSON.stringify({ ids }) });
+            if (r.ok) { const j = await r.json(); tautan = j.links || {}; sedangDisiapkan = j.menyiapkan || 0; }
+          }
+        } catch { /* tautan dikosongkan — ekspor tetap jalan */ }
+      }
+      const nKol = Math.max(adaKolTautan ? 7 : 6, 3 + statusNames.length);
 
       const workbook = new ExcelJS.Workbook();
       const ws = workbook.addWorksheet('SOP', { views: [{ showGridLines: false }] });
-      ws.columns = [{ width: 5 }, { width: 70 }, { width: 45 }, { width: 36 }, ...Array.from({ length: Math.max(0, nKol - 4) }, () => ({ width: 18 }))];
+      ws.columns = [{ width: 5 }, { width: 70 }, { width: 28 }, { width: 22 }, { width: 45 }, { width: 36 }, ...(adaKolTautan ? [{ width: 48 }] : []), ...Array.from({ length: Math.max(0, nKol - (adaKolTautan ? 7 : 6)) }, () => ({ width: 18 }))];
 
       const THIN = { style: 'thin' as const, color: { argb: 'FF94A3B8' } };
       const BORDER_ALL = { top: THIN, left: THIN, bottom: THIN, right: THIN };
@@ -670,18 +767,41 @@ export default function SOPDashboardPage() {
 
       // 2) DAFTAR SOP (RINCIAN) — kolom Unit Kerja (L2) diberi fill color sesuai
       // palet di atas, kolom Status Dokumen diberi warna TEKS sesuai status.
-      const HEAD = ['No', 'Judul SOP', 'Unit Kerja', 'Status Dokumen'];
+      // Nomor SOP = process_key (nomor resmi yang tertera pada cover bertanda tangan);
+      // dokumen manual memakai nomor yang diisi saat unggah.
+      const HEAD = ['No', 'Judul SOP', 'Nomor SOP', 'Tanggal Pembuatan', 'Unit Kerja', 'Status Dokumen', ...(adaKolTautan ? ['Tautan View-Only'] : [])];
+      // Tanggal Pembuatan: yang tertera pada cover SOP (terisi saat pertama dikirim ke Ortala MR);
+      // dokumen manual memakai tanggal yang diisi saat unggah; cadangan terakhir = tanggal dibuat di sistem.
+      const tglPembuatan = (m: SOPModel) => {
+        let t = '';
+        try { t = String(JSON.parse(m.sop_data || '{}').tglPembuatan || '').trim(); } catch { /* abaikan */ }
+        if (!t && m.is_manual) t = (m.manual_tanggal || '').trim();
+        if (!t && m.created_at) { const d = new Date(m.created_at); if (!isNaN(d.getTime())) t = d.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }); }
+        return t || '-';
+      };
       const headRow = ws.addRow(HEAD);
       styleHeaderRow(headRow);
       urut.forEach((m, i) => {
         const su = subUnit(m);
-        const row = ws.addRow([i + 1, m.process_title, su, label(m)]);
+        const nomorSop = nomorDok(m) || '-';
+        const tglBuat = tglPembuatan(m);
+        const row = ws.addRow([i + 1, m.process_title, nomorSop, tglBuat, su, label(m), ...(adaKolTautan ? [''] : [])]);
         row.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', wrapText: true }; });
         row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
         row.getCell(3).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
-        row.getCell(3).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillOf.get(su) || 'FFFFFFFF' } };
+        row.getCell(3).font = nomorSop === '-' ? { italic: true, color: { argb: 'FF94A3B8' } } : { name: 'Consolas', size: 10 };
         row.getCell(4).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
-        row.getCell(4).font = { bold: true, color: { argb: statusExcelColor(m) } };
+        if (tglBuat === '-') row.getCell(4).font = { italic: true, color: { argb: 'FF94A3B8' } };
+        row.getCell(5).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        row.getCell(5).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillOf.get(su) || 'FFFFFFFF' } };
+        row.getCell(6).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
+        row.getCell(6).font = { bold: true, color: { argb: statusExcelColor(m) } };
+        if (adaKolTautan) {
+          const path = tautan[m.id];
+          const c = row.getCell(7);
+          if (path) { const u = `${window.location.origin}/e-sop-atrbpn${path}`; c.value = { text: u, hyperlink: u }; c.font = { color: { argb: 'FF0563C1' }, underline: true }; }
+          else { c.value = '-'; c.font = { italic: true, color: { argb: 'FF94A3B8' } }; c.alignment = { vertical: 'middle', horizontal: 'center' }; }
+        }
       });
 
       const buf = await workbook.xlsx.writeBuffer();
@@ -693,6 +813,7 @@ export default function SOPDashboardPage() {
       a.href = url; a.download = `Daftar_SOP_${slug(judulUnit)}_${slug(tahapLabel)}.xlsx`;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 4000);
+      if (sedangDisiapkan > 0) alert(`Berkas Excel sudah diunduh.\n\n${sedangDisiapkan} tautan masih disiapkan di server (PDF dirender ulang, ±10–20 detik per dokumen). Tautan yang baru dibuka akan tampil "sedang disiapkan" dan terbuka otomatis begitu siap. Tetap login selama proses berlangsung.`);
     } catch (e) {
       console.error(e);
       alert('Gagal membuat file Excel: ' + (e instanceof Error ? e.message : String(e)));
@@ -732,6 +853,7 @@ export default function SOPDashboardPage() {
   const urutkan = <T extends { process_title: string; created_at?: string; updated_at?: string }>(arr: T[]) => {
     if (urutKolom) return urutkanKolom(arr as unknown as SOPModel[], urutKolom) as unknown as T[];
     const out = [...arr];
+    if (sortBy === 'nomor') return urutkanKolom(out as unknown as SOPModel[], { kolom: 'info', arah: 'asc' }) as unknown as T[];
     if (sortBy === 'title') return out.sort((a, b) => a.process_title.localeCompare(b.process_title, 'id'));
     if (sortBy === 'created') return out.sort((a, b) => waktu(b.created_at) - waktu(a.created_at));
     if (sortBy === 'oldest') return out.sort((a, b) => (waktu(a.updated_at) || waktu(a.created_at)) - (waktu(b.updated_at) || waktu(b.created_at)));
@@ -768,9 +890,9 @@ export default function SOPDashboardPage() {
   const cardFilterModels = useMemo(() => {
     if (!cardFilter) return [];
     const q = searchQuery.toLowerCase();
-    return modelsPlusTetap.filter(m => CARD_MATCH[cardFilter](m) && (m.process_title || '').toLowerCase().includes(q));
+    return modelsPlusTetap.filter(m => CARD_MATCH[cardFilter](m) && dalamCakupan(m) && (m.process_title || '').toLowerCase().includes(q));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cardFilter, modelsPlusTetap, searchQuery]);
+  }, [cardFilter, modelsPlusTetap, searchQuery, rekapDrill]);
   // Kartu bisa diklik admin/superadmin & user (rekap/filter); aksi tetap admin-only.
   const canFilterCards = currentUser?.role === 'admin' || currentUser?.role === 'user';
   const toggleCard = (key: typeof cardFilter) => { if (canFilterCards) setCardFilter(cur => cur === key ? null : key); };
@@ -834,6 +956,22 @@ export default function SOPDashboardPage() {
       }
     } catch { alert('❌ Gagal memuat pratinjau dokumen.'); }
     finally { setLoadingPreviewPdf(false); }
+  };
+
+  // Unduh PDF SOP langsung dari popup detail (tanpa membuka studio).
+  const unduhPdfSop = async () => {
+    if (!previewModel || unduhPdfBusy) return;
+    setUnduhPdfBusy(true);
+    try {
+      const res = await apiFetch(`/sop/models/${previewModel.id}/pdf`, token);
+      if (!res.ok) { const e = await res.json().catch(() => ({} as { error?: string })); alert(`❌ ${e.error || 'Gagal mengunduh PDF.'}`); return; }
+      const blob = await res.blob();
+      const judul = (previewModel.process_title || 'Dokumen SOP').replace(/[\\/]+/g, '_').replace(/[:*?"<>|]+/g, '').trim() || 'Dokumen SOP';
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = `SOP - ${judul}.pdf`; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+    } catch { alert('❌ Gagal mengunduh PDF — periksa koneksi.'); }
+    finally { setUnduhPdfBusy(false); }
   };
 
   // Buka dokumen dari klik notifikasi (?doc=<id>): pilih tab sesuai statusnya,
@@ -904,6 +1042,12 @@ export default function SOPDashboardPage() {
     reader.onload = () => setCoverData({ dataUrl: reader.result as string, name: file.name, size: file.size });
     reader.onerror = () => alert('Gagal membaca file.');
     reader.readAsDataURL(file);
+    // Baca nomor SOP dari cover (teks PDF → OCR). Nilai awal = nomor yang sudah ada di sistem.
+    const nomorAwal = coverModal.model?.process_key || '';
+    setCoverNomor({ nilai: nomorAwal, status: 'membaca', tahap: 'Membaca nomor SOP dari cover…', hasil: null });
+    bacaNomorSopDariCover(file, { onProgress: (tahap, p) => setCoverNomor(c => ({ ...c, tahap: p !== undefined ? `${tahap} ${Math.round(p * 100)}%` : tahap })) })
+      .then(hasil => setCoverNomor(c => ({ ...c, status: 'selesai', tahap: '', hasil, nilai: hasil.nomor || c.nilai })))
+      .catch(e => { console.warn('Baca nomor SOP gagal:', e); setCoverNomor(c => ({ ...c, status: 'selesai', tahap: '', hasil: { nomor: '', sumber: 'tidak-ada', cuplikan: '' } })); });
     if (file.type === 'application/pdf') {
       setMembacaCover(true);
       file.arrayBuffer()
@@ -916,16 +1060,18 @@ export default function SOPDashboardPage() {
         .finally(() => setMembacaCover(false));
     }
   };
-  const tutupCoverModal = () => { setCoverModal({ isOpen: false, model: null }); setCoverData(null); setCoverPdf(null); };
+  const tutupCoverModal = () => { setCoverModal({ isOpen: false, model: null }); setCoverData(null); setCoverPdf(null); setCoverNomor({ nilai: '', status: 'idle', tahap: '', hasil: null }); };
 
   const submitCover = async () => {
     if (!coverModal.model || !coverData) return;
     if (coverPdf && !coverPdf.pilih.length) { alert('Centang minimal satu halaman cover.'); return; }
+    if (coverNomor.status === 'membaca' && !(await confirm({ title: 'Nomor SOP Masih Dibaca', message: 'Pembacaan nomor SOP dari cover belum selesai. Lanjut unggah tanpa menunggu? (Nomor masih bisa diisi admin saat verifikasi.)', tone: 'warning', confirmText: 'Lanjut Unggah' }))) return;
     setUploadingCover(true);
     try {
+      const nomor = coverNomor.nilai.trim();
       const kirim = (tambahan: Record<string, unknown> = {}) => apiFetch(`/sop/models/${coverModal.model!.id}/cover`, token, {
         method: 'POST',
-        body: JSON.stringify({ cover: coverData.dataUrl, filename: coverData.name, ...(coverPdf ? { halaman: coverPdf.pilih } : {}), ...tambahan }),
+        body: JSON.stringify({ cover: coverData.dataUrl, filename: coverData.name, ...(coverPdf ? { halaman: coverPdf.pilih } : {}), ...(nomor ? { nomor } : {}), ...tambahan }),
       });
       let res = await kirim();
       // PDF terkunci/terenkripsi: server tak bisa memotong halamannya → kirim gambar halaman cover.
@@ -935,9 +1081,11 @@ export default function SOPDashboardPage() {
       }
       if (res.ok) {
         const mid = coverModal.model.id;
-        setSavedModels(prev => prev.map(m => m.id === mid ? { ...m, status: 'verifikasi', has_cover: true, catatan: '' } : m));
+        const hasil = await res.json().catch(() => ({}));
+        const pk = (hasil && hasil.process_key) || coverModal.model.process_key || null;
+        setSavedModels(prev => prev.map(m => m.id === mid ? { ...m, status: 'verifikasi', has_cover: true, catatan: '', process_key: pk } : m));
         tutupCoverModal();
-        alert('✅ Cover berhasil diunggah. Menunggu verifikasi admin (TTD & nomor SOP) sebelum diterbitkan.');
+        alert(`✅ Cover berhasil diunggah.${pk ? `\nNomor SOP: ${pk}` : '\nNomor SOP belum terisi — admin akan melengkapinya saat verifikasi.'}\n\nMenunggu verifikasi admin (TTD & nomor SOP) sebelum diterbitkan.`);
       } else {
         const e = await res.json().catch(() => ({}));
         alert(`❌ ${e.error || 'Gagal mengunggah cover.'}`);
@@ -1024,6 +1172,7 @@ export default function SOPDashboardPage() {
       getDisplayUnitL1(m).toLowerCase() === (currentUser?.unit_l1 || '').toLowerCase());
 
   // Penyusun/unit boleh menanggapi catatan revisi admin saat status 'rejected'.
+  const adaTanggapan = (m: SOPModel) => currentUser?.role === 'admin' && !!(m.tanggapan || '').trim();
   const canRespond = (m: SOPModel) => currentUser?.role === 'user' && m.status === 'rejected' &&
     (m.created_by === currentUser?.id ||
       (!!currentUser?.unit_l1 && getDisplayUnitL1(m).toLowerCase() === (currentUser?.unit_l1 || '').toLowerCase()));
@@ -1078,10 +1227,80 @@ export default function SOPDashboardPage() {
 
   // Admin menyetujui cover hasil verifikasi → SOP BELUM masuk penetapan menteri:
   // unit kerja menyerahkan dokumen fisik SOP dulu (status 'fisik').
-  const handleSetujuiCover = async (model: SOPModel) => {
-    if (!(await confirm({ title: 'Setujui Cover SOP', message: `Cover sudah benar & bernomor SOP? Setujui cover "${model.process_title}"?\n\nSelanjutnya unit kerja menyerahkan DOKUMEN FISIK SOP ke Biro Ortala MR sebelum masuk proses penetapan menteri.`, tone: 'success', confirmText: 'Ya, Setujui' }))) return;
-    patchStatus(model, 'fisik', '✅ Cover disetujui. Menunggu dokumen fisik SOP dari unit kerja.');
+  // Membuka modal verifikasi: cover ditampilkan, nomor SOP dibaca otomatis dari cover
+  // (teks PDF / OCR), admin mengonfirmasi/mengoreksi, lalu cover disetujui.
+  const handleSetujuiCover = (model: SOPModel) => bukaNomorModal(model, 'verifikasi');
+
+  const [zoomNomor, setZoomNomor] = useState(1);
+  const LANGKAH_ZOOM = [0.5, 0.75, 1, 1.25, 1.5, 2, 2.5, 3];
+  const geserZoomNomor = (arah: 1 | -1) => setZoomNomor(z => { const i = LANGKAH_ZOOM.findIndex(v => v >= z - 1e-6); return LANGKAH_ZOOM[Math.min(LANGKAH_ZOOM.length - 1, Math.max(0, (i < 0 ? LANGKAH_ZOOM.length - 1 : i) + arah))]; });
+  // Buka berkas cover (atau dokumen TTE utuh) di tab baru.
+  const bukaBerkasCover = async (m: SOPModel, asli: boolean) => {
+    try {
+      const res = await apiFetch(`/sop/models/${m.id}/cover${asli ? '?asli=1' : ''}`, token);
+      if (!res.ok) { alert('Berkas tidak tersedia.'); return; }
+      const u = URL.createObjectURL(await res.blob());
+      window.open(u, '_blank');
+      setTimeout(() => URL.revokeObjectURL(u), 60000);
+    } catch { alert('Gagal membuka berkas.'); }
   };
+
+  const tutupNomorModal = () => {
+    if (nomorModal.coverUrl) URL.revokeObjectURL(nomorModal.coverUrl);
+    setNomorModal(n => ({ ...n, isOpen: false, model: null, coverUrl: null }));
+  };
+
+  const bukaNomorModal = async (model: SOPModel, mode: 'verifikasi' | 'isi') => {
+    setZoomNomor(1);
+    setNomorModal({ isOpen: true, model, mode, nilai: model.process_key || '', status: 'membaca', tahap: 'Mengambil cover…', hasil: null, coverUrl: null, coverMime: '' });
+    try {
+      const res = await apiFetch(`/sop/models/${model.id}/cover`, token);
+      if (!res.ok) { setNomorModal(n => ({ ...n, status: 'gagal', tahap: 'Cover belum tersedia — isi nomor secara manual.' })); return; }
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      setNomorModal(n => ({ ...n, coverUrl: url, coverMime: blob.type, tahap: 'Membaca nomor SOP dari cover…' }));
+      const hasil = await bacaNomorSopDariCover(blob, { onProgress: (tahap, p) => setNomorModal(n => ({ ...n, tahap: p !== undefined ? `${tahap} ${Math.round(p * 100)}%` : tahap })) });
+      setNomorModal(n => ({ ...n, status: 'selesai', tahap: '', hasil, nilai: hasil.nomor || n.nilai }));
+    } catch (e) {
+      console.warn('Baca nomor dari cover gagal:', e);
+      setNomorModal(n => ({ ...n, status: 'gagal', tahap: 'Pembacaan otomatis gagal — isi nomor secara manual.' }));
+    }
+  };
+
+  const simpanNomorModal = async () => {
+    const m = nomorModal.model;
+    if (!m) return;
+    const nomor = nomorModal.nilai.trim().toUpperCase();
+    if (!nomor && nomorModal.mode === 'verifikasi') {
+      if (!(await confirm({ title: 'Nomor SOP Kosong', message: 'Nomor SOP belum terisi. Tetap setujui cover tanpa nomor? Nomor masih dapat diisi kemudian lewat tombol "Baca No. SOP".', tone: 'warning', confirmText: 'Setujui Tanpa Nomor' }))) return;
+    }
+    setMenyimpanNomor(true);
+    try {
+      if (nomor !== (m.process_key || '')) {
+        const sumber = nomorModal.hasil && nomorModal.hasil.nomor === nomor
+          ? (nomorModal.hasil.sumber === 'ocr' ? 'terbaca OCR dari cover' : 'terbaca dari teks PDF cover')
+          : 'diisi admin';
+        const res = await apiFetch(`/sop/models/${m.id}/nomor`, token, { method: 'PATCH', body: JSON.stringify({ nomor, sumber }) });
+        if (!res.ok) { const e = await res.json().catch(() => ({})); alert(`❌ ${e.error || 'Gagal menyimpan nomor SOP.'}`); return; }
+        const pk = nomor || null;
+        setSavedModels(prev => prev.map(x => x.id === m.id ? { ...x, process_key: pk } : x));
+        if (previewModel?.id === m.id) setPreviewModel(prev => prev ? { ...prev, process_key: pk } : null);
+      }
+      const modelBaru = { ...m, process_key: nomor || null };
+      tutupNomorModal();
+      if (nomorModal.mode === 'verifikasi') {
+        await patchStatus(modelBaru, 'fisik', `✅ Cover disetujui${nomor ? ` — Nomor SOP: ${nomor}` : ''}. Menunggu dokumen fisik SOP dari unit kerja.`);
+      } else {
+        alert(nomor ? `✅ Nomor SOP tersimpan: ${nomor}` : '✅ Nomor SOP dikosongkan.');
+      }
+    } catch (e) { console.error(e); alert('❌ Gagal menyimpan nomor SOP.'); }
+    finally { setMenyimpanNomor(false); }
+  };
+
+  // Admin boleh membaca/mengisi nomor dari cover untuk SOP yang sudah punya cover.
+  const bolehIsiNomor = (m: SOPModel) =>
+    currentUser?.role === 'admin' && !m.is_manual && !isRegistri(m) && !!m.has_cover &&
+    ['verifikasi', 'fisik', 'penetapan', 'terbit'].includes(m.status || '');
 
   // Admin menerima dokumen fisik dari unit kerja → lanjut ke proses penetapan menteri.
   const handleTerimaFisik = async (model: SOPModel) => {
@@ -1156,17 +1375,10 @@ export default function SOPDashboardPage() {
     finally { setSubmittingPenetapan(false); }
   };
 
-  // Buka cover bertanda tangan (untuk admin memeriksa saat verifikasi).
-  const viewCover = async (model: SOPModel) => {
-    try {
-      const res = await apiFetch(`/sop/models/${model.id}/cover`, token);
-      if (!res.ok) { alert('Cover belum tersedia.'); return; }
-      const blob = await res.blob();
-      const url = URL.createObjectURL(blob);
-      window.open(url, '_blank');
-      setTimeout(() => URL.revokeObjectURL(url), 60000);
-    } catch (e) { console.error(e); alert('Gagal membuka cover.'); }
-  };
+  // Buka cover bertanda tangan di POPUP (penampil + zoom); admin dapat langsung
+  // Setujui Cover / Kembalikan dari popup saat status verifikasi.
+  const [periksaCover, setPeriksaCover] = useState<SOPModel | null>(null);
+  const viewCover = (model: SOPModel) => setPeriksaCover(model);
 
   const openCopyModal = (model: SOPModel) => {
     setCopyModal({
@@ -1296,6 +1508,9 @@ export default function SOPDashboardPage() {
       {canRespond(model) && (
         <button onClick={(e) => { e.stopPropagation(); setTanggapanModal({ isOpen: true, model, pesan: '' }); }} className="px-3 py-2 bg-indigo-100 hover:bg-indigo-600 hover:text-white text-indigo-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><MessageSquare className="w-4 h-4" /> Tanggapi</button>
       )}
+      {adaTanggapan(model) && (
+        <button onClick={(e) => { e.stopPropagation(); setTanggapanModal({ isOpen: true, model, pesan: '' }); }} className="p-2.5 bg-indigo-100 ring-1 ring-indigo-400 hover:bg-indigo-600 hover:text-white text-indigo-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1" title="Lihat tanggapan penyusun"><MessageSquare className="w-4 h-4" /></button>
+      )}
       {currentUser?.role === 'admin' && model.status === 'rejected' && (
         <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '', mode: 'edit' }); }} className="px-3 py-2 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><Edit className="w-4 h-4" /> Edit Revisi</button>
       )}
@@ -1327,8 +1542,7 @@ export default function SOPDashboardPage() {
           <button onClick={(e) => { e.stopPropagation(); setCoverModal({ isOpen: true, model }); setCoverData(null); }} className="px-3 py-2 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><Upload className="w-4 h-4" /> Unggah Cover TTD</button>
         )}
         {model.status === 'verifikasi' && currentUser?.role === 'admin' && (<>
-          <button onClick={(e) => { e.stopPropagation(); viewCover(model); }} className="px-3 py-2 text-indigo-600 hover:bg-indigo-50 border border-indigo-200 text-xs font-extrabold rounded-lg uppercase flex items-center gap-1"><Eye className="w-4 h-4" /> Periksa</button>
-          <button onClick={(e) => { e.stopPropagation(); handleSetujuiCover(model); }} className="px-3 py-2 bg-emerald-100 hover:bg-emerald-500 hover:text-white text-emerald-700 text-xs font-extrabold rounded-lg uppercase transition-all">Setujui Cover</button>
+          <button onClick={(e) => { e.stopPropagation(); handleSetujuiCover(model); }} className="px-3 py-2 bg-emerald-100 hover:bg-emerald-500 hover:text-white text-emerald-700 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1"><Eye className="w-4 h-4" /> Periksa Cover</button>
           <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '', mode: 'cover' }); }} className="px-3 py-2 bg-red-100 hover:bg-red-500 hover:text-white text-red-700 text-xs font-extrabold rounded-lg uppercase transition-all">Kembalikan</button>
         </>)}
         {model.status === 'fisik' && currentUser?.role === 'admin' && (<>
@@ -1904,6 +2118,13 @@ export default function SOPDashboardPage() {
                       )}
                     </button>
                   )}
+                  <button
+                    onClick={unduhPdfSop}
+                    disabled={unduhPdfBusy}
+                    className="mt-2 w-full inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-xl text-xs sm:text-sm font-bold bg-rose-600 text-white hover:bg-rose-700 disabled:opacity-60 transition-all active:scale-95"
+                  >
+                    {unduhPdfBusy ? <><RefreshCw className="w-4 h-4 animate-spin" /> Menyiapkan PDF…</> : <><Download className="w-4 h-4" /> Unduh PDF</>}
+                  </button>
                 </div>
               )}
 
@@ -1923,6 +2144,7 @@ export default function SOPDashboardPage() {
                 >
                   <Eye className="w-4 h-4 shrink-0" /> <span className="truncate">Hanya Lihat</span>
                 </button>
+                {!['terbit', 'fisik', 'penetapan', 'verifikasi'].includes(previewModel.status || '') && (
                 <button
                   onClick={() => {
                     // Lewat openForEdit agar cek "sedang diedit rekan" tetap berlaku;
@@ -1936,6 +2158,7 @@ export default function SOPDashboardPage() {
                 >
                   <ExternalLink className="w-4 h-4 shrink-0" /> <span className="truncate">Edit di Studio</span>
                 </button>
+                )}
               </div>
               <div className="flex gap-2 w-full lg:w-auto lg:ml-auto">
                 {/* Setujui langsung dari modal pratinjau (klik judul) — dulu hanya tersedia
@@ -2001,19 +2224,26 @@ export default function SOPDashboardPage() {
             </button>
           </div>
         </div>
+        {cakupanKartu && (
+          <div className={`flex flex-wrap items-center gap-x-2 gap-y-1 mb-2 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+            <span>Angka kartu menghitung:</span>
+            <b className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{cakupanKartu}</b>
+            <button type="button" onClick={() => setRekapDrill({ l1: null, l2: null })} className="text-emerald-600 hover:underline font-semibold">Tampilkan semua unit</button>
+          </div>
+        )}
         <div className="grid grid-cols-2 @2xl:grid-cols-3 @4xl:grid-cols-4 @6xl:grid-cols-7 gap-3 sm:gap-4 mb-8">
           <div onClick={() => toggleCard('total')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm flex justify-between items-center gap-2 transition-all hover:shadow-md ${canFilterCards ? 'cursor-pointer' : ''} ${cardFilter === 'total' ? 'ring-2 ring-[#002855]' : ''} ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
-            <div className="min-w-0"><p className={`text-xs font-bold uppercase tracking-widest mb-1 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Total</p><p className={`text-2xl sm:text-3xl font-black ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{currentFilteredModels.length}</p></div>
+            <div className="min-w-0"><p className={`text-xs font-bold uppercase tracking-widest mb-1 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Total</p><p className={`text-2xl sm:text-3xl font-black ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{kartuModels.length}</p></div>
             <div className={`p-2.5 sm:p-3 rounded-xl shrink-0 ${isDarkMode ? 'bg-slate-800 text-slate-500' : 'bg-slate-50 text-slate-400'}`}><FileStack className="w-5 h-5 sm:w-6 sm:h-6" /></div>
           </div>
           <div onClick={() => toggleCard('draft')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-slate-400 flex items-center min-h-24 transition-all hover:shadow-md ${canFilterCards ? 'cursor-pointer' : ''} ${cardFilter === 'draft' ? 'ring-2 ring-slate-400' : ''} ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
             <div className="min-w-0 w-full">
               <p className={`text-[10px] sm:text-xs font-bold uppercase tracking-widest mb-1 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Draft</p>
               <div className="flex items-center gap-2.5">
-                <p className={`text-2xl sm:text-3xl font-black leading-none shrink-0 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{countUsulan + currentFilteredModels.filter(m => !m.status || m.status === 'draft').length}</p>
+                <p className={`text-2xl sm:text-3xl font-black leading-none shrink-0 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{kartuUsulan + kartuModels.filter(m => !m.status || m.status === 'draft').length}</p>
                 <div className="flex flex-col gap-1 min-w-0">
-                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-slate-700/60 text-slate-300' : 'bg-slate-100 text-slate-600'}`}><b className="font-black">{countUsulan}</b> Usulan</span>
-                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-indigo-900/40 text-indigo-300' : 'bg-indigo-50 text-indigo-600'}`}><b className="font-black">{currentFilteredModels.filter(m => !m.status || m.status === 'draft').length}</b> Dalam Proses</span>
+                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-slate-700/60 text-slate-300' : 'bg-slate-100 text-slate-600'}`}><b className="font-black">{kartuUsulan}</b> Usulan</span>
+                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-indigo-900/40 text-indigo-300' : 'bg-indigo-50 text-indigo-600'}`}><b className="font-black">{kartuModels.filter(m => !m.status || m.status === 'draft').length}</b> Dalam Proses</span>
                 </div>
               </div>
             </div>
@@ -2021,38 +2251,38 @@ export default function SOPDashboardPage() {
           <div onClick={() => toggleCard('pending')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-blue-500 flex flex-col min-h-24 transition-all hover:shadow-md ${canFilterCards ? 'cursor-pointer' : ''} ${cardFilter === 'pending' ? 'ring-2 ring-blue-500' : ''} ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
             <p className="text-[10px] sm:text-xs font-bold text-blue-400 uppercase tracking-wide leading-tight wrap-break-word">Review Ortala MR</p>
             <div className="flex justify-between items-end gap-2 mt-auto pt-1.5">
-              <p className="text-2xl sm:text-3xl font-black text-blue-600 leading-none">{currentFilteredModels.filter(m => m.status === 'pending').length}</p>
+              <p className="text-2xl sm:text-3xl font-black text-blue-600 leading-none">{kartuModels.filter(m => m.status === 'pending').length}</p>
               <div className="p-2 sm:p-2.5 bg-blue-50 rounded-xl text-blue-400 shrink-0"><Clock className="w-5 h-5" /></div>
             </div>
           </div>
           <div onClick={() => toggleCard('rejected')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-red-500 flex flex-col min-h-24 transition-all hover:shadow-md ${canFilterCards ? 'cursor-pointer' : ''} ${cardFilter === 'rejected' ? 'ring-2 ring-red-500' : ''} ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
             <p className="text-[10px] sm:text-xs font-bold text-red-400 uppercase tracking-wide leading-tight wrap-break-word">Perlu Revisi</p>
             <div className="flex justify-between items-end gap-2 mt-auto pt-1.5">
-              <p className="text-2xl sm:text-3xl font-black text-red-600 leading-none">{currentFilteredModels.filter(m => m.status === 'rejected').length}</p>
+              <p className="text-2xl sm:text-3xl font-black text-red-600 leading-none">{kartuModels.filter(m => m.status === 'rejected').length}</p>
               <div className="p-2 sm:p-2.5 bg-red-50 rounded-xl text-red-400 shrink-0"><AlertCircle className="w-5 h-5" /></div>
             </div>
           </div>
           <div onClick={() => toggleCard('pengesahan')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-emerald-500 flex flex-col min-h-24 transition-all hover:shadow-md ${canFilterCards ? 'cursor-pointer' : ''} ${cardFilter === 'pengesahan' ? 'ring-2 ring-emerald-500' : ''} ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
             <p className="text-[10px] sm:text-xs font-bold text-emerald-400 uppercase tracking-wide leading-tight wrap-break-word">Proses Pengesahan Pimpinan</p>
             <div className="flex justify-between items-end gap-2 mt-auto pt-1.5">
-              <p className="text-2xl sm:text-3xl font-black text-emerald-600 leading-none">{currentFilteredModels.filter(m => ['approved', 'verifikasi'].includes(m.status)).length}</p>
+              <p className="text-2xl sm:text-3xl font-black text-emerald-600 leading-none">{kartuModels.filter(m => ['approved', 'verifikasi'].includes(m.status)).length}</p>
               <div className="p-2 sm:p-2.5 bg-emerald-50 rounded-xl text-emerald-400 shrink-0"><CheckCircle className="w-5 h-5" /></div>
             </div>
           </div>
           <div onClick={() => toggleCard('penetapan')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-violet-500 flex flex-col min-h-24 transition-all hover:shadow-md ${canFilterCards ? 'cursor-pointer' : ''} ${cardFilter === 'penetapan' ? 'ring-2 ring-violet-500' : ''} ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
             <p className="text-[10px] sm:text-xs font-bold text-violet-400 uppercase tracking-wide leading-tight wrap-break-word">Dokumen Fisik &amp; Penetapan Menteri</p>
             <div className="flex items-center gap-2.5 mt-auto pt-1.5">
-              <p className="text-2xl sm:text-3xl font-black text-violet-600 leading-none shrink-0">{currentFilteredModels.filter(m => ['fisik', 'penetapan'].includes(m.status)).length}</p>
+              <p className="text-2xl sm:text-3xl font-black text-violet-600 leading-none shrink-0">{kartuModels.filter(m => ['fisik', 'penetapan'].includes(m.status)).length}</p>
               <div className="flex flex-col gap-1 min-w-0">
-                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-orange-900/40 text-orange-300' : 'bg-orange-50 text-orange-600'}`}><b className="font-black">{currentFilteredModels.filter(m => m.status === 'fisik').length}</b> Dok. Fisik</span>
-                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-violet-900/40 text-violet-300' : 'bg-violet-50 text-violet-600'}`}><b className="font-black">{currentFilteredModels.filter(m => m.status === 'penetapan').length}</b> Penetapan</span>
+                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-orange-900/40 text-orange-300' : 'bg-orange-50 text-orange-600'}`}><b className="font-black">{kartuModels.filter(m => m.status === 'fisik').length}</b> Dok. Fisik</span>
+                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-violet-900/40 text-violet-300' : 'bg-violet-50 text-violet-600'}`}><b className="font-black">{kartuModels.filter(m => m.status === 'penetapan').length}</b> Penetapan</span>
               </div>
             </div>
           </div>
           <div onClick={() => toggleCard('terbit')} className={`col-span-2 sm:col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-teal-500 flex flex-col min-h-24 transition-all hover:shadow-md ${canFilterCards ? 'cursor-pointer' : ''} ${cardFilter === 'terbit' ? 'ring-2 ring-teal-500' : ''} ${isDarkMode ? 'bg-[#151F32] border-slate-700' : 'bg-white border-slate-200'}`}>
             <p className="text-[10px] sm:text-xs font-bold text-teal-500 uppercase tracking-wide leading-tight wrap-break-word">Telah Ditetapkan (Terbit)</p>
             <div className="flex justify-between items-end gap-2 mt-auto pt-1.5">
-              <p className="text-2xl sm:text-3xl font-black text-teal-600 leading-none">{currentFilteredModels.filter(m => m.status === 'terbit').length}</p>
+              <p className="text-2xl sm:text-3xl font-black text-teal-600 leading-none">{kartuModels.filter(m => m.status === 'terbit').length}</p>
               <div className="p-2 sm:p-2.5 bg-teal-50 rounded-xl text-teal-500 shrink-0"><Stamp className="w-5 h-5" /></div>
             </div>
           </div>
@@ -2167,7 +2397,7 @@ export default function SOPDashboardPage() {
                   <option value="terbit">Status: Terbit</option>
                 </select>
               </div>
-              <select value={sortBy} onChange={e => { setSortBy(e.target.value as typeof sortBy); setUrutKolom(null); }} title="Urutkan daftar dokumen" className={`w-full sm:w-48 px-3 py-2.5 border rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}><option value="updated">Urut: Baru Diperbarui</option><option value="created">Urut: Terbaru Dibuat</option><option value="oldest">Urut: Terlama</option><option value="title">Urut: Judul (A–Z)</option></select>
+              <select value={sortBy} onChange={e => { setSortBy(e.target.value as typeof sortBy); setUrutKolom(null); }} title="Urutkan daftar dokumen" className={`w-full sm:w-48 px-3 py-2.5 border rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-emerald-500 cursor-pointer ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white' : 'bg-white border-slate-300 text-slate-900'}`}><option value="updated">Urut: Baru Diperbarui</option><option value="created">Urut: Terbaru Dibuat</option><option value="oldest">Urut: Terlama</option><option value="title">Urut: Judul (A–Z)</option><option value="nomor">Urut: Nomor SOP</option></select>
               <div className="relative w-full sm:flex-1 sm:min-w-48">
                 <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none"><Search className={`h-4 w-4 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`} /></div>
                 <input type="text" placeholder="Cari judul atau nomor SOP..." value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)} className={`w-full pl-10 pr-4 py-2.5 border rounded-xl text-sm font-medium outline-none focus:ring-2 focus:ring-emerald-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white placeholder:text-slate-500' : 'bg-white border-slate-300 text-slate-900'}`} />
@@ -2292,11 +2522,26 @@ export default function SOPDashboardPage() {
             </div>
           )}
 
+          {/* Pilih banyak SOP → unduh PDF (ZIP) — superadmin dulu, tab Proses Penyusunan */}
+          {bolehFiturMassal && listTab === 'penyusunan' && (
+            <div className={`px-4 sm:px-5 py-2.5 border-b flex flex-wrap items-center gap-2 text-xs ${isDarkMode ? 'border-slate-700 bg-[#0F172A]/30 text-slate-300' : 'border-slate-100 bg-slate-50/60 text-slate-600'}`}>
+              <span className="font-semibold">{pilihPdf.length > 0 ? `${pilihPdf.length} SOP dipilih` : 'Centang SOP di tabel untuk mengunduh PDF-nya sekaligus (ZIP).'}</span>
+              {pilihPdf.length > 0 && !unduhPdf && <button onClick={() => setPilihPdf([])} className="font-bold underline underline-offset-2 hover:text-emerald-600">Batal pilih</button>}
+              <div className="flex-1" />
+              <button onClick={unduhPdfTerpilih} disabled={pilihPdf.length === 0 || !!unduhPdf} className="px-3.5 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold flex items-center gap-1.5 shadow-sm disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed disabled:shadow-none">{unduhPdf ? <><Loader2 className="w-4 h-4 animate-spin" /> Menyiapkan {unduhPdf.selesai}/{unduhPdf.total}…</> : <><Download className="w-4 h-4" /> Unduh PDF{pilihPdf.length > 0 ? ` (${pilihPdf.length})` : ''}</>}</button>
+            </div>
+          )}
+
           {/* Desktop table */}
           <div className="hidden xl:block overflow-x-auto">
             <table className="w-full text-sm text-left">
               <thead className={`text-[11px] font-bold uppercase tracking-wider border-b ${isDarkMode ? 'text-slate-400 bg-slate-800/50 border-slate-700' : 'text-slate-500 bg-slate-50/80 border-slate-200'}`}>
                 <tr>
+                  {bolehFiturMassal && listTab === 'penyusunan' && (() => {
+                    const ids = pagedModels.filter(bisaPilihPdf).map(m => m.id);
+                    const semua = ids.length > 0 && ids.every(id => pilihPdf.includes(id));
+                    return <th className="pl-4 pr-0 py-4 w-8"><input type="checkbox" aria-label="Pilih semua SOP di halaman ini" checked={semua} disabled={ids.length === 0 || !!unduhPdf} onChange={() => setPilihPdf(p => semua ? p.filter(x => !ids.includes(x)) : [...new Set([...p, ...ids])])} className="cek-esop" /></th>;
+                  })()}
                   <th className="px-6 py-4 w-1/3"><button type="button" onClick={() => klikUrut('info')} title="Urutkan menurut kolom ini (klik lagi untuk membalik, klik ketiga untuk mematikan)" className={`inline-flex items-center gap-1.5 whitespace-nowrap uppercase tracking-wider font-bold hover:text-emerald-600 ${urutKolom?.kolom === 'info' ? 'text-emerald-600' : ''}`}>Informasi Dokumen{ikonUrut('info')}</button></th>
                   <th className="px-6 py-4 w-1/4"><button type="button" onClick={() => klikUrut('unit')} title="Urutkan menurut kolom ini (klik lagi untuk membalik, klik ketiga untuk mematikan)" className={`inline-flex items-center gap-1.5 whitespace-nowrap uppercase tracking-wider font-bold hover:text-emerald-600 ${urutKolom?.kolom === 'unit' ? 'text-emerald-600' : ''}`}>Unit Kerja{ikonUrut('unit')}</button></th>
                   <th className="px-6 py-4"><button type="button" onClick={() => klikUrut('status')} title="Urutkan menurut kolom ini (klik lagi untuk membalik, klik ketiga untuk mematikan)" className={`inline-flex items-center gap-1.5 whitespace-nowrap uppercase tracking-wider font-bold hover:text-emerald-600 ${urutKolom?.kolom === 'status' ? 'text-emerald-600' : ''}`}>Status Pengajuan{ikonUrut('status')}</button></th>
@@ -2322,6 +2567,11 @@ export default function SOPDashboardPage() {
                       onClick={() => isRegistri(model) ? bukaDokumenRegistri(model) : model.is_manual ? setManualDetail(model) : openPreview(model)}
                       className={`transition-colors cursor-pointer ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-emerald-50/40'}`}
                     >
+                      {bolehFiturMassal && listTab === 'penyusunan' && (
+                        <td className="pl-4 pr-0 py-4 w-8" onClick={e => e.stopPropagation()}>
+                          {bisaPilihPdf(model) && <input type="checkbox" aria-label={`Pilih ${model.process_title}`} checked={pilihPdf.includes(model.id)} disabled={!!unduhPdf} onChange={() => setPilihPdf(p => p.includes(model.id) ? p.filter(x => x !== model.id) : [...p, model.id])} className="cek-esop" />}
+                        </td>
+                      )}
                       <td className="px-6 py-4">
                         <button
                           onClick={(e) => { e.stopPropagation(); if (model.is_manual) { setManualDetail(model); } else { window.location.href = `/e-sop-atrbpn/sop/studio?id=${model.id}&mode=view`; } }}
@@ -2337,6 +2587,12 @@ export default function SOPDashboardPage() {
                           )}
                           {model.process_key && (
                             <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${isDarkMode ? 'text-slate-400 bg-slate-800 border-slate-700' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>No: {model.process_key}</span>
+                          )}
+                          {bolehIsiNomor(model) && (
+                            <button onClick={(e) => { e.stopPropagation(); bukaNomorModal(model, 'isi'); }} title={model.process_key ? 'Koreksi nomor SOP (baca ulang dari cover)' : 'Nomor SOP belum terisi — baca otomatis dari cover bertanda tangan'}
+                              className={`text-[10px] font-bold px-1.5 py-0.5 rounded border flex items-center gap-1 transition-colors ${model.process_key ? (isDarkMode ? 'text-slate-400 border-slate-700 hover:text-sky-300' : 'text-slate-500 border-slate-200 hover:text-sky-700 hover:bg-sky-50') : (isDarkMode ? 'text-sky-300 bg-sky-900/30 border-sky-700 hover:bg-sky-900/50' : 'text-sky-700 bg-sky-50 border-sky-300 hover:bg-sky-100')}`}>
+                              <ScanLine className="w-3 h-3" />{model.process_key ? 'Koreksi No.' : 'Baca No. SOP dari Cover'}
+                            </button>
                           )}
                           {model.jenis_proses && (
                             <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${isDarkMode ? 'text-violet-300 bg-violet-900/30 border-violet-700' : 'text-violet-700 bg-violet-50 border-violet-200'}`}>{model.jenis_proses}</span>
@@ -2365,7 +2621,13 @@ export default function SOPDashboardPage() {
                           {statusLabel(model.status, model.is_manual)}
                         </span>
                         {model.status === 'approved' && !model.is_manual && (
-                          <p className={`mt-1.5 text-[10px] leading-snug max-w-60 font-semibold ${isDarkMode ? 'text-red-400' : 'text-red-600'}`}>SOP yang sudah disahkan/disetujui/ditandatangani, selanjutnya cover dapat di-scan &amp; diunggah pada sistem ini.</p>
+                          <ol className={`mt-1.5 text-[10px] leading-snug max-w-60 font-semibold list-decimal pl-3.5 space-y-1 text-left ${isDarkMode ? 'text-red-400' : 'text-red-600'}`}>
+                            <li>SOP dapat dicetak <b>F4</b> untuk ditandatangani Pimpinan Unit Kerja masing-masing, selanjutnya cover dapat diunggah pada sistem ini.</li>
+                            <li>Untuk SOP yang disahkan melalui <b>TTE</b>, unggah dokumen TTE-nya lalu pilih halaman cover-nya saja.</li>
+                          </ol>
+                        )}
+                        {model.status === 'fisik' && (
+                          <p className={`mt-1.5 text-[10px] leading-snug max-w-60 font-semibold ${isDarkMode ? 'text-orange-400' : 'text-orange-600'}`}>SOP harap dicetak/print pada kertas ukuran <b>F4</b>, lalu diserahkan ke Biro Ortala MR.</p>
                         )}
                       </td>
                       <td className="px-6 py-4 text-center">
@@ -2423,6 +2685,9 @@ export default function SOPDashboardPage() {
                           {canRespond(model) && (
                             <button onClick={(e) => { e.stopPropagation(); setTanggapanModal({ isOpen: true, model, pesan: '' }); }} className="px-3 py-2.5 bg-indigo-100 hover:bg-indigo-600 hover:text-white text-indigo-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm flex items-center gap-1.5"><MessageSquare className="w-4 h-4" /> Tanggapi</button>
                           )}
+                          {adaTanggapan(model) && (
+                            <button onClick={(e) => { e.stopPropagation(); setTanggapanModal({ isOpen: true, model, pesan: '' }); }} className="p-2.5 bg-indigo-100 ring-1 ring-indigo-400 hover:bg-indigo-600 hover:text-white text-indigo-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm flex items-center gap-1.5" title="Lihat tanggapan penyusun"><MessageSquare className="w-4 h-4" /></button>
+                          )}
                           {currentUser.role === 'admin' && model.status === 'rejected' && (
                             <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '', mode: 'edit' }); }} className="px-3 py-2.5 bg-amber-100 hover:bg-amber-500 hover:text-white text-amber-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm flex items-center gap-1.5"><Edit className="w-4 h-4" /> Edit Revisi</button>
                           )}
@@ -2441,8 +2706,7 @@ export default function SOPDashboardPage() {
                           )}
                           {model.status === 'verifikasi' && !model.is_manual && currentUser.role === 'admin' && (
                             <div className={`flex ml-2 border-l pl-2 gap-2 ${isDarkMode ? 'border-slate-700' : 'border-slate-200'}`}>
-                              <button onClick={(e) => { e.stopPropagation(); viewCover(model); }} className="px-3 py-2.5 text-indigo-600 hover:bg-indigo-50 border border-indigo-200 text-xs font-extrabold rounded-lg uppercase transition-all flex items-center gap-1.5"><Eye className="w-4 h-4" /> Periksa Cover</button>
-                              <button onClick={(e) => { e.stopPropagation(); handleSetujuiCover(model); }} className="px-3 py-2.5 bg-emerald-100 hover:bg-emerald-500 hover:text-white text-emerald-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm">Setujui Cover</button>
+                              <button onClick={(e) => { e.stopPropagation(); handleSetujuiCover(model); }} className="px-3 py-2.5 bg-emerald-100 hover:bg-emerald-500 hover:text-white text-emerald-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm flex items-center gap-1.5"><Eye className="w-4 h-4" /> Periksa Cover</button>
                               <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '', mode: 'cover' }); }} className="px-3 py-2.5 bg-red-100 hover:bg-red-500 hover:text-white text-red-700 text-xs font-extrabold rounded-lg uppercase transition-all shadow-sm">Kembalikan</button>
                             </div>
                           )}
@@ -2507,11 +2771,22 @@ export default function SOPDashboardPage() {
                   className={`px-4 py-4 cursor-pointer transition-colors ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-emerald-50/40'}`}
                 >
                   <div className="flex items-start justify-between gap-2">
+                    {bolehFiturMassal && listTab === 'penyusunan' && bisaPilihPdf(model) && (
+                      <label className="-m-2.5 p-2.5 shrink-0 cursor-pointer touch-manipulation" onClick={e => e.stopPropagation()} title="Pilih untuk unduh PDF">
+                        <input type="checkbox" aria-label={`Pilih ${model.process_title}`} checked={pilihPdf.includes(model.id)} disabled={!!unduhPdf} onChange={() => setPilihPdf(p => p.includes(model.id) ? p.filter(x => x !== model.id) : [...p, model.id])} className="cek-esop cek-esop-besar" />
+                      </label>
+                    )}
                     <div className="min-w-0 flex-1">
                       <p className={`font-bold text-sm leading-snug mb-1 ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{model.process_title}</p>
                       <div className="flex flex-wrap gap-1.5 mb-2">
                         {model.process_key && (
                           <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded border ${isDarkMode ? 'text-slate-400 bg-slate-800 border-slate-700' : 'text-slate-500 bg-slate-100 border-slate-200'}`}>No: {model.process_key}</span>
+                        )}
+                        {bolehIsiNomor(model) && (
+                          <button onClick={(e) => { e.stopPropagation(); bukaNomorModal(model, 'isi'); }}
+                            className={`text-[10px] font-bold px-1.5 py-0.5 rounded border flex items-center gap-1 ${model.process_key ? (isDarkMode ? 'text-slate-400 border-slate-700' : 'text-slate-500 border-slate-200') : (isDarkMode ? 'text-sky-300 bg-sky-900/30 border-sky-700' : 'text-sky-700 bg-sky-50 border-sky-300')}`}>
+                            <ScanLine className="w-3 h-3" />{model.process_key ? 'Koreksi No.' : 'Baca No. SOP'}
+                          </button>
                         )}
                         {model.jenis_proses && (
                           <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded border ${isDarkMode ? 'text-violet-300 bg-violet-900/30 border-violet-700' : 'text-violet-700 bg-violet-50 border-violet-200'}`}>{model.jenis_proses}</span>
@@ -2535,7 +2810,13 @@ export default function SOPDashboardPage() {
                     </span>
                   </div>
                   {model.status === 'approved' && !model.is_manual && (
-                    <p className={`mt-2 text-[10px] leading-snug font-semibold ${isDarkMode ? 'text-red-400' : 'text-red-600'}`}>SOP yang sudah disahkan/disetujui/ditandatangani, selanjutnya cover dapat di-scan &amp; diunggah pada sistem ini.</p>
+                    <ol className={`mt-2 text-[10px] leading-snug font-semibold list-decimal pl-3.5 space-y-1 ${isDarkMode ? 'text-red-400' : 'text-red-600'}`}>
+                      <li>SOP dapat dicetak <b>F4</b> untuk ditandatangani Pimpinan Unit Kerja masing-masing, selanjutnya cover dapat diunggah pada sistem ini.</li>
+                      <li>Untuk SOP yang disahkan melalui <b>TTE</b>, unggah dokumen TTE-nya lalu pilih halaman cover-nya saja.</li>
+                    </ol>
+                  )}
+                  {model.status === 'fisik' && (
+                    <p className={`mt-2 text-[10px] leading-snug font-semibold ${isDarkMode ? 'text-orange-400' : 'text-orange-600'}`}>SOP harap dicetak/print pada kertas ukuran <b>F4</b>, lalu diserahkan ke Biro Ortala MR.</p>
                   )}
                   <div className="flex items-center justify-between mt-3">
                     <span className={`text-[11px] flex items-center gap-1 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>
@@ -2575,8 +2856,7 @@ export default function SOPDashboardPage() {
                       )}
                       {model.status === 'verifikasi' && !model.is_manual && currentUser.role === 'admin' && (
                         <>
-                          <button onClick={(e) => { e.stopPropagation(); viewCover(model); }} className="px-2.5 py-2.5 text-indigo-600 border border-indigo-200 font-bold text-xs rounded-lg flex items-center gap-1" title="Periksa Cover"><Eye className="w-3.5 h-3.5" /></button>
-                          <button onClick={(e) => { e.stopPropagation(); handleSetujuiCover(model); }} className="px-2.5 py-2.5 bg-emerald-100 text-emerald-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Setujui Cover"><ClipboardCheck className="w-3.5 h-3.5" /></button>
+                          <button onClick={(e) => { e.stopPropagation(); handleSetujuiCover(model); }} className="px-2.5 py-2.5 bg-emerald-100 text-emerald-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Periksa Cover — lihat cover, isi nomor SOP, lalu setujui atau kembalikan"><Eye className="w-3.5 h-3.5" /> Periksa</button>
                           <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '', mode: 'cover' }); }} className="px-2.5 py-2.5 bg-red-100 text-red-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Kembalikan"><XCircle className="w-3.5 h-3.5" /></button>
                         </>
                       )}
@@ -2611,6 +2891,9 @@ export default function SOPDashboardPage() {
                       {!isRegistri(model) && <ShareButton kind="sop" modelId={model.id} token={token} isDarkMode={isDarkMode} />}
                       {canRespond(model) && (
                         <button onClick={(e) => { e.stopPropagation(); setTanggapanModal({ isOpen: true, model, pesan: '' }); }} className="px-2.5 py-2.5 bg-indigo-100 text-indigo-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Tanggapi"><MessageSquare className="w-3.5 h-3.5" /> Tanggapi</button>
+                      )}
+                      {adaTanggapan(model) && (
+                        <button onClick={(e) => { e.stopPropagation(); setTanggapanModal({ isOpen: true, model, pesan: '' }); }} className="p-2.5 bg-indigo-100 ring-1 ring-indigo-400 text-indigo-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Lihat tanggapan penyusun"><MessageSquare className="w-3.5 h-3.5" /></button>
                       )}
                       {currentUser.role === 'admin' && model.status === 'rejected' && (
                         <button onClick={(e) => { e.stopPropagation(); setRejectModal({ isOpen: true, modelId: model.id, note: model.catatan || '', mode: 'edit' }); }} className="px-2.5 py-2.5 bg-amber-100 text-amber-700 font-bold text-xs rounded-lg flex items-center gap-1" title="Edit Revisi"><Edit className="w-3.5 h-3.5" /> Edit Revisi</button>
@@ -2697,6 +2980,19 @@ export default function SOPDashboardPage() {
       )}
 
       {/* MODAL UNGGAH COVER BERTANDA TANGAN */}
+      {periksaCover && (
+        <PeriksaCoverModal
+          model={periksaCover}
+          token={token}
+          isDarkMode={isDarkMode}
+          bolehPutuskan={currentUser?.role === 'admin' && periksaCover.status === 'verifikasi'}
+          adaTteAsli={!!periksaCover.cover_asli}
+          onSetujui={() => { const m = periksaCover; setPeriksaCover(null); handleSetujuiCover(m); }}
+          onKembalikan={() => { const m = periksaCover; setPeriksaCover(null); setRejectModal({ isOpen: true, modelId: m.id, note: m.catatan || '', mode: 'cover' }); }}
+          onClose={() => setPeriksaCover(null)}
+        />
+      )}
+
       {coverModal.isOpen && coverModal.model && (
         <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => { if (!uploadingCover) tutupCoverModal(); }}>
           <div className={`w-full ${coverPdf ? 'max-w-2xl' : 'max-w-md'} max-h-[92vh] rounded-2xl shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col ${isDarkMode ? 'bg-[#151F32] border border-slate-700' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
@@ -2709,7 +3005,10 @@ export default function SOPDashboardPage() {
               <button onClick={() => { if (!uploadingCover) tutupCoverModal(); }} className={`${isDarkMode ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-700'}`}><X className="w-5 h-5" /></button>
             </div>
             <div className="p-5 space-y-4 overflow-y-auto">
-              <p className={`text-xs leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>Cover yang ditandatangani <b>basah (TTD Basah)</b>: scan lalu unggah (PDF/JPG/PNG, maks. 2 MB). Dokumen yang ditandatangani <b>elektronik (TTE)</b>: unggah PDF-nya <b>utuh</b> (maks. 5 MB) lalu centang halaman cover-nya — berkas asli tetap disimpan utuh agar keabsahan TTE dapat dicek.</p>
+              <ol className={`text-xs leading-relaxed list-decimal pl-5 space-y-1.5 ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                <li>Apabila cover ditandatangani <b>basah (TTD Basah)</b>: scan lalu unggah (PDF ukuran <b>F4</b>, maks. 2 MB).</li>
+                <li>Apabila dokumen ditandatangani <b>elektronik (TTE)</b>: unggah PDF-nya <b>utuh</b> (maks. 5 MB) lalu centang halaman cover-nya — berkas asli tetap disimpan utuh agar keabsahan TTE dapat dicek.</li>
+              </ol>
               <label className={`flex flex-col items-center justify-center gap-2 border-2 border-dashed rounded-xl p-6 cursor-pointer transition-colors ${isDarkMode ? 'border-slate-600 hover:border-amber-500 bg-[#0F172A]' : 'border-slate-300 hover:border-amber-400 bg-slate-50'}`}>
                 <Upload className={`w-7 h-7 ${coverData ? 'text-amber-500' : 'text-slate-400'}`} />
                 {coverData ? (
@@ -2721,6 +3020,19 @@ export default function SOPDashboardPage() {
                 <input type="file" accept="application/pdf,image/jpeg,image/png" className="hidden" onChange={e => onCoverPick(e.target.files?.[0])} />
               </label>
               {membacaCover && <p className="text-xs text-slate-400 flex items-center gap-2"><RefreshCw className="w-3.5 h-3.5 animate-spin" /> Membaca halaman PDF…</p>}
+              {coverData && coverNomor.status !== 'idle' && (
+                <div className={`rounded-xl border p-3 ${isDarkMode ? 'border-slate-700 bg-[#0F172A]' : 'border-sky-200 bg-sky-50/60'}`}>
+                  <label className={`block text-xs font-bold mb-1 ${isDarkMode ? 'text-slate-200' : 'text-[#002855]'}`}>Nomor SOP pada cover</label>
+                  {coverNomor.status === 'membaca' ? (
+                    <p className="text-xs text-slate-400 flex items-center gap-2 mb-2"><RefreshCw className="w-3.5 h-3.5 animate-spin" /> {coverNomor.tahap || 'Membaca nomor SOP dari cover…'}</p>
+                  ) : coverNomor.hasil?.nomor ? (
+                    <p className={`text-[11px] mb-2 ${isDarkMode ? 'text-emerald-400' : 'text-emerald-700'}`}>✓ Terbaca otomatis {coverNomor.hasil.sumber === 'ocr' ? 'lewat OCR (hasil scan)' : 'dari teks PDF'} — periksa & koreksi bila perlu.</p>
+                  ) : (
+                    <p className={`text-[11px] mb-2 ${isDarkMode ? 'text-amber-400' : 'text-amber-700'}`}>Nomor tidak terbaca otomatis. Ketik nomor yang tertulis pada cover (opsional — admin dapat melengkapinya saat verifikasi).</p>
+                  )}
+                  <input type="text" value={coverNomor.nilai} onChange={e => setCoverNomor(c => ({ ...c, nilai: e.target.value.toUpperCase() }))} placeholder="Contoh: SOP/14/ATRBPN" className={`w-full px-3 py-2 text-sm font-mono border rounded-lg outline-none focus:ring-2 focus:ring-sky-500 ${isDarkMode ? 'bg-[#151F32] border-slate-600 text-white placeholder:text-slate-500' : 'bg-white border-slate-300 text-slate-900'}`} />
+                </div>
+              )}
               {coverPdf && (
                 <div className={`rounded-xl border p-3 ${isDarkMode ? 'border-slate-700 bg-[#0F172A]' : 'border-amber-200 bg-amber-50/50'}`}>
                   <p className={`text-xs font-bold mb-1 ${isDarkMode ? 'text-slate-200' : 'text-[#002855]'}`}>Dokumen berisi {coverPdf.info.total} halaman — centang halaman COVER-nya</p>
@@ -2746,6 +3058,110 @@ export default function SOPDashboardPage() {
             <div className={`flex justify-end gap-2 p-5 border-t ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
               <button onClick={tutupCoverModal} disabled={uploadingCover} className={`px-4 py-2.5 text-sm font-bold rounded-xl border disabled:opacity-50 ${isDarkMode ? 'border-slate-600 text-slate-300' : 'border-slate-200 text-slate-600'}`}>Batal</button>
               <button onClick={submitCover} disabled={!coverData || uploadingCover} className="px-5 py-2.5 text-sm font-bold bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white rounded-xl flex items-center gap-2"><Upload className="w-4 h-4" />{uploadingCover ? 'Mengunggah...' : 'Unggah & Terbitkan'}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL NOMOR SOP DARI COVER (admin): verifikasi cover + konfirmasi nomor, atau isi/koreksi nomor */}
+      {nomorModal.isOpen && nomorModal.model && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={() => { if (!menyimpanNomor) tutupNomorModal(); }}>
+          <div className={`w-full max-w-6xl h-[94vh] rounded-2xl shadow-2xl animate-in zoom-in-95 duration-200 flex flex-col ${isDarkMode ? 'bg-[#151F32] border border-slate-700' : 'bg-white'}`} onClick={e => e.stopPropagation()}>
+            <div className={`flex items-start gap-3 p-5 border-b shrink-0 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+              <div className="w-10 h-10 rounded-xl bg-sky-100 text-sky-600 grid place-items-center shrink-0"><ScanLine className="w-5 h-5" /></div>
+              <div className="flex-1 min-w-0">
+                <h3 className={`text-base font-bold ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{nomorModal.mode === 'verifikasi' ? 'Verifikasi Cover & Nomor SOP' : 'Nomor SOP dari Cover Bertanda Tangan'}</h3>
+                <p className={`text-xs mt-0.5 truncate ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>{nomorModal.model.process_title}</p>
+              </div>
+              <button onClick={() => { if (!menyimpanNomor) tutupNomorModal(); }} className={`${isDarkMode ? 'text-slate-500 hover:text-white' : 'text-slate-400 hover:text-slate-700'}`}><X className="w-5 h-5" /></button>
+            </div>
+            <div className="flex-1 min-h-0 grid grid-cols-1 md:grid-cols-5 gap-0 overflow-hidden">
+              {/* Pratinjau cover — dengan zoom, Dokumen TTE Asli, dan Tab baru */}
+              <div className={`md:col-span-3 min-h-0 h-[45vh] md:h-auto flex flex-col border-b md:border-b-0 md:border-r ${isDarkMode ? 'bg-slate-900 border-slate-700' : 'bg-slate-100 border-slate-100'}`}>
+                <div className={`flex items-center gap-1 px-3 py-1.5 border-b shrink-0 flex-wrap ${isDarkMode ? 'border-slate-700 bg-[#0F172A]' : 'border-slate-200 bg-white'}`}>
+                  {(() => { const ik = `p-1.5 rounded-lg transition-colors disabled:opacity-40 ${isDarkMode ? 'hover:bg-slate-700 text-slate-300' : 'hover:bg-slate-100 text-slate-600'}`; return (<>
+                    <button onClick={() => geserZoomNomor(-1)} disabled={zoomNomor <= LANGKAH_ZOOM[0]} title="Perkecil" className={ik}><ZoomOut className="w-4 h-4" /></button>
+                    <span className={`w-12 text-center text-xs font-bold tabular-nums ${isDarkMode ? 'text-slate-200' : 'text-slate-700'}`}>{Math.round(zoomNomor * 100)}%</span>
+                    <button onClick={() => geserZoomNomor(1)} disabled={zoomNomor >= LANGKAH_ZOOM[LANGKAH_ZOOM.length - 1]} title="Perbesar" className={ik}><ZoomIn className="w-4 h-4" /></button>
+                    <button onClick={() => setZoomNomor(1)} title="Pas lebar" className={`${ik} flex items-center gap-1 text-xs font-bold`}><Maximize2 className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Pas lebar</span></button>
+                    <div className="flex-1" />
+                    {nomorModal.model.cover_asli && (
+                      <button onClick={() => bukaBerkasCover(nomorModal.model!, true)} title="Buka dokumen TTE utuh seperti yang diunggah" className={`px-2 py-1 rounded-lg text-[11px] font-bold border ${isDarkMode ? 'border-emerald-700 text-emerald-300 hover:bg-emerald-900/30' : 'border-emerald-300 text-emerald-700 hover:bg-emerald-50'}`}>Dokumen TTE Asli</button>
+                    )}
+                    <button onClick={() => bukaBerkasCover(nomorModal.model!, false)} title="Buka cover di tab baru" className={`${ik} flex items-center gap-1 text-xs font-bold`}><ExternalLink className="w-3.5 h-3.5" /> <span className="hidden sm:inline">Tab baru</span></button>
+                  </>); })()}
+                </div>
+                <div className="flex-1 min-h-0">
+                {nomorModal.coverUrl ? (
+                  nomorModal.coverMime.startsWith('image/')
+                    ? <div className="h-full overflow-auto p-3">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={nomorModal.coverUrl} alt="Cover SOP" className="block mx-auto bg-white shadow" style={{ width: `${zoomNomor * 100}%`, maxWidth: 'none' }} />
+                      </div>
+                    : <PratinjauPdf url={nomorModal.coverUrl} zoom={zoomNomor} className="p-3" />
+                ) : (
+                  <div className="h-full min-h-55 grid place-items-center text-xs text-slate-400 italic">{nomorModal.status === 'gagal' ? 'Cover tidak tersedia.' : 'Memuat cover…'}</div>
+                )}
+                </div>
+              </div>
+              {/* Isian nomor */}
+              <div className="md:col-span-2 p-5 space-y-4 overflow-y-auto">
+                <p className={`text-xs leading-relaxed ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+                  Nomor SOP yang ditulis pada cover (di luar aplikasi) dibaca otomatis dari berkas cover — dari teks PDF, atau lewat OCR bila berupa hasil scan. <b>Cocokkan dengan cover di samping</b> dan koreksi bila ada salah baca.
+                </p>
+                {/* Nama SOP di sistem — HANYA-BACA, sebagai pembanding Nama SOP pada cover bertanda tangan. */}
+                <div>
+                  <label className={`block text-xs font-bold mb-1.5 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Nama SOP <span className={`font-normal ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>(di sistem — cocokkan dengan cover)</span></label>
+                  <div title="Hanya untuk dicocokkan; tidak dapat diubah di sini" className={`w-full px-3 py-2.5 text-sm font-semibold uppercase border rounded-xl wrap-break-word cursor-default select-text ${isDarkMode ? 'bg-slate-800/60 border-slate-700 text-slate-200' : 'bg-slate-50 border-slate-200 text-slate-800'}`}>
+                    {nomorModal.model.process_title || '-'}
+                  </div>
+                </div>
+                <div>
+                  <label className={`block text-xs font-bold mb-1.5 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>Nomor SOP</label>
+                  <input
+                    type="text"
+                    value={nomorModal.nilai}
+                    onChange={e => setNomorModal(n => ({ ...n, nilai: e.target.value.toUpperCase() }))}
+                    placeholder={nomorModal.status === 'membaca' ? 'Sedang dibaca…' : 'Contoh: SOP/14/ATRBPN'}
+                    className={`w-full px-3 py-2.5 text-sm font-mono border rounded-xl outline-none focus:ring-2 focus:ring-sky-500 ${isDarkMode ? 'bg-[#0F172A] border-slate-600 text-white placeholder:text-slate-500' : 'bg-white border-slate-300 text-slate-900'}`}
+                  />
+                </div>
+                {nomorModal.status === 'membaca' && (
+                  <p className="text-xs text-slate-400 flex items-center gap-2"><RefreshCw className="w-3.5 h-3.5 animate-spin" /> {nomorModal.tahap || 'Membaca…'}</p>
+                )}
+                {nomorModal.status === 'gagal' && (
+                  <p className={`text-xs ${isDarkMode ? 'text-amber-400' : 'text-amber-700'}`}>{nomorModal.tahap}</p>
+                )}
+                {nomorModal.status === 'selesai' && nomorModal.hasil && (
+                  nomorModal.hasil.nomor ? (
+                    <div className={`rounded-xl border p-3 text-[11px] leading-relaxed ${isDarkMode ? 'border-emerald-800 bg-emerald-900/20 text-emerald-300' : 'border-emerald-200 bg-emerald-50 text-emerald-800'}`}>
+                      <p className="font-bold mb-1">✓ Terbaca otomatis {nomorModal.hasil.sumber === 'ocr' ? 'lewat OCR (cover hasil scan)' : 'dari teks PDF cover'}</p>
+                      {nomorModal.hasil.cuplikan && <p className={`font-mono wrap-break-word ${isDarkMode ? 'text-emerald-400/80' : 'text-emerald-700/80'}`}>“…{nomorModal.hasil.cuplikan}…”</p>}
+                    </div>
+                  ) : (
+                    <div className={`rounded-xl border p-3 text-[11px] leading-relaxed ${isDarkMode ? 'border-amber-800 bg-amber-900/20 text-amber-300' : 'border-amber-200 bg-amber-50 text-amber-800'}`}>
+                      <p className="font-bold mb-1">Nomor tidak terbaca otomatis</p>
+                      <p>Umumnya karena nomor ditulis tangan atau hasil scan kurang tajam. Ketik nomor sesuai yang tertera pada cover.</p>
+                    </div>
+                  )
+                )}
+                {nomorModal.model.process_key && nomorModal.model.process_key !== nomorModal.nilai.trim() && (
+                  <p className={`text-[11px] ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Nomor saat ini di sistem: <span className="font-mono">{nomorModal.model.process_key}</span></p>
+                )}
+                {nomorModal.mode === 'verifikasi' && (
+                  <p className={`text-[11px] leading-relaxed ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Setelah disetujui, unit kerja menyerahkan <b>dokumen fisik SOP</b> ke Biro Ortala MR sebelum masuk proses penetapan menteri.</p>
+                )}
+              </div>
+            </div>
+            <div className={`flex flex-wrap justify-end gap-2 p-5 border-t shrink-0 ${isDarkMode ? 'border-slate-700' : 'border-slate-100'}`}>
+              <button onClick={tutupNomorModal} disabled={menyimpanNomor} className={`px-4 py-2.5 text-sm font-bold rounded-xl border disabled:opacity-50 ${isDarkMode ? 'border-slate-600 text-slate-300' : 'border-slate-200 text-slate-600'}`}>Batal</button>
+              {nomorModal.mode === 'verifikasi' && (
+                <button onClick={() => { const m = nomorModal.model!; tutupNomorModal(); setRejectModal({ isOpen: true, modelId: m.id, note: m.catatan || '', mode: 'cover' }); }} disabled={menyimpanNomor} className="px-4 py-2.5 text-sm font-bold bg-red-100 hover:bg-red-500 hover:text-white text-red-700 rounded-xl disabled:opacity-50">Kembalikan Cover</button>
+              )}
+              <button onClick={simpanNomorModal} disabled={menyimpanNomor || nomorModal.status === 'membaca'} className={`px-5 py-2.5 text-sm font-bold text-white rounded-xl flex items-center gap-2 disabled:opacity-50 ${nomorModal.mode === 'verifikasi' ? 'bg-emerald-600 hover:bg-emerald-700' : 'bg-sky-600 hover:bg-sky-700'}`}>
+                {nomorModal.mode === 'verifikasi' ? <ClipboardCheck className="w-4 h-4" /> : <Save className="w-4 h-4" />}
+                {menyimpanNomor ? 'Menyimpan…' : nomorModal.mode === 'verifikasi' ? 'Simpan Nomor & Setujui Cover' : 'Simpan Nomor SOP'}
+              </button>
             </div>
           </div>
         </div>

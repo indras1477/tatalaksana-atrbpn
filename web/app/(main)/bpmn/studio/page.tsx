@@ -9,7 +9,7 @@ import { useEditingPresence } from '@/lib/useEditingPresence';
 import { getClientId } from '@/lib/clientId';
 import SearchableSelect from '@/components/SearchableSelect';
 import {
-  ArrowLeft, GitBranch, X, Image as ImageIcon, FileText,
+  ArrowLeft, GitBranch, X, Image as ImageIcon, FileText, Maximize, History,
   AlertCircle, MessageSquare, Pencil, Lock, Send, FolderOpen, FileCode, Download
 } from 'lucide-react';
 import { HIERARKI_UNIT } from '@/lib/constants';
@@ -17,6 +17,7 @@ import CatatanRevisiPanel from '@/components/CatatanRevisiPanel';
 import type { BpmnCanvasApi } from '@/components/BPMNModeler';
 import type { BpmnViewerExport } from '@/components/BPMNViewer';
 import ShareButton from '@/components/ShareButton';
+import DocHistoryModal from '@/components/DocHistoryModal';
 import { useConfirm } from '@/components/ConfirmDialog';
 
 const Modeler = dynamic(() => import('@/components/BPMNModeler'), {
@@ -93,6 +94,7 @@ function BPMNStudioContent() {
   const [unitL2List, setUnitL2List] = useState<{id: number, nama: string}[]>([]);
 
   const [showConfigModal, setShowConfigModal] = useState(false);
+  const [showRiwayat, setShowRiwayat] = useState(false); // panel Riwayat mengambang
   const [config, setConfig] = useState({ processTitle: '', processKey: '', orgUnitL1: '', orgUnitL2: '', description: '', jenisProses: '', klasifikasiProses: '' });
 
   const [currentModel, setCurrentModel] = useState<BPMNModel | null>(null);
@@ -108,6 +110,7 @@ function BPMNStudioContent() {
   const [showUnsavedModal, setShowUnsavedModal] = useState(false);
   const [isEditingDocInfo, setIsEditingDocInfo] = useState(false);
   const [editConflict, setEditConflict] = useState<{username: string; nama_lengkap: string}[]>([]);
+  const [hideRejectedNote, setHideRejectedNote] = useState(false);
   const { isDarkMode } = useAppContext();
 
   // Lacak sesi editing agar user lain tahu dokumen ini sedang diedit
@@ -143,6 +146,15 @@ function BPMNStudioContent() {
   const currentModelRef = useRef(currentModel); currentModelRef.current = currentModel;
   const dirtyRef = useRef(hasUnsavedChanges); dirtyRef.current = hasUnsavedChanges;
   const isViewOnlyRef = useRef(isViewOnly); isViewOnlyRef.current = isViewOnly;
+  // Pratinjau layar penuh (mode baca): Fullscreen API pada area kanvas; viewer dimuat ulang
+  // (key) tiap masuk/keluar agar diagram otomatis pas ke ukuran layar baru.
+  const layarPenuhRef = useRef<HTMLDivElement>(null);
+  const [fsKey, setFsKey] = useState(0);
+  useEffect(() => {
+    const onFs = () => setFsKey(k => k + 1);
+    document.addEventListener('fullscreenchange', onFs);
+    return () => document.removeEventListener('fullscreenchange', onFs);
+  }, []);
   const tokenRef = useRef(token); tokenRef.current = token;
 
   const [unitTree, setUnitTree] = useState<{id: string; nama: string; children: {id: string; nama: string; children: unknown[]}[]}[]>([]);
@@ -577,8 +589,9 @@ function BPMNStudioContent() {
   if (!token || !currentUser) return null;
 
   return (
-    /* h-[calc(100vh-4rem)] = viewport minus shared header (h-16 = 4rem) */
-    <div className={`flex flex-col h-[calc(100vh-4rem)] font-sans overflow-hidden ${isDarkMode ? 'bg-[#0B1121] text-slate-200' : 'bg-[#f3f4f6] text-slate-800'}`}>
+    /* h-full min-h-0 = isi <main> (header sudah di-shell; footer studio disembunyikan).
+       Jangan 100vh-4rem: itu mengabaikan footer/chrome dan membuat kanvas overflow 37px. */
+    <div className={`relative flex flex-col h-full min-h-0 font-sans overflow-hidden ${isDarkMode ? 'bg-[#0B1121] text-slate-200' : 'bg-[#f3f4f6] text-slate-800'}`}>
       {confirmNode}
 
       {/* Panel catatan revisi mengambang — admin/superadmin, mode baca maupun edit. */}
@@ -622,8 +635,8 @@ function BPMNStudioContent() {
       )}
 
       {/* Studio toolbar */}
-      <div className="h-14 border-b flex items-center justify-between px-4 z-10 shrink-0 overflow-hidden" style={{ backgroundColor: isDarkMode ? '#151F32' : '#ffffff', borderColor: isDarkMode ? '#1e293b' : '#e5e7eb' }}>
-        <div className="flex items-center gap-3 min-w-0 overflow-hidden">
+      <div className="min-h-14 h-auto border-b flex flex-wrap items-center justify-between gap-2 px-3 sm:px-4 py-2 z-10 shrink-0" style={{ backgroundColor: isDarkMode ? '#151F32' : '#ffffff', borderColor: isDarkMode ? '#1e293b' : '#e5e7eb' }}>
+        <div className="flex items-center gap-2 min-w-0 flex-wrap">
           <button onClick={handleBack} className="py-2.5 px-3 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-lg transition-colors flex items-center text-sm font-medium gap-2">
             <ArrowLeft className="w-4 h-4" /> Kembali
             {hasUnsavedChanges && <span className="w-2 h-2 rounded-full bg-orange-400" title="Ada perubahan belum disimpan" />}
@@ -672,6 +685,12 @@ function BPMNStudioContent() {
           {!isViewOnly && (
             <div className="flex items-center gap-2 shrink-0">
               <input ref={bpmnFileInputRef} type="file" accept=".bpmn,.xml" onChange={handleOpenBpmnFile} className="hidden" />
+            {currentModel?.id && currentUser?.role !== 'viewer' && (
+              <button onClick={() => setShowRiwayat(v => !v)} title="Riwayat dokumen & catatan review (dapat dibaca sambil menyunting)"
+                className={`py-2.5 px-3 rounded-lg text-sm font-bold flex items-center gap-2 border transition-colors ${showRiwayat ? 'bg-indigo-600 text-white border-indigo-600' : isDarkMode ? 'border-indigo-800 text-indigo-300 hover:bg-indigo-900/30' : 'border-indigo-200 text-indigo-700 hover:bg-indigo-50'}`}>
+                <History className="w-4 h-4" /> <span className="hidden sm:inline">Riwayat</span>
+              </button>
+            )}
               <button
                 onClick={() => bpmnFileInputRef.current?.click()}
                 title="Buka file .bpmn (BPMN 2.0) dari komputer"
@@ -723,6 +742,21 @@ function BPMNStudioContent() {
             >
               {preparingExport ? <Download className="w-4 h-4 animate-pulse" /> : <ImageIcon className="w-4 h-4" />} <span className="hidden sm:inline">SVG</span>
             </button>
+            {currentModel?.id && currentUser?.role !== 'viewer' && (
+              <button onClick={() => setShowRiwayat(v => !v)} title="Riwayat dokumen & catatan review (dapat dibaca sambil menyunting)"
+                className={`py-2.5 px-3 rounded-lg text-sm font-bold flex items-center gap-2 border transition-colors ${showRiwayat ? 'bg-indigo-600 text-white border-indigo-600' : isDarkMode ? 'border-indigo-800 text-indigo-300 hover:bg-indigo-900/30' : 'border-indigo-200 text-indigo-700 hover:bg-indigo-50'}`}>
+                <History className="w-4 h-4" /> <span className="hidden sm:inline">Riwayat</span>
+              </button>
+            )}
+            {currentUser?.role !== 'viewer' && (
+              <button
+                onClick={() => { try { layarPenuhRef.current?.requestFullscreen?.(); } catch { /* ditolak browser */ } }}
+                title="Pratinjau layar penuh (Esc untuk keluar)"
+                className="py-2.5 px-3 rounded-lg text-sm font-bold flex items-center gap-2 bg-slate-800 hover:bg-slate-900 text-white transition-colors"
+              >
+                <Maximize className="w-4 h-4" /> <span className="hidden sm:inline">Layar Penuh</span>
+              </button>
+            )}
             <ShareButton kind="bpmn" modelId={currentModel.id} token={token} isDarkMode={isDarkMode} variant="button" />
           </div>
         )}
@@ -730,10 +764,10 @@ function BPMNStudioContent() {
       </div>
 
       {/* Canvas area */}
-      <div className="flex flex-1 overflow-hidden relative">
-        <div className="flex-1 w-full h-full bg-white relative">
+      <div className="flex flex-1 min-h-0 overflow-hidden relative">
+        <div ref={layarPenuhRef} className="flex-1 w-full h-full bg-white relative">
             {!isLoadingDocument && isViewOnly && currentModel && (
-                <Viewer xml={initialXml} projectName={config.processTitle} registerExportApi={(fn) => { viewerExportRef.current = fn; }} />
+                <Viewer key={`fs-${fsKey}`} xml={initialXml} projectName={config.processTitle} registerExportApi={(fn) => { viewerExportRef.current = fn; }} />
             )}
             {!isLoadingDocument && !isViewOnly && (currentModel || (config.processTitle && !documentId)) && (
                 <Modeler
@@ -746,17 +780,22 @@ function BPMNStudioContent() {
                 />
             )}
 
-            {currentModel?.status === 'rejected' && currentModel?.catatan && (
-              <div className="absolute bottom-24 right-4 z-50 w-87.5 max-w-[calc(100vw-2rem)] bg-white border-l-4 border-l-red-500 shadow-2xl rounded-2xl p-5 animate-in slide-in-from-bottom-5 fade-in duration-300 pointer-events-auto">
-                <div className="flex items-start gap-4">
-                  <div className="p-2.5 bg-red-50 rounded-xl text-red-600 shrink-0">
-                    <AlertCircle className="w-6 h-6" />
+            {currentModel?.status === 'rejected' && currentModel?.catatan && !hideRejectedNote && (
+              <div className="absolute bottom-20 left-4 z-50 w-[min(22rem,calc(100%-2rem))] max-w-[calc(100vw-5.5rem)] bg-white border-l-4 border-l-red-500 shadow-2xl rounded-2xl p-4 animate-in slide-in-from-bottom-5 fade-in duration-300 pointer-events-auto">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-red-50 rounded-xl text-red-600 shrink-0">
+                    <AlertCircle className="w-5 h-5" />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h4 className="text-xs font-black text-red-600 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
-                      <MessageSquare className="w-3 h-3" /> Catatan Revisi
-                    </h4>
-                    <p className="text-xs text-slate-700 font-medium leading-relaxed bg-red-50/50 p-3 rounded-lg border border-red-100 whitespace-pre-wrap wrap-break-word max-h-48 overflow-y-auto">
+                    <div className="flex items-start justify-between gap-2">
+                      <h4 className="text-xs font-black text-red-600 uppercase tracking-widest mb-1.5 flex items-center gap-1.5">
+                        <MessageSquare className="w-3 h-3" /> Catatan Revisi
+                      </h4>
+                      <button onClick={() => setHideRejectedNote(true)} title="Sembunyikan catatan" className="p-1 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600 shrink-0">
+                        <X className="w-4 h-4" />
+                      </button>
+                    </div>
+                    <p className="text-xs text-slate-700 font-medium leading-relaxed bg-red-50/50 p-3 rounded-lg border border-red-100 whitespace-pre-wrap wrap-break-word max-h-32 overflow-y-auto">
                       &quot;{currentModel.catatan}&quot;
                     </p>
                     {!isViewOnly && (
@@ -1043,13 +1082,16 @@ function BPMNStudioContent() {
           </div>
         </div>
       )}
+      {showRiwayat && currentModel?.id && (
+        <DocHistoryModal kind="bpmn" modelId={Number(currentModel.id)} title={config.processTitle || undefined} token={token} isDarkMode={isDarkMode} onClose={() => setShowRiwayat(false)} mengambang />
+      )}
     </div>
   );
 }
 
 export default function BPMNStudioPage() {
   return (
-    <Suspense fallback={<div className="flex h-[calc(100vh-4rem)] w-full items-center justify-center bg-slate-50 text-slate-500 font-medium">Memuat URL Parameter...</div>}>
+    <Suspense fallback={<div className="flex h-full min-h-0 w-full items-center justify-center bg-slate-50 text-slate-500 font-medium">Memuat URL Parameter...</div>}>
       <BPMNStudioContent />
     </Suspense>
   );

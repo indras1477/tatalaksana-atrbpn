@@ -75,6 +75,7 @@ export default function ImporSopPdfModal({ open, onClose, onTerapkan, catatan, k
                   <p className="font-black text-emerald-700 mb-1.5">✓ Dapat diimpor</p>
                   <ul className="space-y-1 text-emerald-900 list-disc pl-4">
                     <li>PDF SOP berbasis teks — hasil <b>Save as PDF</b> dari Visio/Word (teksnya bisa diblok)</li>
+                    <li>PDF SOP <b>hasil unduhan dari SIMPEL</b> sendiri (Buat SOP → Unduh → PDF)</li>
                     <li>Berisi halaman <b>cover</b> (Dasar Hukum, Kualifikasi, dst.) dan tabel alur <b>No · Kegiatan · Pelaksana · Mutu Baku · Keterangan</b></li>
                     <li>Ukuran maksimal {MAKS_MB} MB</li>
                   </ul>

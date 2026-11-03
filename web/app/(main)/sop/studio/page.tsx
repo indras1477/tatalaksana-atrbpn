@@ -6,6 +6,8 @@ import SOPBuilder, { type SOPBuilderRef, type TautanDok } from '@/components/SOP
 import { useEditingPresence } from '@/lib/useEditingPresence';
 import { getClientId } from '@/lib/clientId';
 import { useConfirm } from '@/components/ConfirmDialog';
+import DocHistoryModal from '@/components/DocHistoryModal';
+import { History } from 'lucide-react';
 
 function SOPStudioContent() {
   const searchParams = useSearchParams();
@@ -45,7 +47,8 @@ function SOPStudioContent() {
   // Berapa halaman cover yang discan unit kerja (umumnya 1 = halaman bertanda tangan);
   // sisanya tetap dipakai dari sistem agar halaman cover lanjutan tidak hilang.
   const [coverPages, setCoverPages] = useState(1);
-  const [coverAsli, setCoverAsli] = useState(false); // dokumen TTE utuh tersimpan
+  const [coverAsli, setCoverAsli] = useState(false);
+  const [showRiwayat, setShowRiwayat] = useState(false); // panel riwayat di studio // dokumen TTE utuh tersimpan
   const [coverUrl, setCoverUrl] = useState<string | null>(null);
   const [coverMime, setCoverMime] = useState<string>('');
   const [editConflict, setEditConflict] = useState<{username: string; nama_lengkap: string}[]>([]);
@@ -65,10 +68,12 @@ function SOPStudioContent() {
   useEffect(() => { setPresenceToken(localStorage.getItem('token') || ''); }, []);
   // Role utk tombol Setujui di mode lihat (superadmin diperlakukan sbg admin).
   const [isAdminUser, setIsAdminUser] = useState(false);
+  const [isSuperadminUser, setIsSuperadminUser] = useState(false);
   useEffect(() => {
     try {
       const me = JSON.parse(localStorage.getItem('user') || '{}');
       setIsAdminUser(['admin', 'superadmin'].includes(me.role));
+      setIsSuperadminUser(['admin', 'superadmin', 'user'].includes(me.role));
     } catch { /* abaikan */ }
   }, []);
   const { confirm, confirmNode } = useConfirm();
@@ -324,7 +329,22 @@ function SOPStudioContent() {
     router.push('/sop');
   };
 
-  if (loading) return <div className="h-[calc(100dvh-4rem)] flex items-center justify-center text-sm font-bold text-slate-500">Memuat Studio...</div>;
+  if (loading) return <div className="h-full min-h-0 flex items-center justify-center text-sm font-bold text-slate-500">Memuat Studio...</div>;
+
+  if (loadError) {
+    return (
+      <div className="h-full min-h-0 flex items-center justify-center p-6">
+        <div className="max-w-md text-center bg-white border border-red-200 rounded-2xl shadow-sm p-8">
+          <h2 className="text-lg font-bold text-red-600">Gagal memuat dokumen</h2>
+          <p className="text-sm text-slate-500 mt-2">{loadError}</p>
+          <div className="flex gap-2 justify-center mt-5">
+            <button onClick={() => window.location.reload()} className="px-4 py-2.5 rounded-xl border border-slate-200 text-slate-600 text-sm font-bold">Coba Lagi</button>
+            <button onClick={() => router.push('/sop')} className="px-4 py-2.5 rounded-xl bg-emerald-600 text-white text-sm font-bold">Kembali</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <>
@@ -402,10 +422,21 @@ function SOPStudioContent() {
       onDownloadPdf={handleDownloadPdf}
       shareModelId={currentId ? Number(currentId) : null}
       bolehKeterkaitan
+      bolehUbahTglPembuatan={isAdminUser}
+      bolehPresentasi={isSuperadminUser}
+      bolehUbahPengesahan
       cariDokumenTerkait={cariDokumenTerkait}
       rapikanSaatMuat={dariImpor && !!initialData}
       toolbarExtra={(
         <>
+          {/* Riwayat & catatan review — panel mengambang (tidak menutup kanvas) agar bisa
+              dibaca sambil menyunting; sama isinya dgn tombol Riwayat di daftar SOP. */}
+          {currentId && (
+            <button onClick={() => setShowRiwayat(v => !v)} title="Riwayat dokumen & catatan review (dapat dibaca sambil menyunting)"
+              className={`px-3 py-1.5 rounded-lg text-sm font-bold shadow-sm flex items-center gap-1.5 transition-all active:scale-95 border ${showRiwayat ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-indigo-700 border-indigo-200 hover:bg-indigo-50'}`}>
+              <History size={16} /> Riwayat
+            </button>
+          )}
           {/* Beralih dari mode baca ke edit (hanya draf / perlu revisi). Muat ulang tanpa
               ?mode=view agar cek editor-lain (popup konflik) berjalan normal. */}
           {mode === 'view' && currentId && ['draft', 'rejected'].includes(docStatus || '') && (
@@ -423,13 +454,16 @@ function SOPStudioContent() {
         </>
       )}
     />
+    {showRiwayat && currentId && (
+      <DocHistoryModal kind="sop" modelId={Number(currentId)} title={title || undefined} token={typeof window !== 'undefined' ? localStorage.getItem('token') || '' : ''} onClose={() => setShowRiwayat(false)} mengambang />
+    )}
     </>
   );
 }
 
 export default function SOPStudioPage() {
   return (
-    <Suspense fallback={<div className="h-[calc(100dvh-4rem)] flex items-center justify-center text-sm font-bold text-slate-500">Menyiapkan Kanvas...</div>}>
+    <Suspense fallback={<div className="h-full min-h-0 flex items-center justify-center text-sm font-bold text-slate-500">Menyiapkan Kanvas...</div>}>
       <SOPStudioContent />
     </Suspense>
   );

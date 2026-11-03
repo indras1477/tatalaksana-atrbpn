@@ -27,7 +27,8 @@
 type Pt = [number, number];
 interface TextItem { x: number; y: number; w: number; h: number; str: string }
 interface PathItem { fill: boolean; pts: Pt[]; curves: number; bb: [number, number, number, number] }
-interface PageData { w: number; h: number; texts: TextItem[]; paths: PathItem[] }
+/** chrome = halaman hasil cetak Chrome (teks per huruf, garis dipotong-potong). */
+interface PageData { w: number; h: number; texts: TextItem[]; paths: PathItem[]; chrome?: boolean }
 
 type Symbol = 'start' | 'process' | 'decision' | 'connector' | 'end';
 interface Shape { kind: Symbol; bb: [number, number, number, number]; cx: number; cy: number; text: string }
@@ -45,11 +46,17 @@ export async function bacaHalamanPdf(pdfjs: PdfJs, data: Uint8Array): Promise<Pa
     const vp = page.getViewport({ scale: 1 });
     const texts: TextItem[] = [];
     const ol = await page.getOperatorList();
-    let ctm = [1, 0, 0, 1, 0, 0];
-    const tumpuk: number[][] = [];
     const kali = (a: number[], b: number[]) => [
       a[0] * b[0] + a[2] * b[1], a[1] * b[0] + a[3] * b[1], a[0] * b[2] + a[2] * b[3],
       a[1] * b[2] + a[3] * b[3], a[0] * b[4] + a[2] * b[5] + a[4], a[1] * b[4] + a[3] * b[5] + a[5]];
+    // Koordinat awal = tampilan halaman SETELAH rotasi (/Rotate). Banyak PDF hasil ekspor
+    // Word/Visio menyimpan halaman lanskap sebagai halaman potret ber-/Rotate 90 → tanpa ini
+    // tabel terbaca "tidur" dan impor gagal ("tabel alur tidak ditemukan"). Sumbu y dibalik
+    // kembali (y ke atas, titik asal kiri-bawah) agar seluruh logika di bawah tak berubah;
+    // halaman tanpa rotasi menghasilkan matriks identitas.
+    const balikY = [1, 0, 0, -1, 0, vp.height];
+    let ctm = kali(balikY, vp.transform as number[]);
+    const tumpuk: number[][] = [];
     const ter = (x: number, y: number): Pt => [ctm[0] * x + ctm[2] * y + ctm[4], ctm[1] * x + ctm[3] * y + ctm[5]];
     const paths: PathItem[] = [];
     // Status teks (PDF §9.3) — teks DIRAKIT SENDIRI dari perintah showText, bukan
@@ -121,9 +128,30 @@ export async function bacaHalamanPdf(pdfjs: PdfJs, data: Uint8Array): Promise<Pa
     }
     // Sebagian PDF menulis teks yang sama DUA KALI di posisi sama (lapisan ganda, mis.
     // blok pengesah di cover) — tanpa disaring, nama/jabatan terbaca dobel.
+    // PDF unduhan aplikasi ini (dan umumnya hasil cetak Chrome) menulis SETIAP HURUF sebagai
+    // teks tersendiri ("K","E","M"…) dgn lebar glyph yang tak bisa dipercaya → kata "Kegiatan"
+    // tak pernah terbentuk dan tabel tak dikenali. Untuk halaman bertanda begitu, pakai
+    // penggabungan kata bawaan pdf.js (getTextContent). Halaman Visio/Word biasa tetap
+    // memakai jalur di atas (yang menjaga spasi antarkata tepat pada teks rata kiri-kanan).
+    const perHuruf = texts.length >= 40 && texts.filter(t => t.str.trim().length <= 1).length / texts.length > 0.6;
+    if (perHuruf) {
+      const tc = await page.getTextContent();
+      const dasar = kali(balikY, vp.transform as number[]);
+      const skalaDasar = Math.hypot(dasar[0], dasar[1]) || 1;
+      const kata: TextItem[] = [];
+      for (const it of tc.items) {
+        if (!('str' in it) || !it.str.trim()) continue;
+        const tr = it.transform as number[];
+        kata.push({
+          x: dasar[0] * tr[4] + dasar[2] * tr[5] + dasar[4], y: dasar[1] * tr[4] + dasar[3] * tr[5] + dasar[5],
+          w: it.width * skalaDasar, h: (it.height || 10) * skalaDasar, str: it.str.replace(/\s+/g, ' '),
+        });
+      }
+      if (kata.length) { texts.length = 0; texts.push(...kata); }
+    }
     const unik: TextItem[] = [];
     for (const t of texts) if (!unik.some(u => u.str === t.str && Math.abs(u.x - t.x) < 1 && Math.abs(u.y - t.y) < 1)) unik.push(t);
-    hasil.push({ w: vp.width, h: vp.height, texts: unik, paths });
+    hasil.push({ w: vp.width, h: vp.height, texts: unik, paths, chrome: perHuruf });
   }
   return hasil;
 }
@@ -214,8 +242,13 @@ function cariTeks(page: PageData, re: RegExp): TextItem | undefined {
     // Potong per kolom: potongan berjarak jauh (>40pt) dianggap kolom lain.
     let grup: TextItem[] = [];
     const cek = (g: TextItem[]) => {
-      const s = RAPI(g.map(x => x.str).join(' '));
-      if (re.test(s)) return { ...g[0], w: g[g.length - 1].x + g[g.length - 1].w - g[0].x, str: s };
+      // Awalan TERPENDEK yang sudah cocok = label itu sendiri. (Bila label, ":" dan isinya berjarak
+      // <40pt — mis. cover buatan aplikasi ini — seluruh baris tergabung dan label tampak selebar
+      // baris, sehingga isi di kanannya tak pernah terbaca.)
+      for (let n = 1; n <= g.length; n++) {
+        const s = RAPI(g.slice(0, n).map(x => x.str).join(' '));
+        if (re.test(s)) return { ...g[0], w: g[n - 1].x + g[n - 1].w - g[0].x, str: s };
+      }
       return undefined;
     };
     for (const t of its) {
@@ -230,6 +263,7 @@ function cariTeks(page: PageData, re: RegExp): TextItem | undefined {
 
 interface CoverHasil {
   judul: string; jabatanPengesah: string; namaPengesah: string; nipPengesah: string; tglRevisi: string; tglEfektif: string;
+  pengesahanTTE: boolean;
   dasarHukum: string; kualifikasi: string; keterkaitan: string; peralatan: string; peringatan: string; pencatatan: string;
 }
 
@@ -258,8 +292,13 @@ function bacaCover(page: PageData): Partial<CoverHasil> {
   const yAtasIsi = Math.max(...judul.map(j => j.t.y)); // judul kotak teratas (Dasar Hukum)
   const isiKanan = (it: TextItem, lbl: TextItem) => it.x > lbl.x + lbl.w + 8 && it.str.trim() !== ':';
   if (lblJudul) {
-    const its = page.texts.filter(t => isiKanan(t, lblJudul) && t.y <= lblJudul.y + 10 && t.y > yAtasIsi + 6);
-    hasil.judul = RAPI(susunBaris(its).join(' '));
+    // Cover buatan aplikasi ini memuat baris "Waktu SOP / Total Tahapan" tepat di bawah Nama SOP —
+    // jangan ikut terbawa ke judul.
+    const lblWaktu = cariTeks(page, /^waktu\s*sop/i);
+    const batasBawah = Math.max(yAtasIsi + 6, lblWaktu && lblWaktu.y < lblJudul.y ? lblWaktu.y + 6 : -Infinity);
+    const its = page.texts.filter(t => isiKanan(t, lblJudul) && t.y <= lblJudul.y + 10 && t.y > batasBawah);
+    // Titik dua pemisah kadang menyatu dalam satu teks dengan judulnya (": Penyampaian …").
+    hasil.judul = RAPI(susunBaris(its).join(' ')).replace(/^:\s*/, '');
   }
   // Tanggal revisi/efektif bila terisi (nilai di kanan label, baris yang sama).
   for (const [k, re] of [['tglRevisi', /^tgl\.?\s*revisi/i], ['tglEfektif', /^tgl\.?\s*efektif/i]] as const) {
@@ -271,7 +310,12 @@ function bacaCover(page: PageData): Partial<CoverHasil> {
   if (lblSah) {
     const yBawah = lblJudul ? lblJudul.y + 10 : yAtasIsi + 6;
     const its = page.texts.filter(t => isiKanan(t, lblSah) && t.y <= lblSah.y + 10 && t.y > yBawah);
-    const brs = susunBaris(its).map(b => b.replace(/^:\s*/, ''));
+    let brs = susunBaris(its).map(b => b.replace(/^:\s*/, ''));
+    // Cover yang disahkan secara elektronik (TTE) memuat keterangan "Ditandatangani Secara
+    // Elektronik" (kadang terpecah dua baris) di antara jabatan dan nama — itu BUKAN bagian
+    // jabatan; kenali sebagai penanda TTE lalu buang dari teks.
+    const tteBaris = (b: string) => /^(ditandatangani\s+secara(\s+elektronik)?|elektronik)$/i.test(RAPI(b)) || /ditandatangani\s+secara\s+elektronik/i.test(b);
+    if (brs.some(tteBaris)) { hasil.pengesahanTTE = true; brs = brs.filter(b => !tteBaris(b)); }
     const iNip = brs.findIndex(b => /^NIP\b/i.test(b));
     if (iNip >= 0) {
       hasil.nipPengesah = RAPI(brs[iNip].replace(/^NIP\.?\s*/i, ''));
@@ -341,7 +385,24 @@ function bacaHalamanAlur(page: PageData): HalamanAlur | null {
   // Batas kolom: garis vertikal tabel yang menjangkau baris judul kolom. Diukur
   // RELATIF terhadap tabel, bukan tinggi halaman — halaman terakhir sering hanya
   // berisi 1–2 baris sehingga garisnya pendek (dulu halaman itu terlewat).
-  const vertikal = page.paths.filter(p => !p.fill && p.bb[2] - p.bb[0] < 1.5 && p.bb[3] - p.bb[1] > 40 && p.bb[3] >= lblKeg.y - 2);
+  // Garis tabel = path tipis. Hasil cetak Chrome menggambar garis sebagai PERSEGI PANJANG TIPIS
+  // BERISI (lebar ±1,5pt), sedangkan Visio memakai goresan (stroke) — terima keduanya.
+  const TIPIS = 2.2;
+  // Hasil cetak Chrome kerap memotong garis tegak per BARIS tabel (tiap sel digambar sendiri):
+  // sambung potongan yang segaris (x sama ±1,5pt) dan bersambungan/bertumpuk (celah <3pt)
+  // menjadi satu garis panjang sebelum disaring menurut tinggi.
+  const potongTegak = page.paths.filter(p => p.bb[2] - p.bb[0] < TIPIS && p.bb[3] - p.bb[1] >= 8)
+    .map(p => ({ x0: p.bb[0], x1: p.bb[2], y0: p.bb[1], y1: p.bb[3] }))
+    .sort((a, b) => (a.x0 + a.x1) / 2 - (b.x0 + b.x1) / 2 || a.y0 - b.y0);
+  const sambung: PathItem[] = [];
+  for (const q of potongTegak) {
+    const cx = (q.x0 + q.x1) / 2;
+    const akhir = sambung[sambung.length - 1];
+    if (akhir && Math.abs((akhir.bb[0] + akhir.bb[2]) / 2 - cx) < 1.5 && q.y0 <= akhir.bb[3] + 3) {
+      akhir.bb = [Math.min(akhir.bb[0], q.x0), Math.min(akhir.bb[1], q.y0), Math.max(akhir.bb[2], q.x1), Math.max(akhir.bb[3], q.y1)];
+    } else sambung.push({ fill: false, pts: [], curves: 0, bb: [q.x0, q.y0, q.x1, q.y1] });
+  }
+  const vertikal = sambung.filter(p => p.bb[3] - p.bb[1] > 40 && p.bb[3] >= lblKeg.y - 2);
   const xs = vertikal.map(p => (p.bb[0] + p.bb[2]) / 2);
   // Bingkai tabel berupa persegi (bukan garis) — tepinya ikut menjadi batas.
   // (Persegi seukuran halaman penuh = latar/kliping, bukan bingkai tabel.)
@@ -363,7 +424,7 @@ function bacaHalamanAlur(page: PageData): HalamanAlur | null {
 
   // Batas atas data = garis horizontal tepat di bawah judul kolom.
   const horiz = page.paths
-    .filter(p => p.bb[3] - p.bb[1] < 1.5 && p.bb[2] - p.bb[0] > 60)
+    .filter(p => p.bb[3] - p.bb[1] < TIPIS && p.bb[2] - p.bb[0] > 60)
     .map(p => (p.bb[1] + p.bb[3]) / 2)
     .concat(page.paths.filter(p => p.bb[2] - p.bb[0] > page.w * 0.5 && p.bb[3] - p.bb[1] > 5).flatMap(p => [p.bb[1], p.bb[3]]));
   const yKepala = Math.max(...horiz.filter(y => y < lblKeg.y - 4));
@@ -429,7 +490,42 @@ function bacaHalamanAlur(page: PageData): HalamanAlur | null {
   }
   for (const b of label) b.str = RAPI(susunBaris(b.its).join(' '));
   const panah: HalamanAlur['panah'] = [];
-  for (const g of page.paths) {
+  const potongan: { dari?: Shape; ke?: Shape; pangkal: Pt; tip: Pt; sisi: 'left' | 'right' | 'bottom' | 'top'; label: string }[] = [];
+  // Cetak Chrome memecah tiap garis penghubung jadi beberapa potong berselang 1–3pt (kepala
+  // panah hanya di potongan terakhir). Sambung potongan yang ujungnya berdekatan jadi satu
+  // garis sebelum dicocokkan ke bentuk. Hanya utk halaman bertanda Chrome — PDF Visio tak diubah.
+  const jalurPanah: PathItem[] = (() => {
+    if (!page.chrome) return page.paths;
+    // Garis tepi BENTUK (kotak/belah ketupat/konektor) selalu punya kembaran berisi dgn kotak batas
+    // sama — jangan ikut disambung dgn garis penghubung yang kebetulan menempel di tepinya.
+    const bbBentuk = page.paths.filter(g => g.fill && g.bb[2] - g.bb[0] >= 10 && g.bb[3] - g.bb[1] >= 10).map(g => g.bb);
+    const tepiBentuk = (g: PathItem) => bbBentuk.some(b => Math.abs(b[0] - g.bb[0]) < 1.5 && Math.abs(b[1] - g.bb[1]) < 1.5 && Math.abs(b[2] - g.bb[2]) < 1.5 && Math.abs(b[3] - g.bb[3]) < 1.5);
+    const terbuka = (g: PathItem) => !g.fill && !tepiBentuk(g) && g.pts.length >= 2 && Math.hypot(g.pts[0][0] - g.pts[g.pts.length - 1][0], g.pts[0][1] - g.pts[g.pts.length - 1][1]) > 1
+      && g.bb[2] - g.bb[0] < page.w * 0.8 && g.bb[3] - g.bb[1] < page.h * 0.8 && (g.bb[2] - g.bb[0] > 1.5 || g.bb[3] - g.bb[1] > 1.5);
+    const lain = page.paths.filter(g => !terbuka(g));
+    const garisan = page.paths.filter(terbuka).map(g => [...g.pts]);
+    const dekat = (a: Pt, b: Pt) => Math.hypot(a[0] - b[0], a[1] - b[1]) <= 3.6;
+    let berubah = true;
+    while (berubah) {
+      berubah = false;
+      outer: for (let i = 0; i < garisan.length; i++) for (let j = i + 1; j < garisan.length; j++) {
+        const A = garisan[i], B = garisan[j];
+        const a0 = A[0], a1 = A[A.length - 1], b0 = B[0], b1 = B[B.length - 1];
+        let gabung: Pt[] | null = null;
+        if (dekat(a1, b0)) gabung = [...A, ...B];
+        else if (dekat(a1, b1)) gabung = [...A, ...[...B].reverse()];
+        else if (dekat(a0, b1)) gabung = [...B, ...A];
+        else if (dekat(a0, b0)) gabung = [...[...A].reverse(), ...B];
+        if (gabung) { garisan[i] = gabung; garisan.splice(j, 1); berubah = true; break outer; }
+      }
+    }
+    const hasil2: PathItem[] = garisan.map(pts => {
+      const xs = pts.map(q => q[0]), ys = pts.map(q => q[1]);
+      return { fill: false, pts, curves: 0, bb: [Math.min(...xs), Math.min(...ys), Math.max(...xs), Math.max(...ys)] as [number, number, number, number] };
+    });
+    return [...lain, ...hasil2];
+  })();
+  for (const g of jalurPanah) {
     if (g.fill || g.pts.length < 2) continue;
     const w = g.bb[2] - g.bb[0], h = g.bb[3] - g.bb[1];
     if (w > xPel1 - xPel0 + 5 || h > page.h * 0.5) continue;
@@ -443,7 +539,9 @@ function bacaHalamanAlur(page: PageData): HalamanAlur | null {
       for (const k of kepala) {
         if (!dekatKotak(e, k.bb, 2.5)) continue;
         const cx = (k.bb[0] + k.bb[2]) / 2, cy = (k.bb[1] + k.bb[3]) / 2;
-        const sk = (cx - e[0]) * dx + (cy - e[1]) * dy;
+        // Cetak Chrome: garis digambar sampai ke ujung runcing & kepala ditimpakan DI ATAS garis
+        // (pusat kepala sedikit "di belakang" ujung garis) → pilih kepala terdekat, bukan yang di depan.
+        const sk = page.chrome ? 9 - Math.hypot(cx - e[0], cy - e[1]) : (cx - e[0]) * dx + (cy - e[1]) * dy;
         if (sk > skor) { skor = sk; terbaik = k; }
       }
       return terbaik ? { k: terbaik, skor } : undefined;
@@ -454,11 +552,13 @@ function bacaHalamanAlur(page: PageData): HalamanAlur | null {
     else if (ka) { ujung = a; pangkal = b; k = ka.k; }
     else continue;
     // Titik tumpu kepala panah: verteks segitiga terjauh dari ujung garis.
-    const tip = k.pts.reduce((m, q) => (Math.hypot(q[0] - ujung[0], q[1] - ujung[1]) > Math.hypot(m[0] - ujung[0], m[1] - ujung[1]) ? q : m), k.pts[0]);
+    const tip = k.pts.reduce((m, q) => {
+      const dq = Math.hypot(q[0] - ujung[0], q[1] - ujung[1]), dm = Math.hypot(m[0] - ujung[0], m[1] - ujung[1]);
+      return (page.chrome ? dq < dm : dq > dm) ? q : m; // Chrome: ujung runcing = sudut TERDEKAT garis
+    }, k.pts[0]);
     const dari = bentukDi(pangkal, 3);
     const ke = bentukDi(tip, 4);
-    if (!dari || !ke || dari === ke) continue;
-    const sisi: 'left' | 'right' | 'bottom' | 'top' =
+    const sisi: 'left' | 'right' | 'bottom' | 'top' = !dari ? 'top' :
       Math.abs(pangkal[0] - dari.bb[0]) < 2 ? 'left' : Math.abs(pangkal[0] - dari.bb[2]) < 2 ? 'right'
         : Math.abs(pangkal[1] - dari.bb[1]) < 2 ? 'bottom' : 'top';
     // Label terdekat ke garis (maks 20pt).
@@ -468,13 +568,44 @@ function bacaHalamanAlur(page: PageData): HalamanAlur | null {
       const d = Math.min(...b.its.map(t => jarakKeGaris([t.x + t.w / 2, t.y + t.h / 2], g.pts)));
       if (d < dMin && b.str.length <= 90) { dMin = d; lbl = b.str; }
     }
-    panah.push({ dari, ke, sisi, label: lbl });
+    if (dari && ke && dari !== ke) panah.push({ dari, ke, sisi, label: lbl });
+    else if (!dari !== !ke || (!dari && !ke)) potongan.push({ dari, ke, pangkal, tip, sisi, label: lbl });
   }
+
+  // Visio kerap MEMUTUS garis penghubung di tempat label "Ya"/"Tidak": satu penghubung jadi
+  // dua (atau tiga) potong, tiap potong punya kepala panah sendiri dan salah satu ujungnya
+  // berhenti di label, bukan di bentuk. Sambung potongan yang ujungnya saling berdekatan
+  // dan diapit sebuah label → satu panah utuh (bentuk asal → bentuk tujuan, label dari potongan).
+  const dekatLabel = (a: Pt, b: Pt) => {
+    const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+    return labelTeks.some(t => Math.hypot(t.x + t.w / 2 - mx, t.y + t.h / 2 - my) < 32);
+  };
+  const terpakai = new Set<number>();
+  potongan.forEach((awal, i0) => {
+    if (!awal.dari || awal.ke || terpakai.has(i0)) return;
+    let ujung = awal.tip, lbl = awal.label;
+    const rantai: number[] = [i0];
+    for (let hop = 0; hop < 3; hop++) {
+      let terbaik = -1, jarak = 46;
+      potongan.forEach((q, i) => {
+        if (terpakai.has(i) || rantai.includes(i) || q.dari) return;
+        const d = Math.hypot(q.pangkal[0] - ujung[0], q.pangkal[1] - ujung[1]);
+        if (d < jarak && dekatLabel(ujung, q.pangkal)) { jarak = d; terbaik = i; }
+      });
+      if (terbaik < 0) return;
+      const q = potongan[terbaik];
+      rantai.push(terbaik); lbl = lbl || q.label; ujung = q.tip;
+      if (q.ke) {
+        if (q.ke !== awal.dari) { panah.push({ dari: awal.dari, ke: q.ke, sisi: awal.sisi, label: lbl }); rantai.forEach(i => terpakai.add(i)); }
+        return;
+      }
+    }
+  });
 
   // Isi baris. Sel teks bisa TERGABUNG beberapa baris (mis. Keterangan baris 1–2):
   // garis pemisah baris tidak melintasi kolom itu. Seluruh teksnya diberikan ke baris
   // teratas rentang tsb (kanvas tidak mengenal sel gabung) — dulu terbelah per baris.
-  const segH = page.paths.filter(p => p.bb[3] - p.bb[1] < 1.5 && p.bb[2] - p.bb[0] > 8)
+  const segH = page.paths.filter(p => p.bb[3] - p.bb[1] < TIPIS && p.bb[2] - p.bb[0] > 8)
     .map(p => ({ y: (p.bb[1] + p.bb[3]) / 2, x0: p.bb[0], x1: p.bb[2] }));
   const melintasi = (y: number, c: number) => {
     const [x0, x1] = sel(c), mid = (x0 + x1) / 2;
@@ -660,6 +791,7 @@ export function rakitSop(pages: PageData[]): HasilImpor {
   const coverTerbaca = JUDUL_KOTAK.some(j => (cover as Record<string, string | undefined>)[j.kunci] !== undefined);
   if (coverTerbaca) for (const j of JUDUL_KOTAK) data[j.kunci] = (cover as Record<string, string | undefined>)[j.kunci] ?? '';
   for (const k of ['judul', 'jabatanPengesah', 'namaPengesah', 'nipPengesah', 'tglRevisi', 'tglEfektif'] as const) if (cover[k]) data[k] = cover[k];
+  if (cover.pengesahanTTE) data.pengesahanTTE = true;
   return { data, ringkasan: { halamanAlur: alur.length, langkah: steps.length, bentuk: nBentuk, panah: nPanah, peringatan } };
 }
 

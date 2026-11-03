@@ -198,6 +198,11 @@ function DashboardBPN() {
   const [editingId, setEditingId] = useState<number | null>(null);
   const [viewDoc, setViewDoc] = useState<Dokumen | null>(null);
   const [previewSvg, setPreviewSvg] = useState<string>("");
+  // PDF SOP aplikasi yang ditampilkan langsung di popup Dashboard.
+  const [sopPdf, setSopPdf] = useState<{ loading?: boolean; url?: string; link?: string; error?: boolean } | null>(null);
+  // Buka dokumen dari baris tabel Dashboard (klik baris ATAU judul): dokumen aplikasi →
+  // popup detail di menu terkait; dokumen impor → popup pratinjau di sini.
+  const bukaDokumen = async (doc: Dokumen) => { const _lnk = doc.link || ''; const _internal = _lnk.replace(/^\/e-sop-atrbpn/, ''); setViewDoc(doc); setPreviewSvg(""); setSopPdf(prev => { if (prev?.url) URL.revokeObjectURL(prev.url); return null; }); { const mSop = /^\/sop\?doc=(\d+)/.exec(_internal); if (mSop) { const sid = mSop[1]; setSopPdf({ loading: true }); try { const meta = await apiFetch(`/sop/models/${sid}`, token); const m = meta.ok ? await meta.json() : null; if (m?.is_manual && m?.manual_link && !m?.manual_file_name) { setSopPdf({ link: m.manual_link }); return; } const r = await apiFetch(m?.is_manual ? `/sop/models/${sid}/manual-file` : `/sop/models/${sid}/pdf`, token); if (!r.ok) throw new Error('gagal'); setSopPdf({ url: URL.createObjectURL(await r.blob()) }); } catch { setSopPdf({ error: true }); } return; } } if (doc.jenis === 'Proses Bisnis' && doc.link.includes('id=')) { try { const bpmnId = doc.link.split('id=')[1].split('&')[0]; const res = await apiFetch(`/bpmn/models/${bpmnId}`, token); if (!res.ok) throw new Error("Gagal"); const data = await res.json(); if (data && data.svg_xml) setPreviewSvg(data.svg_xml); else setPreviewSvg(`<div class="p-6 text-center text-red-500 font-bold border border-red-200 bg-red-50 rounded-xl m-4">Diagram kosong.</div>`); } catch { setPreviewSvg(`<div class="p-6 text-center text-amber-600 font-bold border border-amber-200 bg-amber-50 rounded-xl m-4">Gagal memuat diagram secara otomatis. Silakan klik "Buka di Tab Baru".</div>`); } } };
 
   // === IMPORT MODAL (Excel + Crawl tabs) ===
   const [showImportModal, setShowImportModal] = useState(false);
@@ -869,7 +874,7 @@ function DashboardBPN() {
                 </div>
               </div>
               <button 
-                onClick={() => setViewDoc(null)} 
+                onClick={() => { setViewDoc(null); setSopPdf(prev => { if (prev?.url) URL.revokeObjectURL(prev.url); return null; }); }} 
                 className={`p-2.5 rounded-full transition-all shadow-sm ${isDarkMode ? 'hover:bg-red-900/30 text-red-400 bg-slate-800' : 'hover:bg-red-100 text-red-600 bg-white border border-slate-100'}`}
               >
                 <X className="w-6 h-6" />
@@ -878,7 +883,20 @@ function DashboardBPN() {
 
             {/* Konten Utama Modal */}
             <div className={`flex-1 overflow-auto flex justify-center items-center relative ${isDarkMode ? 'bg-[#0B1121]' : 'bg-slate-200/50'}`}>
-              {viewDoc?.jenis === 'Proses Bisnis' && viewDoc?.link.includes('id=') ? (
+              {sopPdf ? (
+                sopPdf.loading ? (
+                  <div className="flex flex-col items-center gap-3 text-slate-500 font-bold">
+                    <RefreshCw className="w-8 h-8 animate-spin text-emerald-500"/>
+                    <span>Menyiapkan dokumen SOP...</span>
+                  </div>
+                ) : sopPdf.url ? (
+                  <iframe src={`${sopPdf.url}#view=FitH`} className="w-full h-full bg-white border-none" title="Dokumen SOP" />
+                ) : sopPdf.link ? (
+                  <iframe src={getEmbedUrl(sopPdf.link)} className="w-full h-full bg-white border-none" title="Dokumen SOP" allow="autoplay" />
+                ) : (
+                  <div className="text-center text-amber-600 font-bold p-6">Gagal memuat dokumen SOP. Silakan klik &quot;Buka di Tab Baru&quot;.</div>
+                )
+              ) : viewDoc?.jenis === 'Proses Bisnis' && viewDoc?.link.includes('id=') ? (
                 previewSvg ? (
                   <div className="bg-white p-8 rounded-xl shadow-xl max-w-full max-h-full overflow-auto animate-in fade-in duration-500" dangerouslySetInnerHTML={{ __html: DOMPurify.sanitize(previewSvg, { USE_PROFILES: { svg: true, svgFilters: true } }) }} />
                 ) : (
@@ -1491,9 +1509,9 @@ function DashboardBPN() {
                       </tr>
                     ))}
                     {level === 3 && currentItems.map((doc, idx) => (
-                      <tr key={doc.id} className={`border-b transition-colors ${isDarkMode ? 'border-slate-800 hover:bg-blue-900/20' : 'border-slate-50 hover:bg-blue-50/30'}`}>
+                      <tr key={doc.id} onClick={() => bukaDokumen(doc)} title="Klik untuk melihat dokumen" className={`border-b transition-colors cursor-pointer ${isDarkMode ? 'border-slate-800 hover:bg-blue-900/20' : 'border-slate-50 hover:bg-blue-50/30'}`}>
                         <td className="px-6 py-4 text-center text-slate-400 font-medium">{indexOfFirstItem + idx + 1}</td>
-                        <td className={`px-6 py-4 font-bold ${isDarkMode ? 'text-blue-100' : 'text-[#002855]'}`}><button onClick={async () => { const _lnk = doc.link || ''; const _internal = _lnk.replace(/^\/e-sop-atrbpn/, ''); if (/^\/(bpmn|sop|sp)(\/|\?)/.test(_internal)) { router.push(_internal.includes('doc=') ? `${_internal}&n=${Date.now()}` : _internal); return; } setViewDoc(doc); setPreviewSvg(""); if (doc.jenis === 'Proses Bisnis' && doc.link.includes('id=')) { try { const bpmnId = doc.link.split('id=')[1].split('&')[0]; const res = await apiFetch(`/bpmn/models/${bpmnId}`, token); if (!res.ok) throw new Error("Gagal"); const data = await res.json(); if (data && data.svg_xml) setPreviewSvg(data.svg_xml); else setPreviewSvg(`<div class="p-6 text-center text-red-500 font-bold border border-red-200 bg-red-50 rounded-xl m-4">Diagram kosong.</div>`); } catch { setPreviewSvg(`<div class="p-6 text-center text-amber-600 font-bold border border-amber-200 bg-amber-50 rounded-xl m-4">Gagal memuat diagram secara otomatis. Silakan klik "Buka di Tab Baru".</div>`); } } }} className={`hover:underline text-left wrap-break-word ${isDarkMode ? 'hover:text-blue-400' : 'hover:text-blue-600'}`}>{doc.nama}</button></td>
+                        <td className={`px-6 py-4 font-bold ${isDarkMode ? 'text-blue-100' : 'text-[#002855]'}`}><button onClick={(e) => { e.stopPropagation(); bukaDokumen(doc); }} className={`hover:underline text-left wrap-break-word ${isDarkMode ? 'hover:text-blue-400' : 'hover:text-blue-600'}`}>{doc.nama}</button></td>
                         {!selectedL1 && <td className="px-6 py-4 text-slate-500">{doc.unitL1 || '-'}</td>}
                         <td className="px-6 py-4 text-slate-500">{doc.unitL2 || '-'}</td>
                         <td className="px-6 py-4 text-slate-500">{doc.unitL3 || '-'}</td>
@@ -1502,12 +1520,12 @@ function DashboardBPN() {
                         <td className="px-6 py-4 italic text-slate-400 max-w-64 wrap-break-word">{doc.sumber}</td>
                         <td className="px-6 py-4 text-center">
                           {currentUser?.role === 'admin' ? (
-                            <select value={doc.status || 'draft'} onChange={(e) => handleApproval(doc, e.target.value)} className={`px-2 py-1.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider cursor-pointer outline-none shadow-sm border transition-all ${doc.status === 'approved' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : doc.status === 'pending' ? 'bg-blue-100 text-blue-700 border-blue-200' : doc.status === 'rejected' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
+                            <select value={doc.status || 'draft'} onClick={(e) => e.stopPropagation()} onChange={(e) => handleApproval(doc, e.target.value)} className={`px-2 py-1.5 rounded-full text-[10px] font-extrabold uppercase tracking-wider cursor-pointer outline-none shadow-sm border transition-all ${doc.status === 'approved' ? 'bg-emerald-100 text-emerald-700 border-emerald-200' : doc.status === 'pending' ? 'bg-blue-100 text-blue-700 border-blue-200' : doc.status === 'rejected' ? 'bg-red-100 text-red-700 border-red-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
                               <option value="draft">DRAFT</option><option value="pending">PENDING</option><option value="approved">APPROVED</option><option value="rejected">REJECTED</option>
                             </select>
                           ) : <span className={`px-2 py-1 rounded-full text-[10px] font-extrabold uppercase tracking-wider ${doc.status === 'approved' ? 'bg-emerald-100 text-emerald-700' : doc.status === 'pending' ? 'bg-blue-100 text-blue-700' : doc.status === 'rejected' ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-600'}`}>{doc.status || 'DRAFT'}</span>}
                         </td>
-                        <td className="px-6 py-4 text-center space-x-3">{currentUser?.role === 'admin' ? <div className="flex gap-3 justify-center items-center"><button onClick={() => handleEdit(doc)} className="inline-flex items-center min-h-11 px-3 text-blue-500 hover:text-blue-600 font-bold text-xs transition-colors">Edit</button><button onClick={() => handleDelete(doc.id)} className="inline-flex items-center min-h-11 px-3 text-red-500 hover:text-red-600 font-bold text-xs transition-colors">Hapus</button></div> : <span className="text-slate-400 text-xs italic">hanya lihat</span>}</td>
+                        <td className="px-6 py-4 text-center space-x-3">{currentUser?.role === 'admin' ? <div className="flex gap-3 justify-center items-center"><button onClick={(e) => { e.stopPropagation(); handleEdit(doc); }} className="inline-flex items-center min-h-11 px-3 text-blue-500 hover:text-blue-600 font-bold text-xs transition-colors">Edit</button><button onClick={(e) => { e.stopPropagation(); handleDelete(doc.id); }} className="inline-flex items-center min-h-11 px-3 text-red-500 hover:text-red-600 font-bold text-xs transition-colors">Hapus</button></div> : <span className="text-slate-400 text-xs italic">hanya lihat</span>}</td>
                       </tr>
                     ))}
                   </tbody>

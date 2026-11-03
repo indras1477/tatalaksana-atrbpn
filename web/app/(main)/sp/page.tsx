@@ -10,7 +10,7 @@ import {
   Plus, CheckCircle, Search, FileEdit, FileSignature, Stamp, Trash2,
   Calendar, ChevronRight, Building2, FileUp, ExternalLink,
   FileStack, Clock, AlertCircle, Landmark, X, Edit, MessageSquare, RotateCcw,
-  History as HistoryIcon, GitCommit, Lock, Save, FileDown, Copy, Eye, Maximize2, Loader2, XCircle, Link2,
+  History as HistoryIcon, GitCommit, Lock, Save, FileDown, Copy, Eye, Maximize2, Loader2, Download, XCircle, Link2,
   BookOpen, ClipboardList, FileSpreadsheet,
 } from 'lucide-react';
 import DocHistoryModal from '@/components/DocHistoryModal';
@@ -129,6 +129,21 @@ export default function SPPage() {
     !searchQuery || m.process_title.toLowerCase().includes(searchQuery.toLowerCase())
   ), [models, searchQuery]);
 
+  // KARTU INTERAKTIF (admin/superadmin): angka kartu status mengikuti cakupan drill rekap —
+  // "Semua Unit Kerja" = keseluruhan; klik Unit Kerja Level 1 = hanya unit itu; klik Sub-Unit
+  // (Level 2) = hanya sub-unit itu. User (terbatas) tidak terpengaruh (datanya sudah unit sendiri).
+  const kartuInteraktif = currentUser?.role === 'admin';
+  const dalamCakupan = (m: SPModel) => !kartuInteraktif || (
+    (rekapDrill.l1 === null || ((x: SPModel) => x.unit_l1 || '(Tanpa Unit)')(m) === rekapDrill.l1) &&
+    (rekapDrill.l2 === null || (((x: SPModel) => x.unit_l2 || '(Tanpa Sub-Unit)')(m)) === rekapDrill.l2));
+  const kartuModels = useMemo(() => filtered.filter(dalamCakupan),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filtered, rekapDrill, kartuInteraktif]);
+  const kartuUsulan = useMemo(() => kartuModels.filter(m => m.status === 'usulan').length, [kartuModels]);
+  const kartuDraftProses = useMemo(() => kartuModels.filter(m => !m.status || m.status === 'draft').length, [kartuModels]);
+  const cakupanKartu = kartuInteraktif && rekapDrill.l1 !== null
+    ? (rekapDrill.l2 !== null ? `${rekapDrill.l1} › ${rekapDrill.l2}` : rekapDrill.l1) : null;
+
   const tabOf = (s?: string) => s === 'usulan' ? 'usulan' : s === 'terbit' ? 'terbit' : 'penyusunan';
 
   // Rekap per unit (admin) berlaku di SEMUA tab — termasuk Daftar SP Terbit, agar SP
@@ -195,6 +210,51 @@ export default function SPPage() {
     return 'FF4338CA'; // indigo-700 (draft)
   };
 
+  // Pilih beberapa SP lalu unduh PDF-nya: 1 dokumen → PDF langsung; ≥2 → ZIP.
+  const bolehFiturMassal = !!currentUser && currentUser.role !== 'viewer';
+  const [pilihPdf, setPilihPdf] = useState<number[]>([]);
+  const [unduhPdf, setUnduhPdf] = useState<{ selesai: number; total: number; gagal: number } | null>(null);
+  const bisaPilihPdf = (m: SPModel) => !m.is_manual && !!m.has_studio && m.status !== 'usulan';
+  const unduhPdfTerpilih = async () => {
+    const daftar = pilihPdf.map(id => visibleModels.find(m => m.id === id)).filter((m): m is SPModel => !!m);
+    if (!daftar.length || unduhPdf) return;
+    setUnduhPdf({ selesai: 0, total: daftar.length, gagal: 0 });
+    try {
+      const berkas: Record<string, Uint8Array> = {};
+      const dipakai = new Set<string>();
+      let gagal = 0;
+      for (let i = 0; i < daftar.length; i++) {
+        const m = daftar[i];
+        try {
+          const r = await apiFetch(`/sp/models/${m.id}/pdf`, token);
+          if (!r.ok) throw new Error(String(r.status));
+          const dasar = (m.process_title || `SP ${m.id}`).replace(/[\\/]/g, '_').replace(/[:*?"<>|\x00-\x1f]+/g, '').replace(/\s+/g, ' ').trim().slice(0, 120) || `SP ${m.id}`;
+          let nama = `SP - ${dasar}.pdf`, n = 2;
+          while (dipakai.has(nama)) nama = `SP - ${dasar} (${n++}).pdf`;
+          dipakai.add(nama);
+          berkas[nama] = new Uint8Array(await r.arrayBuffer());
+        } catch { gagal++; }
+        setUnduhPdf({ selesai: i + 1, total: daftar.length, gagal });
+      }
+      const nama = Object.keys(berkas);
+      if (!nama.length) { alert('Tidak ada PDF yang berhasil dibuat.'); return; }
+      let blob: Blob, namaBerkas: string;
+      if (nama.length === 1 && daftar.length === 1) { blob = new Blob([berkas[nama[0]] as BlobPart], { type: 'application/pdf' }); namaBerkas = nama[0]; }
+      else {
+        const { zipSync } = await import('fflate');
+        blob = new Blob([zipSync(berkas, { level: 0 }) as BlobPart], { type: 'application/zip' });
+        namaBerkas = `SP_${new Date().toISOString().slice(0, 10)}_${nama.length}-dokumen.zip`;
+      }
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a'); a.href = url; a.download = namaBerkas;
+      document.body.appendChild(a); a.click(); document.body.removeChild(a);
+      setTimeout(() => URL.revokeObjectURL(url), 4000);
+      if (gagal) alert(`${gagal} dokumen gagal dibuat PDF-nya dan tidak masuk ZIP.`);
+      setPilihPdf([]);
+    } catch (e) { alert('Gagal mengunduh PDF: ' + (e instanceof Error ? e.message : String(e))); }
+    finally { setUnduhPdf(null); }
+  };
+
   const exportRekapL1 = async () => {
     const l1 = rekapDrill.l1;
     if (!l1) return;
@@ -217,7 +277,20 @@ export default function SPPage() {
 
       const workbook = new ExcelJS.Workbook();
       const ws = workbook.addWorksheet('Standar Pelayanan', { views: [{ showGridLines: false }] });
-      ws.columns = [{ width: 5 }, { width: 70 }, { width: 45 }, { width: 36 }];
+      // Tautan view-only (hanya SP yang sudah ditetapkan: Penetapan Menteri & Terbit).
+      let tautan: Record<string, string> = {};
+      let sedangDisiapkan = 0;
+      const adaKolTautan = bolehFiturMassal;
+      if (adaKolTautan) {
+        try {
+          const ids = urut.filter(m => ['penetapan', 'terbit'].includes(m.status || '') && typeof m.id === 'number').map(m => m.id);
+          if (ids.length) {
+            const r = await apiFetch('/sp/share-bulk', token, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+            if (r.ok) { const j = await r.json(); tautan = j.links || {}; sedangDisiapkan = j.menyiapkan || 0; }
+          }
+        } catch { /* tautan dikosongkan — ekspor tetap jalan */ }
+      }
+      ws.columns = [{ width: 5 }, { width: 70 }, { width: 45 }, { width: 36 }, ...(adaKolTautan ? [{ width: 48 }] : [])];
 
       const THIN = { style: 'thin' as const, color: { argb: 'FF94A3B8' } };
       const BORDER_ALL = { top: THIN, left: THIN, bottom: THIN, right: THIN };
@@ -290,18 +363,24 @@ export default function SPPage() {
 
       // 2) DAFTAR SP (RINCIAN) — kolom Unit Kerja (L2) diberi fill color sesuai
       // palet di atas, kolom Status Dokumen diberi warna TEKS sesuai status.
-      const HEAD = ['No', 'Nama Pelayanan', 'Unit Kerja', 'Status Dokumen'];
+      const HEAD = ['No', 'Nama Pelayanan', 'Unit Kerja', 'Status Dokumen', ...(adaKolTautan ? ['Tautan View-Only'] : [])];
       const headRow = ws.addRow(HEAD);
       styleHeaderRow(headRow);
       urut.forEach((m, i) => {
         const su = subUnit(m);
-        const row = ws.addRow([i + 1, m.process_title, su, statusExcelLabel(m)]);
+        const row = ws.addRow([i + 1, m.process_title, su, statusExcelLabel(m), ...(adaKolTautan ? [''] : [])]);
         row.eachCell(cell => { cell.border = BORDER_ALL; cell.alignment = { vertical: 'middle', wrapText: true }; });
         row.getCell(1).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
         row.getCell(3).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
         row.getCell(3).fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: fillOf.get(su) || 'FFFFFFFF' } };
         row.getCell(4).alignment = { vertical: 'middle', horizontal: 'center', wrapText: true };
         row.getCell(4).font = { bold: true, color: { argb: statusExcelColor(m) } };
+        if (adaKolTautan) {
+          const path = tautan[m.id];
+          const c = row.getCell(5);
+          if (path) { const u = `${window.location.origin}/e-sop-atrbpn${path}`; c.value = { text: u, hyperlink: u }; c.font = { color: { argb: 'FF0563C1' }, underline: true }; }
+          else { c.value = '-'; c.font = { italic: true, color: { argb: 'FF94A3B8' } }; c.alignment = { vertical: 'middle', horizontal: 'center' }; }
+        }
       });
 
       const buf = await workbook.xlsx.writeBuffer();
@@ -312,6 +391,7 @@ export default function SPPage() {
       a.href = url; a.download = `Daftar_Standar_Pelayanan_${slug(l1)}_${slug(tahapLabel)}.xlsx`;
       document.body.appendChild(a); a.click(); document.body.removeChild(a);
       setTimeout(() => URL.revokeObjectURL(url), 4000);
+      if (sedangDisiapkan > 0) alert(`Berkas Excel sudah diunduh.\n\n${sedangDisiapkan} tautan masih disiapkan di server (PDF dirender). Tautan yang baru dibuka akan tampil "sedang disiapkan" dan terbuka otomatis begitu siap.`);
     } catch (e) {
       console.error(e);
       alert('Gagal membuat file Excel: ' + (e instanceof Error ? e.message : String(e)));
@@ -347,9 +427,9 @@ export default function SPPage() {
   };
   const cardFilterModels = useMemo(() => {
     if (!cardFilter) return [];
-    return filtered.filter(m => CARD_MATCH[cardFilter](m));
+    return filtered.filter(m => CARD_MATCH[cardFilter](m) && dalamCakupan(m));
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [cardFilter, filtered]);
+  }, [cardFilter, filtered, rekapDrill]);
   // Kartu bisa diklik admin/superadmin & user (rekap/filter); aksi tetap mengikuti izin masing-masing.
   const canFilterCards = currentUser?.role === 'admin' || currentUser?.role === 'user';
   const toggleCard = (key: typeof cardFilter) => { if (canFilterCards) setCardFilter(cur => cur === key ? null : key); };
@@ -786,19 +866,26 @@ export default function SPPage() {
       </div>
 
       {/* Kartu status — sama seperti modul SOP */}
+      {cakupanKartu && (
+        <div className={`flex flex-wrap items-center gap-x-2 gap-y-1 mb-2 text-xs ${isDarkMode ? 'text-slate-400' : 'text-slate-500'}`}>
+          <span>Angka kartu menghitung:</span>
+          <b className={isDarkMode ? 'text-white' : 'text-[#002855]'}>{cakupanKartu}</b>
+          <button type="button" onClick={() => setRekapDrill({ l1: null, l2: null })} className="text-emerald-600 hover:underline font-semibold">Tampilkan semua unit</button>
+        </div>
+      )}
       <div className="grid grid-cols-2 @2xl:grid-cols-3 @4xl:grid-cols-4 @6xl:grid-cols-7 gap-3 sm:gap-4 mb-8">
         <div onClick={() => toggleCard('total')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm flex justify-between items-center gap-2 transition-all hover:shadow-md ${canFilterCards ? 'cursor-pointer' : ''} ${cardFilter === 'total' ? 'ring-2 ring-[#002855]' : ''} ${card}`}>
-          <div className="min-w-0"><p className={`text-xs font-bold uppercase tracking-widest mb-1 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Total</p><p className={`text-2xl sm:text-3xl font-black ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{filtered.length}</p></div>
+          <div className="min-w-0"><p className={`text-xs font-bold uppercase tracking-widest mb-1 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Total</p><p className={`text-2xl sm:text-3xl font-black ${isDarkMode ? 'text-white' : 'text-[#002855]'}`}>{kartuModels.length}</p></div>
           <div className={`p-2.5 sm:p-3 rounded-xl shrink-0 ${isDarkMode ? 'bg-slate-800 text-slate-500' : 'bg-slate-50 text-slate-400'}`}><FileStack className="w-5 h-5 sm:w-6 sm:h-6" /></div>
         </div>
         <div onClick={() => toggleCard('draft')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-slate-400 flex items-center min-h-24 transition-all hover:shadow-md ${canFilterCards ? 'cursor-pointer' : ''} ${cardFilter === 'draft' ? 'ring-2 ring-slate-400' : ''} ${card}`}>
           <div className="min-w-0 w-full">
             <p className={`text-[10px] sm:text-xs font-bold uppercase tracking-widest mb-1 ${isDarkMode ? 'text-slate-500' : 'text-slate-400'}`}>Draft</p>
             <div className="flex items-center gap-2.5">
-              <p className={`text-2xl sm:text-3xl font-black leading-none shrink-0 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{countUsulan + countDraftProses}</p>
+              <p className={`text-2xl sm:text-3xl font-black leading-none shrink-0 ${isDarkMode ? 'text-slate-300' : 'text-slate-700'}`}>{kartuUsulan + kartuDraftProses}</p>
               <div className="flex flex-col gap-1 min-w-0">
-                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-slate-700/60 text-slate-300' : 'bg-slate-100 text-slate-600'}`}><b className="font-black">{countUsulan}</b> Usulan</span>
-                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-indigo-900/40 text-indigo-300' : 'bg-indigo-50 text-indigo-600'}`}><b className="font-black">{countDraftProses}</b> Dalam Proses</span>
+                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-slate-700/60 text-slate-300' : 'bg-slate-100 text-slate-600'}`}><b className="font-black">{kartuUsulan}</b> Usulan</span>
+                <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-md text-[10px] font-bold w-fit ${isDarkMode ? 'bg-indigo-900/40 text-indigo-300' : 'bg-indigo-50 text-indigo-600'}`}><b className="font-black">{kartuDraftProses}</b> Dalam Proses</span>
               </div>
             </div>
           </div>
@@ -806,35 +893,35 @@ export default function SPPage() {
         <div onClick={() => toggleCard('pending')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-blue-500 flex flex-col min-h-24 transition-all hover:shadow-md ${canFilterCards ? 'cursor-pointer' : ''} ${cardFilter === 'pending' ? 'ring-2 ring-blue-500' : ''} ${card}`}>
           <p className="text-[10px] sm:text-xs font-bold text-blue-400 uppercase tracking-wide leading-tight wrap-break-word">Review Ortala MR</p>
           <div className="flex justify-between items-end gap-2 mt-auto pt-1.5">
-            <p className="text-2xl sm:text-3xl font-black text-blue-600 leading-none">{filtered.filter(m => m.status === 'pending').length}</p>
+            <p className="text-2xl sm:text-3xl font-black text-blue-600 leading-none">{kartuModels.filter(m => m.status === 'pending').length}</p>
             <div className="p-2 sm:p-2.5 bg-blue-50 rounded-xl text-blue-400 shrink-0"><Clock className="w-5 h-5" /></div>
           </div>
         </div>
         <div onClick={() => toggleCard('rejected')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-red-500 flex flex-col min-h-24 transition-all hover:shadow-md ${canFilterCards ? 'cursor-pointer' : ''} ${cardFilter === 'rejected' ? 'ring-2 ring-red-500' : ''} ${card}`}>
           <p className="text-[10px] sm:text-xs font-bold text-red-400 uppercase tracking-wide leading-tight wrap-break-word">Perlu Revisi</p>
           <div className="flex justify-between items-end gap-2 mt-auto pt-1.5">
-            <p className="text-2xl sm:text-3xl font-black text-red-600 leading-none">{filtered.filter(m => m.status === 'rejected').length}</p>
+            <p className="text-2xl sm:text-3xl font-black text-red-600 leading-none">{kartuModels.filter(m => m.status === 'rejected').length}</p>
             <div className="p-2 sm:p-2.5 bg-red-50 rounded-xl text-red-400 shrink-0"><AlertCircle className="w-5 h-5" /></div>
           </div>
         </div>
         <div onClick={() => toggleCard('pengesahan')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-emerald-500 flex flex-col min-h-24 transition-all hover:shadow-md ${canFilterCards ? 'cursor-pointer' : ''} ${cardFilter === 'pengesahan' ? 'ring-2 ring-emerald-500' : ''} ${card}`}>
           <p className="text-[10px] sm:text-xs font-bold text-emerald-400 uppercase tracking-wide leading-tight wrap-break-word">Proses Pengesahan Pimpinan</p>
           <div className="flex justify-between items-end gap-2 mt-auto pt-1.5">
-            <p className="text-2xl sm:text-3xl font-black text-emerald-600 leading-none">{filtered.filter(m => ['approved', 'verifikasi'].includes(m.status)).length}</p>
+            <p className="text-2xl sm:text-3xl font-black text-emerald-600 leading-none">{kartuModels.filter(m => ['approved', 'verifikasi'].includes(m.status)).length}</p>
             <div className="p-2 sm:p-2.5 bg-emerald-50 rounded-xl text-emerald-400 shrink-0"><CheckCircle className="w-5 h-5" /></div>
           </div>
         </div>
         <div onClick={() => toggleCard('penetapan')} className={`col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-violet-500 flex flex-col min-h-24 transition-all hover:shadow-md ${canFilterCards ? 'cursor-pointer' : ''} ${cardFilter === 'penetapan' ? 'ring-2 ring-violet-500' : ''} ${card}`}>
           <p className="text-[10px] sm:text-xs font-bold text-violet-400 uppercase tracking-wide leading-tight wrap-break-word">Proses Penetapan Menteri</p>
           <div className="flex justify-between items-end gap-2 mt-auto pt-1.5">
-            <p className="text-2xl sm:text-3xl font-black text-violet-600 leading-none">{filtered.filter(m => m.status === 'penetapan').length}</p>
+            <p className="text-2xl sm:text-3xl font-black text-violet-600 leading-none">{kartuModels.filter(m => m.status === 'penetapan').length}</p>
             <div className="p-2 sm:p-2.5 bg-violet-50 rounded-xl text-violet-400 shrink-0"><Landmark className="w-5 h-5" /></div>
           </div>
         </div>
         <div onClick={() => toggleCard('terbit')} className={`col-span-2 sm:col-span-1 p-4 sm:p-5 rounded-2xl border shadow-sm border-l-4 border-l-teal-500 flex flex-col min-h-24 transition-all hover:shadow-md ${canFilterCards ? 'cursor-pointer' : ''} ${cardFilter === 'terbit' ? 'ring-2 ring-teal-500' : ''} ${card}`}>
           <p className="text-[10px] sm:text-xs font-bold text-teal-500 uppercase tracking-wide leading-tight wrap-break-word">Telah Ditetapkan (Terbit)</p>
           <div className="flex justify-between items-end gap-2 mt-auto pt-1.5">
-            <p className="text-2xl sm:text-3xl font-black text-teal-600 leading-none">{filtered.filter(m => m.status === 'terbit').length}</p>
+            <p className="text-2xl sm:text-3xl font-black text-teal-600 leading-none">{kartuModels.filter(m => m.status === 'terbit').length}</p>
             <div className="p-2 sm:p-2.5 bg-teal-50 rounded-xl text-teal-500 shrink-0"><Stamp className="w-5 h-5" /></div>
           </div>
         </div>
@@ -995,11 +1082,26 @@ export default function SPPage() {
             </div>
           )}
 
+          {/* Pilih banyak SP → unduh PDF (1 = PDF langsung, ≥2 = ZIP) — tab Proses Penyusunan */}
+          {bolehFiturMassal && listTab === 'penyusunan' && (
+            <div className={`px-4 sm:px-5 py-2.5 border-b flex flex-wrap items-center gap-2 text-xs ${isDarkMode ? 'border-slate-700 bg-[#0F172A]/30 text-slate-300' : 'border-slate-100 bg-slate-50/60 text-slate-600'}`}>
+              <span className="font-semibold">{pilihPdf.length > 0 ? `${pilihPdf.length} SP dipilih` : 'Centang SP di tabel untuk mengunduh PDF-nya sekaligus (ZIP).'}</span>
+              {pilihPdf.length > 0 && !unduhPdf && <button onClick={() => setPilihPdf([])} className="font-bold underline underline-offset-2 hover:text-teal-600">Batal pilih</button>}
+              <div className="flex-1" />
+              <button onClick={unduhPdfTerpilih} disabled={pilihPdf.length === 0 || !!unduhPdf} className="px-3.5 py-2 rounded-lg bg-rose-600 hover:bg-rose-700 text-white font-bold flex items-center gap-1.5 shadow-sm disabled:bg-slate-300 disabled:text-slate-500 disabled:cursor-not-allowed disabled:shadow-none">{unduhPdf ? <><Loader2 className="w-4 h-4 animate-spin" /> Menyiapkan {unduhPdf.selesai}/{unduhPdf.total}…</> : <><Download className="w-4 h-4" /> Unduh PDF{pilihPdf.length > 0 ? ` (${pilihPdf.length})` : ''}</>}</button>
+            </div>
+          )}
+
           {/* Daftar dokumen */}
           <div className="overflow-x-auto">
             <table className="w-full text-sm text-left">
               <thead className={`text-[11px] font-bold uppercase tracking-wider border-b ${isDarkMode ? 'text-slate-400 bg-slate-800/50 border-slate-700' : 'text-slate-500 bg-slate-50/80 border-slate-200'}`}>
                 <tr>
+                  {bolehFiturMassal && listTab === 'penyusunan' && (() => {
+                    const ids = visibleModels.filter(bisaPilihPdf).map(m => m.id);
+                    const semua = ids.length > 0 && ids.every(id => pilihPdf.includes(id));
+                    return <th className="pl-4 pr-0 py-4 w-8"><input type="checkbox" aria-label="Pilih semua SP" checked={semua} disabled={ids.length === 0 || !!unduhPdf} onChange={() => setPilihPdf(p => semua ? p.filter(x => !ids.includes(x)) : [...new Set([...p, ...ids])])} className="cek-esop cek-esop-besar" /></th>;
+                  })()}
                   <th className="px-6 py-4 w-2/5">Informasi Dokumen</th>
                   <th className="px-6 py-4 w-1/4">Unit Kerja</th>
                   <th className="px-6 py-4 text-center">Status</th>
@@ -1017,6 +1119,11 @@ export default function SPPage() {
                 ) : visibleModels.map(m => (
                   <tr key={m.id} onClick={() => bukaDokumen(m)} title="Klik baris untuk membuka detail dokumen"
                     className={`cursor-pointer transition-colors ${isDarkMode ? 'hover:bg-slate-800/60' : 'hover:bg-teal-50/40'}`}>
+                    {bolehFiturMassal && listTab === 'penyusunan' && (
+                      <td className="pl-4 pr-0 py-4 w-8" onClick={e => e.stopPropagation()}>
+                        {bisaPilihPdf(m) && <label className="-m-2.5 p-2.5 inline-block cursor-pointer touch-manipulation"><input type="checkbox" aria-label={`Pilih ${m.process_title}`} checked={pilihPdf.includes(m.id)} disabled={!!unduhPdf} onChange={() => setPilihPdf(p => p.includes(m.id) ? p.filter(x => x !== m.id) : [...p, m.id])} className="cek-esop cek-esop-besar" /></label>}
+                      </td>
+                    )}
                     <td className="px-6 py-4">
                       <button onClick={e => { e.stopPropagation(); bukaDokumen(m); }}
                         className={`font-bold text-base text-left hover:underline cursor-pointer ${isDarkMode ? 'text-white hover:text-teal-400' : 'text-[#002855] hover:text-teal-600'}`}>

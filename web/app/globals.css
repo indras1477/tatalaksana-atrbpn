@@ -46,7 +46,7 @@ body {
 }
 @media print {
   /* Memaksa SEMUA elemen dari ujung ke ujung agar membuang kuncian tinggi (h-screen dll) */
-  html, body, #__next, main, div[class*="overflow"], div[class*="h-full"], div[class*="h-screen"] {
+  html, body, #__next, main, div[class*="overflow"], div[class*="h-full"], div[class*="h-screen"], div[class*="h-dvh"] {
     height: auto !important;
     min-height: auto !important;
     max-height: none !important;
@@ -71,26 +71,103 @@ body {
 
    Tata letak kartu memakai container query, jadi jumlah kolomnya mengikuti ruang
    yang benar-benar tersedia — tetap benar walau `zoom` tak didukung peramban. */
-/* Tinggi ikut dikoreksi (100% ÷ skala); tanpa ini tampilan berhenti sebelum
-   tepi bawah layar dan menyisakan pita kosong. */
-@media (min-width: 1024px) and (max-width: 1279.98px) {
-  html.ui-skala { zoom: 0.8; --ui-vh: 125vh; }
-}
-@media (min-width: 1280px) and (max-width: 1439.98px) {
-  html.ui-skala { zoom: 0.85; --ui-vh: 117.65vh; }
-}
-@media (min-width: 1440px) and (max-width: 1599.98px) {
-  html.ui-skala { zoom: 0.9; --ui-vh: 111.12vh; }
+/* Faktor skala per kelas perangkat (ditentukan dari lebar layar + jenis pointer):
+     HP           (< 640px)        0.90
+     Tablet/iPad  (640–1023px)     0.90   — juga semua layar sentuh ≥ 640px
+     Laptop kecil (1024–1279px)    0.80
+     Laptop       (1280–1439px)    0.85
+     Laptop besar (1440–1599px)    0.90
+     PC/Monitor   (≥ 1600px)       0.90
+   Tinggi layar-penuh ikut dikoreksi (100dvh ÷ skala); tanpa ini tampilan berhenti
+   sebelum tepi bawah layar dan menyisakan pita kosong. Dibungkus @supports agar
+   peramban tanpa `zoom` tidak mendapat tinggi yang melebihi layar. */
+@supports (zoom: 0.9) {
+  html.ui-skala {
+    --ui-zoom: 0.9;
+    zoom: var(--ui-zoom);
+    --ui-vh: calc(100dvh / var(--ui-zoom));
+  }
+  @media (min-width: 1024px) and (max-width: 1279.98px) {
+    html.ui-skala { --ui-zoom: 0.8; }
+  }
+  @media (min-width: 1280px) and (max-width: 1439.98px) {
+    html.ui-skala { --ui-zoom: 0.85; }
+  }
+  /* Layar pendek (tinggi ≤ 800px, mis. 1366×768) diperkecil sedikit lagi supaya
+     tabel di bawah kartu ikut terlihat tanpa menggulir. */
+  @media (min-width: 1024px) and (max-width: 1599.98px) and (max-height: 800px) {
+    html.ui-skala { --ui-zoom: 0.85; }
+  }
+  /* Tablet/iPad landscape (lebar 1024–1366px tapi layar sentuh): jangan ikut aturan
+     laptop (0.8) — terlalu kecil untuk disentuh. */
+  @media (pointer: coarse) and (min-width: 640px) {
+    html.ui-skala { --ui-zoom: 0.9; }
+  }
+
+  /* Satuan vh/dvh TIDAK ikut mengecil saat `zoom` aktif. Kelas tinggi layar-penuh
+     dipetakan ulang ke --ui-vh (100dvh ÷ skala). */
+  html.ui-skala .h-screen,
+  html.ui-skala .h-dvh { height: var(--ui-vh); }
+  html.ui-skala .min-h-screen,
+  html.ui-skala .min-h-dvh { min-height: var(--ui-vh); }
 }
 
-/* Layar pendek (tinggi ≤ 800px, mis. 1366×768) diperkecil sedikit lagi supaya
-   tabel di bawah kartu ikut terlihat tanpa menggulir. */
-@media (min-width: 1024px) and (max-width: 1599.98px) and (max-height: 800px) {
-  html.ui-skala { zoom: 0.85; --ui-vh: 117.65vh; }
-}
+/* Di HP, dvh mengikuti tinggi area yang BENAR-BENAR terlihat (tanpa address bar
+   browser) sehingga bagian bawah sidebar (tombol Keluar) tidak terpotong. */
+.h-dvh { height: 100vh; height: 100dvh; }
+.min-h-dvh { min-height: 100vh; min-height: 100dvh; }
 
-/* Satuan 100vh TIDAK ikut mengecil saat `zoom` aktif, sehingga kerangka aplikasi
-   berhenti sebelum tepi bawah layar dan menyisakan pita kosong. Kelas tinggi
-   layar-penuh dipetakan ulang ke --ui-vh (100vh ÷ skala). */
-html.ui-skala .h-screen { height: var(--ui-vh, 100vh); }
-html.ui-skala .min-h-screen { min-height: var(--ui-vh, 100vh); }
+/* Pratinjau layar penuh Studio SOP: hanya halaman F4 (diskalakan), tanpa toolbar/tab/peringatan. */
+.sop-presentasi { background: #0f172a !important; padding: 12px !important; justify-content: flex-start; scroll-snap-type: y proximity; }
+.sop-presentasi .no-print { display: none !important; }
+.sop-presentasi .print-page-target { zoom: var(--skala-presentasi, 1); margin: 0 auto 16px !important; pointer-events: none; user-select: none; scroll-snap-align: center; }
+.sop-presentasi [class~="print:hidden"]:not(.presentasi-kontrol) { display: none !important; }
+
+/* Kotak centang ala E-Simpel: bersudut membulat, hijau saat dicentang, tanda centang tebal. */
+.cek-esop { appearance: none; -webkit-appearance: none; width: 1.25rem; height: 1.25rem; border-radius: 0.4rem; border: 2px solid #94a3b8; background: #fff center / 80% no-repeat; cursor: pointer; transition: background-color .15s, border-color .15s, box-shadow .15s, transform .1s; vertical-align: middle; }
+.cek-esop:hover:not(:disabled) { border-color: #059669; box-shadow: 0 0 0 3px rgba(5,150,105,.15); }
+.cek-esop:active:not(:disabled) { transform: scale(.92); }
+.cek-esop:checked { background-color: #059669; border-color: #059669; background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='white' stroke-width='2.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M3.5 8.5l3 3 6-6.5'/%3E%3C/svg%3E"); }
+.cek-esop:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(5,150,105,.35); }
+.cek-esop:disabled { opacity: .45; cursor: not-allowed; }
+:is(.dark, [data-theme="dark"]) .cek-esop:not(:checked) { background-color: #0f172a; border-color: #64748b; }
+
+/* Layar sentuh (HP/tablet): kotak centang lebih besar; area ketuk ±44px lewat label pembungkusnya. */
+.cek-esop-besar { width: 1.5rem; height: 1.5rem; border-radius: 0.5rem; }
+
+/* Toolbar Studio SOP — mode gelap: timpa kelas terang bawaan (tombol berwarna tetap). */
+.sop-toolbar-gelap { background-color: #151F32 !important; border-color: #334155 !important; }
+.sop-toolbar-gelap .bg-white { background-color: #1e293b !important; }
+.sop-toolbar-gelap .bg-slate-100, .sop-toolbar-gelap .bg-slate-50 { background-color: #0F172A !important; }
+.sop-toolbar-gelap .hover\:bg-slate-200:hover, .sop-toolbar-gelap .hover\:bg-slate-50:hover, .sop-toolbar-gelap .hover\:bg-white:hover { background-color: #334155 !important; }
+.sop-toolbar-gelap .text-slate-700, .sop-toolbar-gelap .text-slate-600 { color: #e2e8f0 !important; }
+.sop-toolbar-gelap .text-slate-500, .sop-toolbar-gelap .text-slate-400 { color: #94a3b8 !important; }
+.sop-toolbar-gelap .text-blue-700 { color: #93c5fd !important; }
+.sop-toolbar-gelap .border-slate-200, .sop-toolbar-gelap .border-slate-100, .sop-toolbar-gelap .border-slate-300, .sop-toolbar-gelap .border-b, .sop-toolbar-gelap .border { border-color: #334155 !important; }
+.sop-toolbar-gelap .bg-slate-300 { background-color: #475569 !important; }
+.sop-toolbar-gelap .shadow-inner { box-shadow: inset 0 1px 3px rgba(0,0,0,.5) !important; }
+
+/* Pratinjau layar penuh Studio SP: hanya lembar F4 (diskalakan), tanpa bilah alat/panel. */
+.sp-presentasi { padding: 12px !important; scroll-snap-type: y proximity; }
+.sp-presentasi .no-print { display: none !important; }
+.sp-presentasi .sp-paper { scroll-snap-align: center; pointer-events: none; user-select: none; }
+/* Toolbar SOP gelap — warna teks/latar bertinta (hover menu Unduh, tombol aktif, ikon format) */
+.sop-toolbar-gelap .hover\:bg-rose-50:hover { background-color: #4c1d2a !important; }
+.sop-toolbar-gelap .hover\:bg-green-50:hover { background-color: #14352a !important; }
+.sop-toolbar-gelap .hover\:text-rose-700:hover { color: #fda4af !important; }
+.sop-toolbar-gelap .hover\:text-green-700:hover { color: #86efac !important; }
+.sop-toolbar-gelap .bg-emerald-50 { background-color: #064e3b !important; }
+.sop-toolbar-gelap .text-emerald-700 { color: #6ee7b7 !important; }
+.sop-toolbar-gelap .border-emerald-300 { border-color: #047857 !important; }
+.sop-toolbar-gelap .bg-rose-100 { background-color: #4c1d2a !important; }
+.sop-toolbar-gelap .text-rose-600 { color: #fb7185 !important; }
+.sop-toolbar-gelap .bg-green-100 { background-color: #14532d !important; }
+.sop-toolbar-gelap .text-green-700 { color: #4ade80 !important; }
+/* Toolbar SOP gelap — warna ungu/indigo (tombol Riwayat dan sejenisnya) */
+.sop-toolbar-gelap .text-indigo-700 { color: #a5b4fc !important; }
+.sop-toolbar-gelap .border-indigo-200 { border-color: #4338ca !important; }
+.sop-toolbar-gelap .hover\:bg-indigo-50:hover { background-color: #312e81 !important; }
+.sop-toolbar-gelap .bg-indigo-100 { background-color: #312e81 !important; }
+.sop-toolbar-gelap .text-violet-700, .sop-toolbar-gelap .text-violet-600 { color: #c4b5fd !important; }
+.sop-toolbar-gelap .bg-violet-100 { background-color: #2e1065 !important; }
+.sop-toolbar-gelap .border-violet-200 { border-color: #5b21b6 !important; }
